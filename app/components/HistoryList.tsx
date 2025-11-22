@@ -23,7 +23,8 @@ const DE = {
 function translateText(text?: string | null): string {
   if (!text) return ''
   const t = text.trim()
-  return DE.translations[t] || t
+  const dict = DE.translations as Record<string, string>
+  return dict[t] || t
 }
 
 export default function HistoryList({ variant='wood' }: { variant?: 'wood' | 'default' }) {
