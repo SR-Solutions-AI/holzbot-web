@@ -741,6 +741,10 @@ export default function StepWizard() {
   
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  // [FIX] Refs pentru a preveni duplicatele la crearea proiectului
+  const lastProcessedCreationId = useRef<number>(0)
+  const activeCreationPromise = useRef<Promise<string> | null>(null)
+
   const step = formSteps[idx]
   const isFirst = idx === 0
   const isLast = idx === formSteps.length - 1
@@ -749,6 +753,43 @@ export default function StepWizard() {
     () => (formSteps.length > 1 ? Math.round((idx / (formSteps.length - 1)) * 100) : 0),
     [idx]
   )
+
+  // [FIX] ASCULTĂTOR PENTRU PROIECT NOU (Cu Deduplicare)
+  useEffect(() => {
+    const handleNewProject = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const creationId = detail?.creationId
+
+      // [FIX CRITIC] Dacă am procesat deja acest ID, ignorăm
+      if (creationId && lastProcessedCreationId.current === creationId) {
+        console.log('Ignored duplicate creation signal', creationId)
+        return
+      }
+
+      // Salvăm ID-ul ca procesat
+      if (creationId) lastProcessedCreationId.current = creationId
+
+      // Resetarea stării
+      setOfferId(null)
+      setIdx(0)
+      setForm({})
+      setDrafts({})
+      setErrors({})
+      setShowErrors(false)
+      setValidationError(null)
+      
+      setPdfUrl(null)
+      setComputing(false)
+      setComputeStartTime(null)
+      setSaveStatus('idle')
+      
+      creatingRef.current = false
+      activeCreationPromise.current = null // Resetăm și promisiunea singleton
+    }
+
+    window.addEventListener('offer:new', handleNewProject)
+    return () => window.removeEventListener('offer:new', handleNewProject)
+  }, [])
 
   useEffect(() => {
     setValidationError(null)
@@ -803,23 +844,42 @@ export default function StepWizard() {
     setShowErrors(false)
   }, [idx])
 
+  // [FIX] SINGLETON PROMISE pentru ensureOffer
   async function ensureOffer(): Promise<string> {
     if (offerId) return offerId
+
+    // Daca avem deja o promisiune activa, o returnam pe aceea
+    if (activeCreationPromise.current) {
+        return activeCreationPromise.current
+    }
+
     if (creatingRef.current) {
       return new Promise((resolve) => {
         const iv = setInterval(() => { if (offerId) { clearInterval(iv); resolve(offerId) } }, 50)
       }) as Promise<string>
     }
-    try {
-      creatingRef.current = true
-      const created = await apiFetch('/offers', { method: 'POST', body: JSON.stringify({ title: 'Ofertă nouă' }) })
-      setOfferId(created.id)
-      window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: created.id } }))
-      window.dispatchEvent(new Event('offers:refresh'))
-      return created.id as string
-    } finally {
-      creatingRef.current = false
-    }
+    
+    // Lansăm procesul de creare
+    creatingRef.current = true
+    
+    const promise = (async () => {
+        try {
+            const created = await apiFetch('/offers', { 
+                method: 'POST', 
+                body: JSON.stringify({ title: 'Ofertă nouă' }) 
+            })
+            setOfferId(created.id)
+            window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: created.id } }))
+            window.dispatchEvent(new Event('offers:refresh'))
+            return created.id as string
+        } finally {
+            creatingRef.current = false
+            activeCreationPromise.current = null // Curatam promisiunea cand e gata
+        }
+    })()
+
+    activeCreationPromise.current = promise
+    return promise
   }
 
   function stashDraft(next?: Partial<Record<string, any>>) {
@@ -1108,6 +1168,7 @@ export default function StepWizard() {
                   form={form}
                   setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('client', v) }}
                   errors={visibleErrors}
+                  onEnter={onContinue}
                 />
               ) : step.key !== 'upload' ? (
                 <div className="space-y-4">
@@ -1119,18 +1180,74 @@ export default function StepWizard() {
                     onUpload={onUpload}
                     ensureOffer={ensureOffer}
                     errors={visibleErrors}
+                    onEnter={onContinue}
                   />
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <DynamicFields stepKey={step.key} fields={step.fields} form={form} setForm={(v) => { setForm(v) }} onUpload={onUpload} ensureOffer={ensureOffer} errors={{}} />
+                  <DynamicFields 
+                    stepKey={step.key} 
+                    fields={step.fields} 
+                    form={form} 
+                    setForm={(v) => { setForm(v) }} 
+                    onUpload={onUpload} 
+                    ensureOffer={ensureOffer} 
+                    errors={{}} 
+                    onEnter={onContinue}
+                  />
                 </div>
               )}
             </div>
-            <div className="wizard-footer">
-              <button className="btn-sun-ghost disabled:opacity-50" onClick={onBack} disabled={isFirst || saving}><ChevronLeft size={18} /> {DE.common.btnBack}</button>
+            
+            <div className="wizard-footer flex items-center justify-between mt-4">
+              {/* === BUTONUL BACK (Design Nou) === */}
+              <button 
+                onClick={onBack} 
+                disabled={isFirst || saving}
+                className={`
+                  flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ease-in-out
+                  /* Stil normal */
+                  border border-[#D8A25E]/30 text-[#D8A25E] bg-transparent
+                  /* Hover */
+                  hover:bg-[#D8A25E]/10 hover:border-[#D8A25E]/60
+                  /* Disabled */
+                  disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent
+                `}
+              >
+                <ChevronLeft size={19} /> 
+                {DE.common.btnBack}
+              </button>
+
+              {/* Spațiator flexibil */}
               <div className="flex-1" />
-              <button className="btn-sun" onClick={onContinue} disabled={saving}>{isLast ? <>{DE.common.btnFinish}</> : <>{DE.common.btnNext} <ChevronRight size={18} /></>}</button>
+
+              {/* === BUTONUL NEXT / FINISH (Design Nou) === */}
+              <button 
+                onClick={onContinue} 
+                disabled={saving}
+                className={`
+                  flex items-center gap-2 px-8 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out
+                  /* Stil normal (Gradient subtil) */
+                  bg-gradient-to-b from-[#e08414] to-[#f79116]
+                  /* Hover */
+                  hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)]
+                  /* Active (Click) */
+                  active:translate-y-[1px] active:scale-95
+                  /* Disabled */
+                  disabled:opacity-70 disabled:cursor-wait disabled:transform-none disabled:shadow-none
+                `}
+              >
+                {isLast ? (
+                  // Text pentru pasul final
+                  <span>{DE.common.btnFinish}</span>
+                ) : (
+                  // Text pentru pașii intermediari
+                  <>
+                    {DE.common.btnNext} 
+                    <ChevronRight size={19} className="opacity-80" />
+                  </>
+                )}
+              </button>
             </div>
           </div>
         )}
@@ -1160,7 +1277,7 @@ export default function StepWizard() {
   )
 }
 
-function ClientStep({ form, setForm, errors }:{ form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors }) {
+function ClientStep({ form, setForm, errors, onEnter }:{ form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; onEnter: () => void }) {
   const fields = [
     { key: 'nume', label: 'Vor- und Nachname' },
     { key: 'telefon', label: 'Telefonnummer' },
@@ -1182,6 +1299,7 @@ function ClientStep({ form, setForm, errors }:{ form: Record<string, any>; setFo
                 const next = { ...form, [f.key]: v }
                 setForm(next)
               }}
+              onKeyDown={(e) => handleInputEnter(e, onEnter)}
             />
             {fieldErr && <span className="text-xs text-orange-400">{fieldErr}</span>}
           </label>
@@ -1192,7 +1310,7 @@ function ClientStep({ form, setForm, errors }:{ form: Record<string, any>; setFo
 }
 
 function DynamicFields({
-  stepKey, fields, form, setForm, onUpload, ensureOffer, errors
+  stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter
 }: {
   stepKey: string
   fields: Field[]
@@ -1201,6 +1319,7 @@ function DynamicFields({
   onUpload: (name: string, file: File | null) => void
   ensureOffer: () => Promise<string>
   errors: Errors
+  onEnter: () => void
 }) {
   
   let currentFields = fields;
@@ -1292,6 +1411,7 @@ function DynamicFields({
                   const id = await ensureOffer()
                   await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
                 }}
+                onKeyDown={(e) => handleInputEnter(e, onEnter)}
               />
               <span className="text-sm font-medium">{displayLabel}</span>
               {errors[f.name] && <span className="ml-2 text-xs text-orange-400">{errors[f.name]}</span>}
@@ -1313,6 +1433,7 @@ function DynamicFields({
             const next = { ...form, [f.name]: val }
             setForm(next)
           },
+          onKeyDown: (e: React.KeyboardEvent) => handleInputEnter(e, onEnter)
         }
 
         return (
@@ -1420,4 +1541,28 @@ function SimpleUploadField({ stepKey, field, files, onChange }: { stepKey: strin
       </div>
     </div>
   )
+}
+
+const handleInputEnter = (e: React.KeyboardEvent, onNextStep: () => void) => {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    const target = e.currentTarget as HTMLElement
+    const container = target.closest('.wizard-body')
+    if (!container) return
+
+    // Select all interactive form elements we consider "steps"
+    // Including button.sun-select to allow jumping TO it
+    const selector = 'input:not([type="hidden"]):not([type="checkbox"]):not([disabled]), textarea:not([disabled]), button.sun-select'
+    const elements = Array.from(container.querySelectorAll(selector)) as HTMLElement[]
+    
+    const currentIndex = elements.indexOf(target)
+    
+    if (currentIndex !== -1 && currentIndex < elements.length - 1) {
+      // Move to next
+      elements[currentIndex + 1].focus()
+    } else {
+      // It's the last one, submit/next step
+      onNextStep()
+    }
+  }
 }

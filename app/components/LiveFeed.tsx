@@ -137,7 +137,6 @@ type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: stri
 const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp)(\?|$)/i.test(f.url)
 const isPdf = (f: FeedFile) => f.mime?.includes('pdf') || /\.pdf(\?|$)/i.test(f.url)
 
-// ✅ FIX: Funcție sigură pentru generare ID-uri unice
 const generateId = (prefix: string = '') => 
   `${prefix}${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`
 
@@ -470,12 +469,23 @@ export default function LiveFeed() {
   const queuedStages = useRef<Set<string>>(new Set())
   const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string } | null>(null)
 
+  // ✅ [FIX CRITIC] Session ID pentru a invalida procesele vechi la reset
+  const sessionRef = useRef<number>(0)
+  const activeRunIdRef = useRef<string|null>(null)
+
   useEffect(() => { 
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) 
   }, [rows])
 
   useEffect(() => {
+    activeRunIdRef.current = runId
+  }, [runId])
+
+  useEffect(() => {
     const reset = () => { 
+      // ✅ INCREMENTEAZĂ SESIUNEA LA RESET (Oprește orice proces async vechi)
+      sessionRef.current = sessionRef.current + 1
+
       setRows([]); 
       setGroups([]); 
       filesByStage.current={}; 
@@ -490,17 +500,32 @@ export default function LiveFeed() {
       allStagesCompleted.current = false;
       queuedStages.current.clear();
       pendingCompletionRef.current = null;
+      
+      setRunId(null)
+      activeRunIdRef.current = null
     }
     
     window.addEventListener('offer:compute-started', (e:any) => { 
-      setOfferId(e.detail.offerId); 
-      setRunId(e.detail.runId);
-      isHistoryMode.current = false;
-      allStagesCompleted.current = false;
+      // 1. Întâi resetăm totul (inclusiv incrementarea sessionRef pentru filtrare)
       reset() 
+      
+      // 2. Apoi setăm noile valori
+      setOfferId(e.detail.offerId); 
+      // Folosim setTimeout pentru a ne asigura că React procesează reset-ul înainte de setarea noilor valori
+      // Deși reset() e sincron, separarea ajută la claritate și batching
+      setTimeout(() => {
+          setRunId(e.detail.runId);
+          activeRunIdRef.current = e.detail.runId; // Actualizăm și ref-ul manual pentru siguranță
+          isHistoryMode.current = false;
+          allStagesCompleted.current = false;
+      }, 0);
     })
+
+    window.addEventListener('offer:new', reset)
     
-    return () => {}
+    return () => {
+        window.removeEventListener('offer:new', reset)
+    }
   }, [])
 
   const nextTitle = (stage: string): string => {
@@ -512,6 +537,9 @@ export default function LiveFeed() {
 
   useEffect(() => {
     const loadHistory = async (e: any) => {
+      // ✅ Invalidăm sesiunea veche și aici
+      sessionRef.current = sessionRef.current + 1
+      
       const id = e.detail.offerId as string
       setOfferId(id)
       isHistoryMode.current = true
@@ -530,12 +558,19 @@ export default function LiveFeed() {
           currentStageRef.current = null
           
           setRunId(historyData.run_id)
+          activeRunIdRef.current = historyData.run_id
           
           for (const ev of historyData.items) {
             const match = ev.message.match(/^\s*\[([^\]]+)\]/)
             if (match && ev.payload?.files) {
               const stage = match[1].trim()
-              filesByStage.current[stage] = ev.payload.files.filter((f: any) => isImage(f))
+              const newFiles = ev.payload.files.filter((f: any) => isImage(f))
+              const existing = filesByStage.current[stage] || []
+              const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
+              
+              if (uniqueNew.length > 0) {
+                filesByStage.current[stage] = [...existing, ...uniqueNew]
+              }
             }
           }
           
@@ -561,6 +596,7 @@ export default function LiveFeed() {
           } catch {}
         } else {
           setRunId(null)
+          activeRunIdRef.current = null
           setRows([])
           setGroups([])
           filesByStage.current = {}
@@ -591,6 +627,7 @@ export default function LiveFeed() {
         }
       } catch (err) {
         setRunId(null)
+        activeRunIdRef.current = null
         setRows([])
         setGroups([])
         filesByStage.current = {}
@@ -611,9 +648,20 @@ export default function LiveFeed() {
   useEffect(() => {
     if(!runId || isHistoryMode.current) return
     
+    // ✅ CAPTURE SESSIONS ID
+    const mySessionId = sessionRef.current
+    
     const iv = setInterval(async () => {
+      // ✅ CHECK 1: Sesiune invalidată înainte de request
+      if (sessionRef.current !== mySessionId) return
+      
       try {
         const res = await apiFetch(`/calc-events?run_id=${runId}${sinceRef.current ? `&sinceId=${sinceRef.current}` : ''}`)
+        
+        // ✅ CHECK 2: Sesiune invalidată în timpul request-ului
+        if (sessionRef.current !== mySessionId) return
+        if (activeRunIdRef.current !== runId) return
+
         if(res.items?.length) {
           const last = res.items[res.items.length-1]
           sinceRef.current = last.id
@@ -624,24 +672,25 @@ export default function LiveFeed() {
             const stage = match[1].trim()
             
             if(ev.payload?.files?.length) {
-              filesByStage.current[stage] = [
-                ...(filesByStage.current[stage]||[]), 
-                ...ev.payload.files.filter(isImage)
-              ]
+              const newImages = ev.payload.files.filter(isImage)
+              const existing = filesByStage.current[stage] || []
+              const uniqueNew = newImages.filter((nf: FeedFile) => !existing.some(ex => ex.url === nf.url))
               
-              const pdf = ev.payload.files.find(isPdf)
-              if(pdf && (stage === 'pdf_generation' || stage === 'final')) {
-                 finalPdfUrlRef.current = pdf.url
+              if (uniqueNew.length > 0) {
+                  filesByStage.current[stage] = [...existing, ...uniqueNew]
+                  const pdf = ev.payload.files.find(isPdf)
+                  if(pdf && (stage === 'pdf_generation' || stage === 'final')) {
+                     finalPdfUrlRef.current = pdf.url
+                  }
               }
             }
 
             if(stage === 'computation_complete') {
               allStagesCompleted.current = true
-              
               await new Promise(r => setTimeout(r, 1500));
-              
+              if (sessionRef.current !== mySessionId) return // Check after delay
+
               let realPdfUrl: string | null = null
-              
               if(offerId) {
                 try {
                     const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
@@ -657,36 +706,38 @@ export default function LiveFeed() {
 
               if (realPdfUrl && offerId) {
                 pendingCompletionRef.current = { offerId, pdfUrl: realPdfUrl }
-
                 if (STAGE_TO_SEQUENCE[stage] && !queuedStages.current.has(stage)) {
                   queuedStages.current.add(stage)
                   stageQueue.current.push(stage)
                   processQueue()
                 }
               }
-
               continue
             }
 
             if (STAGE_TO_SEQUENCE[stage]) {
               if (processedStages.current.has(stage)) {
                 if (ev.payload?.files?.length) {
-                  const existingFiles = filesByStage.current[stage] || []
-                  const newFiles = ev.payload.files.filter(isImage)
-                  filesByStage.current[stage] = [...existingFiles, ...newFiles]
-                  
+                  const newImages = ev.payload.files.filter(isImage)
                   setGroups(prev => {
                     const groupIndex = prev.findIndex(g => g.stage === stage)
                     if (groupIndex >= 0) {
                       const group = prev[groupIndex]
-                      const imageItem = group.items.find(i => i.kind === 'image') as ImageItem | undefined
-                      
-                      if (imageItem) {
-                        imageItem.files = [...imageItem.files, ...newFiles]
-                        const updated = [...prev]
-                        updated[groupIndex] = { ...group }
-                        setRows(updated.map(x => ({ kind: 'group', id: x.id, group: x })))
-                        return updated
+                      const newItems = group.items.map(item => {
+                          if (item.kind === 'image') {
+                              const uniqueForState = newImages.filter((nf: FeedFile) => !item.files.some(ex => ex.url === nf.url))
+                              if (uniqueForState.length > 0) {
+                                  return { ...item, files: [...item.files, ...uniqueForState] }
+                              }
+                          }
+                          return item
+                      })
+                      if (newItems !== group.items) {
+                          const updatedGroup = { ...group, items: newItems }
+                          const next = [...prev]
+                          next[groupIndex] = updatedGroup
+                          setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+                          return next
                       }
                     }
                     return prev
@@ -707,11 +758,17 @@ export default function LiveFeed() {
   }, [runId, offerId])
 
   const processQueue = async () => {
+    // ✅ CHECK RUN ID
+    if (!activeRunIdRef.current && !isHistoryMode.current) return
+
     if(processing.current || !stageQueue.current.length) return
     processing.current = true
     const stage = stageQueue.current.shift()!
     currentStageRef.current = stage
-    await executeStage(stage, false)
+    
+    // ✅ PASS CURRENT SESSION ID
+    await executeStage(stage, false, sessionRef.current)
+    
     processedStages.current.add(stage)
     currentStageRef.current = null
     processing.current = false
@@ -727,11 +784,14 @@ export default function LiveFeed() {
     }
   }
 
-  const executeStage = async (stage: string, instant: boolean = false) => {
+  // ✅ RECEIVE SESSION ID & CHECK VALIDITY
+  const executeStage = async (stage: string, instant: boolean = false, sessionId?: number) => {
+    const isAborted = () => sessionId !== undefined && sessionRef.current !== sessionId
+    if (isAborted()) return
+
     const indices = STAGE_TO_SEQUENCE[stage]
     if(!indices) return
 
-    // ✅ FIX: ID unic pentru grup
     const gid = generateId('g-')
     const title = nextTitle(stage)
     
@@ -774,7 +834,6 @@ export default function LiveFeed() {
 
     if (stage === 'computation_complete') {
       const completion = pendingCompletionRef.current
-
       if (completion) {
         const item: CongratsItem = {
           kind: 'congrats',
@@ -784,16 +843,12 @@ export default function LiveFeed() {
           __id: 'final'
         }
         addItem(item)
-
         window.dispatchEvent(new CustomEvent('offer:pdf-ready', {
           detail: { offerId: completion.offerId, pdfUrl: completion.pdfUrl }
         }))
-
         pendingCompletionRef.current = null
       }
-
       if (!instant) {
-        // ✅ FIX: ID unic pentru gap
         setRows(prev => [...prev, { kind: 'gap', id: generateId('gap-') }])
       }
       return
@@ -801,11 +856,11 @@ export default function LiveFeed() {
 
     if (indices.length > 0) {
         await playMessage(indices[0], addItem, replaceSpinner, instant)
+        if (isAborted()) return // ✅ STOP
     }
 
     if (STAGES_WITH_IMAGES.includes(stage)) {
         if (!instant) {
-          // ✅ FIX: ID unic pentru spinner
           addItem({ kind: 'spinner', stage, __id: generateId('spin-') } as SpinnerItem)
         }
         
@@ -813,10 +868,13 @@ export default function LiveFeed() {
         const start = Date.now()
         
         while(Date.now() - start < 25000) {
+            if (isAborted()) return // ✅ STOP
+
             const files = filesByStage.current[stage]
             if (files && files.length > 0) {
                 foundFiles = files
                 if (!instant) await new Promise(r => setTimeout(r, 1000))
+                if (isAborted()) return // ✅ STOP
                 foundFiles = filesByStage.current[stage] || foundFiles
                 break
             }
@@ -825,7 +883,6 @@ export default function LiveFeed() {
 
         if (foundFiles.length > 0) {
             if (instant) {
-              // ✅ FIX: ID unic pentru imagine
               addItem({ kind: 'image', stage, files: foundFiles, __id: generateId('img-') } as ImageItem)
             } else {
               replaceSpinner({ kind: 'image', stage, files: foundFiles, __id: generateId('img-') } as ImageItem)
@@ -847,12 +904,13 @@ export default function LiveFeed() {
     }
 
     for (let i = 1; i < indices.length; i++) {
+        if (isAborted()) return // ✅ STOP
+
         addItem({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
         await playMessage(indices[i], addItem, replaceSpinner, instant)
     }
     
     if (!instant) {
-      // ✅ FIX: ID unic pentru gap
       setRows(prev => [...prev, { kind: 'gap', id: generateId('gap-') }])
     }
   }
@@ -860,11 +918,8 @@ export default function LiveFeed() {
   const executeStageInstant = async (stage: string) => {
     const indices = STAGE_TO_SEQUENCE[stage]
     if(!indices) return
-
-    // ✅ FIX: ID unic pentru grup (aici era problema principală la istoricul rapid)
     const gid = generateId('g-')
     const title = nextTitle(stage)
-    
     const items: SyntheticItem[] = []
 
     for (let i = 0; i < indices.length; i++) {
@@ -882,7 +937,6 @@ export default function LiveFeed() {
     if (STAGES_WITH_IMAGES.includes(stage)) {
       const files = filesByStage.current[stage]
       if (files && files.length > 0) {
-        // ✅ FIX: ID unic pentru imagine
         items.push({ kind: 'image', stage, files, __id: generateId('img-') } as ImageItem)
       }
     }
@@ -972,8 +1026,6 @@ export default function LiveFeed() {
                      
                      <div className="space-y-4">
                          {g.items.filter(Boolean).map((it, idx) => {
-                             // TRUCUL MAGIC: Combinăm ID-ul cu indexul (0, 1, 2...)
-                             // Asta garantează unicitatea 100% și elimină eroarea din consolă.
                              const uniqueKey = `${it.__id}-${idx}`;
 
                              if(it.kind === 'text') {
