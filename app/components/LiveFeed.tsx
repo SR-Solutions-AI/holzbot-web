@@ -32,7 +32,8 @@ const STAGES_WITH_IMAGES = [
   'segmentation',        
   'classification', 
   'count_objects', 
-  'exterior_doors'
+  'exterior_doors',
+  'area'
 ]
 
 /* ========= TITLURI DINAMICE ========= */
