@@ -432,7 +432,7 @@ function FormulaBlock({ input }: { input: string }) {
 
 function TypeWriter({ text, speed = 16, instant = false }: { text: string; speed?: number; instant?: boolean }) {
   const [out, setOut] = useState('')
-  const safeText = safeString(text)
+  const safeText = safeString(text || '')
 
   useEffect(() => {
     if (instant) {
@@ -452,12 +452,19 @@ function TypeWriter({ text, speed = 16, instant = false }: { text: string; speed
     return () => { alive = false }
   }, [safeText, speed, instant])
   
-  return <span>{out}</span>
+  // Ensure we always return a valid React node, never undefined/null
+  return <span>{out || ''}</span>
 }
 
 function MessageRow({ role, text, instant = false }: { role: string, text: string, instant?: boolean }) {
-  const safeContent = safeString(text)
+  // Ensure text is always a string to avoid React #418 error
+  const safeContent = safeString(text || '')
   const displayContent = strip(safeContent)
+  
+  // Don't render if content is empty
+  if (!displayContent.trim()) {
+    return null
+  }
   
   return (
     <div className={`flex items-start gap-3 mb-2 ${instant ? '' : 'animate-fade-in'}`}>
@@ -1051,9 +1058,10 @@ export default function LiveFeed() {
         if (i > 0) {
           items.push({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
         }
-        items.push({ kind: 'text', role: 'ai', text: m.ai, stage, __id: `ai-${indices[i]}` } as TextItem)
-        items.push({ kind: 'text', role: 'formula', text: m.formula, stage, __id: `f-${indices[i]}` } as TextItem)
-        items.push({ kind: 'text', role: 'rezultat', text: m.rezultat, stage, __id: `r-${indices[i]}` } as TextItem)
+        // Ensure text values are always strings to avoid React #418 error
+        items.push({ kind: 'text', role: 'ai', text: safeString(m.ai), stage, __id: `ai-${indices[i]}` } as TextItem)
+        items.push({ kind: 'text', role: 'formula', text: safeString(m.formula), stage, __id: `f-${indices[i]}` } as TextItem)
+        items.push({ kind: 'text', role: 'rezultat', text: safeString(m.rezultat), stage, __id: `r-${indices[i]}` } as TextItem)
       }
     }
 
@@ -1077,24 +1085,25 @@ export default function LiveFeed() {
     if(!m) return
     
     if (instant) {
-      add({ kind:'text', role:'ai', text:m.ai, __id:`t1-${idx}` } as TextItem)
-      add({ kind:'text', role:'formula', text:m.formula, __id:`t2-${idx}` } as TextItem)
-      add({ kind:'text', role:'rezultat', text:m.rezultat, __id:`t3-${idx}` } as TextItem)
+      // Ensure text values are always strings to avoid React #418 error
+      add({ kind:'text', role:'ai', text:safeString(m.ai), __id:`t1-${idx}` } as TextItem)
+      add({ kind:'text', role:'formula', text:safeString(m.formula), __id:`t2-${idx}` } as TextItem)
+      add({ kind:'text', role:'rezultat', text:safeString(m.rezultat), __id:`t3-${idx}` } as TextItem)
     } else {
       add({ kind:'spinner', stage:'' } as SpinnerItem)
-      const cleanAI = strip(m.ai)
+      const cleanAI = strip(safeString(m.ai))
       const t1 = await paraphrase(cleanAI) 
-      replace({ kind:'text', role:'ai', text:t1, __id:`t1-${idx}` } as TextItem)
+      replace({ kind:'text', role:'ai', text:safeString(t1), __id:`t1-${idx}` } as TextItem)
       await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
 
       add({ kind:'spinner', stage:'' } as SpinnerItem)
-      replace({ kind:'text', role:'formula', text:m.formula, __id:`t2-${idx}` } as TextItem)
+      replace({ kind:'text', role:'formula', text:safeString(m.formula), __id:`t2-${idx}` } as TextItem)
       await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
 
       add({ kind:'spinner', stage:'' } as SpinnerItem)
-      const cleanR = strip(m.rezultat)
+      const cleanR = strip(safeString(m.rezultat))
       const t3 = await paraphrase(cleanR)
-      replace({ kind:'text', role:'rezultat', text:t3, __id:`t3-${idx}` } as TextItem)
+      replace({ kind:'text', role:'rezultat', text:safeString(t3), __id:`t3-${idx}` } as TextItem)
       await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
     }
   }
