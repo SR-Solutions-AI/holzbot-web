@@ -1,0 +1,1387 @@
+
+'use client'
+
+import { JSX, useEffect, useRef, useState } from 'react'
+import { apiFetch } from '../lib/supabaseClient'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import { Cpu, FunctionSquare, CheckCircle2, Loader2, Download } from 'lucide-react'
+
+/* ========= CONFIGURARE ETAPE (Protocolul Nou) ========= */
+
+const STAGE_TO_SEQUENCE: Record<string, number[]> = {
+  segmentation_start: [1],
+  segmentation: [2],
+  classification: [3],
+  floor_classification: [4],
+  detections: [5],
+  scale: [6],
+  count_objects: [7],
+  exterior_doors: [8, 9],
+  measure_objects: [10],
+  perimeter: [11],
+  area: [12],
+  roof: [13],
+  pricing: [14, 15],
+  offer_generation: [16, 17],
+  pdf_generation: [18, 19],
+  computation_complete: [],
+}
+
+// Calculează progresul bazat pe etapele procesate
+const TOTAL_STAGES = 19 // Ultimul număr din secvență
+function calculateProgress(processedStages: Set<string>, currentStage: string | null): { progress: number; currentStageName: string | null } {
+  if (processedStages.size === 0 && !currentStage) {
+    return { progress: 0, currentStageName: null }
+  }
+  
+  // Numără etapele procesate (folosind numărul maxim din fiecare secvență)
+  let completedSteps = 0
+  for (const stage of processedStages) {
+    const seq = STAGE_TO_SEQUENCE[stage]
+    if (seq && seq.length > 0) {
+      completedSteps = Math.max(completedSteps, Math.max(...seq))
+    }
+  }
+  
+  // Dacă există o etapă curentă, adaugă progres parțial
+  if (currentStage) {
+    const seq = STAGE_TO_SEQUENCE[currentStage]
+    if (seq && seq.length > 0) {
+      const currentStep = Math.max(...seq)
+      // Dacă etapa curentă e mai mare decât cea procesată, o considerăm în progres
+      if (currentStep > completedSteps) {
+        completedSteps = currentStep - 0.5 // 50% din etapa curentă
+      }
+    }
+  }
+  
+  const progress = Math.min(100, Math.round((completedSteps / TOTAL_STAGES) * 100))
+  
+  // Obține numele etapei curente pentru afișare
+  let stageName: string | null = null
+  if (currentStage) {
+    const titles = STAGE_TITLES[currentStage]
+    if (titles && titles.length > 0) {
+      stageName = titles[0] // Folosește primul titlu
+    } else {
+      stageName = currentStage
+    }
+  }
+  
+  return { progress, currentStageName: stageName }
+}
+
+const STAGES_WITH_IMAGES = [
+  'segmentation',        
+  'classification', 
+  'count_objects', 
+  'exterior_doors',
+  'area'
+]
+
+/* ========= TITLURI DINAMICE ========= */
+const STAGE_TITLES: Record<string, string[]> = {
+  segmentation_start: [
+    'Initialisierung der Plananalyse',
+    'Vorbereitung der Segmentierung',
+    'Start der Bildverarbeitung'
+  ],
+  segmentation: [
+    'Plansegmentierung und Normalisierung',
+    'Strukturanalyse und Topologie',
+    'Vektorisierung der Grundrisse'
+  ],
+  classification: [
+    'Klassifizierung der Planansichten',
+    'Identifikation der Zeichnungstypen',
+    'Sortierung nach Grundriss/Schnitt'
+  ],
+  floor_classification: [
+    'Geschosszuordnung und Höhenprüfung',
+    'Ebenen-Identifikation',
+    'Zuordnung der Stockwerke'
+  ],
+  detections: [
+    'Objekterkennung',
+    'Detektion von Bauelementen',
+    'Scannen nach Fenstern und Türen'
+  ],
+  scale: [
+    'Maßstabsberechnung und Kalibrierung',
+    'Pixel-zu-Meter Konversion',
+    'Referenzmessung und Skalierung'
+  ],
+  count_objects: [
+    'Inventarisierung der Öffnungen',
+    'OCR-Erkennung und Deduplizierung',
+    'Klassifizierung der Objekte'
+  ],
+  exterior_doors: [
+    'Gebäudehülle und Außenwände',
+    'Perimeter und Fassadenflächen',
+    'Abgrenzung Innen-/Außenwände'
+  ],
+  measure_objects: [
+    'Vermessung der Öffnungen',
+    'Bemaßung der Bauteile',
+    'Geometrische Auswertung'
+  ],
+  perimeter: [
+    'Struktureller Abgleich',
+    'Wandmessung und Pfadintegral',
+    'Vorläufige Strukturkalkulation'
+  ],
+  area: [
+    'Flächenberechnung (Wohn/Nutz)',
+    'Konsolidierung der Flächen',
+    'Raumflächenbilanz'
+  ],
+  roof: [
+    'Dachkalkulation und Neigung',
+    'Parametrisierung des Daches',
+    'Projektion und effektive Fläche'
+  ],
+  pricing: [
+    'Preiskalkulation und Marktwerte',
+    'Anwendung regionaler Indizes',
+    'Kostenschätzung nach Gewerken'
+  ],
+  offer_generation: [
+    'Zusammenstellung des Angebots',
+    'Strukturierung der Kostenpositionen',
+    'Finalisierung der Kalkulation'
+  ],
+  pdf_generation: [
+    'Generierung des PDF-Dokuments',
+    'Layout und Formatierung',
+    'Erstellung der Druckversion'
+  ],
+  computation_complete: [
+    'Verarbeitung abgeschlossen',
+    'Fertiggestellt',
+    'Berechnung beendet'
+  ]
+}
+
+/* ========= TIMING ========= */
+const SAFE_GAP_BETWEEN_ITEMS_MS = 0
+const EXTRA_MARGIN_AFTER_IMAGE_MS = 500
+
+/* ========= UTILS & COMPONENTS ========= */
+type FeedFile = { url: string; mime?: string; caption?: string }
+type TextItem = { kind: 'text'; stage: string; role: 'ai'|'formula'|'rezultat'; text: string; __id: string }
+type SpinnerItem = { kind: 'spinner'; stage: string; __id: string }
+type ImageItem = { kind: 'image'; stage: string; files: FeedFile[]; __id: string }
+type BreakItem = { kind: 'break'; stage: string; __id: string }
+type CongratsItem = { kind: 'congrats'; stage: 'final'; pdfUrl: string; offerId: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; __id: string }
+type SyntheticItem = TextItem | SpinnerItem | ImageItem | BreakItem | CongratsItem
+type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[] }
+type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: string }
+
+const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp)(\?|$)/i.test(f.url)
+const isPdf = (f: FeedFile) => f.mime?.includes('pdf') || /\.pdf(\?|$)/i.test(f.url)
+
+const generateId = (prefix: string = '') => 
+  `${prefix}${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`
+
+const safeString = (val: any): string => {
+  if (typeof val === 'string') return val
+  if (typeof val === 'number') return String(val)
+  if (!val) return ''
+  try { return JSON.stringify(val) } catch { return '...' }
+}
+
+const strip = (s: string) => {
+  return safeString(s)
+    .replace(/^\s*\[[^\]]+\]\s*/, '') 
+    .replace(/^\s*(AI|FORMULĂ|FORMULA|REZULTAT|RESULTAT)[:\s]*\s*/i, '') 
+}
+
+type Trio = { ai: string; formula: string; rezultat: string }
+
+/* ========= FORMULE MATEMATICE COMPLEXE (HARDCODATE, PUR LaTeX) ========= */
+const MESSAGES: Record<number, Trio> = {
+  1: { 
+    ai:'Ich validiere die Datei und erkenne den Maßstab aus Bemaßungen/Legenden; Konsistenz- und Einheitenprüfung.',
+    formula:'s^* = \\underset{s \\in \\mathbb{R}^+}{\\arg\\min} \\sum_{k=1}^{N} \\left| d_k^{\\mathrm{meas}} \\cdot s - d_k^{\\mathrm{ref}} \\right|^2 + \\lambda \\|s - s_0\\|^2',
+    rezultat:'Maßstab bestätigt und Arbeitstoleranz bestimmt.' 
+  },
+  2: { 
+    ai:'Ich segmentiere den Plan (Wände/Texte/Symbole), normalisiere die Ausrichtung und stelle die Topologie wieder her.',
+    formula:'\\mathbf{x}^\\prime = \\mathbf{R}(\\theta) \\mathbf{x} + \\mathbf{t}, \\quad \\mathbf{R}(\\theta) = \\begin{pmatrix} \\cos\\theta & -\\sin\\theta \\\\ \\sin\\theta & \\cos\\theta \\end{pmatrix}',
+    rezultat:'Kohärente Vektorebenen, bereit zur Vermessung.' 
+  },
+  3: { 
+    ai:'Ich klassifiziere die extrahierten Pläne nach Typ (Grundriss/Ansicht/Text).',
+    formula:'P(c | \\mathbf{I}) = \\frac{\\exp\\left(\\sum_{i=1}^{M} w_i \\phi_i(\\mathbf{I}, c)\\right)}{\\sum_{c^\\prime} \\exp\\left(\\sum_{i=1}^{M} w_i \\phi_i(\\mathbf{I}, c^\\prime)\\right)}',
+    rezultat:'Grundrisse identifiziert und kategorisiert.' 
+  },
+  4: { 
+    ai:'Ich ordne die Geschosse zu (EG/OG) anhand von Merkmalen.',
+    formula:'\\ell(y) = \\underset{k \\in \\{1,\\ldots,K\\}}{\\arg\\max} \\left\\langle \\mathbf{w}_k, \\Phi(\\mathbf{F}) \\right\\rangle + b_k',
+    rezultat:'Geschosse erkannt und zugeordnet.' 
+  },
+  5: { 
+    ai:'Ich suche nach Bauelementen - Fenster, Türen, Wände.',
+    formula:'\\mathrm{IoU}(B_i, B_j) = \\frac{|B_i \\cap B_j|}{|B_i \\cup B_j|} > \\tau, \\quad c_i > \\gamma',
+    rezultat:'Elemente lokalisiert und klassifiziert.' 
+  },
+  6: { 
+    ai:'Kalibrierung Meter/Pixel aus repräsentativen Maßen.',
+    formula:'s = \\frac{1}{N} \\sum_{i=1}^{N} \\frac{d_i^{\\mathrm{real}}}{d_i^{\\mathrm{px}}}, \\quad \\sigma_s = \\sqrt{\\frac{1}{N-1} \\sum_{i=1}^{N} \\left(s_i - s\\right)^2}',
+    rezultat:'Maßstab bestätigt und validiert.' 
+  },
+  7: { 
+    ai:'Ich inventarisiere Fenster und Türen.',
+    formula:'N_{\\mathrm{obj}} = \\sum_{i=1}^{M} \\mathbb{1}_{\\{c_i > \\theta\\}}(o_i), \\quad A_{\\mathrm{tot}} = \\sum_{i=1}^{N_{\\mathrm{obj}}} w_i \\cdot h_i \\cdot s^2',
+    rezultat:'Objekte gezählt und vermessen.' 
+  },
+  8: { 
+    ai:'Ich analysiere die Außenhülle mit Flood-Fill-Algorithmus.',
+    formula:'\\mathcal{M}_{\\mathrm{ext}} = \\bigcup_{p \\in S} \\left\\{ q \\in \\Omega : \\exists \\gamma_{p \\to q}, \\, I(\\gamma) < \\tau_{\\mathrm{wall}} \\right\\}',
+    rezultat:'Außenwände markiert und berechnet.' 
+  },
+  9: { 
+    ai:'Ich berechne den Perimeter der Außenwände.',
+    formula:'P = \\oint_{\\partial \\mathcal{M}_{\\mathrm{ext}}} ds = \\sum_{i=1}^{N_{\\mathrm{seg}}} \\sqrt{(x_{i+1} - x_i)^2 + (y_{i+1} - y_i)^2}',
+    rezultat:'Umfang berechnet und validiert.' 
+  },
+  10: { 
+    ai:'Ich vermesse die Objekte (Breite aus Bounding Boxes).',
+    formula:'w_i = (x_{\\mathrm{max}}^{(i)} - x_{\\mathrm{min}}^{(i)}) \\cdot s, \\quad h_i = (y_{\\mathrm{max}}^{(i)} - y_{\\mathrm{min}}^{(i)}) \\cdot s',
+    rezultat:'Maße extrahiert für alle Objekte.' 
+  },
+  11: { 
+    ai:'Ich berechne die Wandlängen mit Pfadintegral.',
+    formula:'L_{\\mathrm{wall}} = \\int_{\\gamma} \\|\\nabla \\psi(\\mathbf{r})\\| \\, d\\mathbf{r}, \\quad L_{\\mathrm{tot}} = \\sum_{j=1}^{N_{\\mathrm{walls}}} L_j',
+    rezultat:'Wände vermessen und summiert.' 
+  },
+  12: { 
+    ai:'Ich kalkuliere alle Flächen (Wände, Böden, Decken).',
+    formula:'A_{\\mathrm{poly}} = \\frac{1}{2} \\left| \\sum_{i=0}^{n-1} (x_i y_{i+1} - x_{i+1} y_i) \\right|, \\quad A_{\\mathrm{tot}} = \\sum_{k=1}^{K} A_k',
+    rezultat:'Flächenbilanz erstellt und validiert.' 
+  },
+  13: { 
+    ai:'Ich berechne das Dach (Neigung, Fläche, Materialien).',
+    formula:'A_{\\mathrm{roof}} = \\frac{A_{\\mathrm{proj}}}{\\cos(\\alpha)} + \\Delta A_{\\mathrm{overhang}}, \\quad \\alpha = \\arctan\\left(\\frac{h_{\\mathrm{ridge}}}{w/2}\\right)',
+    rezultat:'Dachpreis kalkuliert mit allen Parametern.' 
+  },
+  14: { 
+    ai:'Ich erstelle die Kostenaufstellung für alle Materialien.',
+    formula:'C_{\\mathrm{raw}} = \\sum_{i=1}^{n} Q_i \\cdot P_i + \\sum_{j=1}^{m} A_j \\cdot p_j + \\kappa_{\\mathrm{overhead}}',
+    rezultat:'Rohbaukosten berechnet nach Kategorien.' 
+  },
+  15: { 
+    ai:'Ich finalisiere das Angebot mit Gewinnmarge und Steuern.',
+    formula:'C_{\\mathrm{final}} = C_{\\mathrm{raw}} \\cdot (1 + \\mu_{\\mathrm{margin}}) \\cdot (1 + \\tau_{\\mathrm{vat}}) + \\Delta C_{\\mathrm{logistics}}',
+    rezultat:'Finales Angebot bereit zur Präsentation.' 
+  },
+  16: { 
+    ai:'Ich strukturiere das finale Angebot nach Kategorien.',
+    formula:'\\mathcal{O} = \\bigcup_{k=1}^{K} \\left\\{ (c_k, Q_k, P_k) : c_k \\in \\mathcal{C}_{\\mathrm{valid}} \\right\\}',
+    rezultat:'Angebot strukturiert und kategorisiert.' 
+  },
+  17: { 
+    ai:'Ich validiere alle Berechnungen und Konsistenz.',
+    formula:'\\mathcal{V}(\\mathcal{O}) = \\bigwedge_{i=1}^{N} \\left( \\left| \\sum_{j \\in G_i} C_j - C_i^{\\mathrm{target}} \\right| < \\epsilon \\right)',
+    rezultat:'Validierung erfolgreich - Daten korrekt.' 
+  },
+  18: { 
+    ai:'PDF wird generiert mit Layout und Formatierung.',
+    formula:'\\mathcal{D}_{\\mathrm{pdf}} = \\mathcal{G}\\left(\\mathcal{T}_{\\mathrm{template}}, \\mathcal{O}, \\{\\mathbf{I}_k\\}_{k=1}^{N}\\right)',
+    rezultat:'PDF-Layout erstellt und formatiert.' 
+  },
+  19: { 
+    ai:'PDF wird finalisiert mit allen Details und Signaturen.',
+    formula:'\\mathcal{F}(\\mathcal{D}_{\\mathrm{pdf}}) \\xrightarrow{\\mathrm{sign}} \\mathcal{D}_{\\mathrm{final}}, \\quad \\mathrm{hash}(\\mathcal{D}_{\\mathrm{final}}) = H',
+    rezultat:'Komplettes Dokument bereit zum Download.' 
+  },
+}
+
+async function paraphrase(text: string) {
+  try { 
+    const res = await fetch('/api/paraphrase', {method:'POST', body:JSON.stringify({text})})
+    if (!res.ok) return text
+    const json = await res.json()
+    return strip(json?.text || text)
+  } catch { 
+    return text 
+  }
+}
+
+async function downloadPdfWithRefresh(offerId: string, currentUrl: string) {
+  let urlToUse = currentUrl
+  
+  if (!currentUrl || currentUrl.startsWith('/') || !currentUrl.startsWith('http')) {
+    try {
+      const fresh = await apiFetch(`/offers/${offerId}/export-url`)
+      const freshUrl = fresh?.url || fresh?.download_url || fresh?.pdf
+      if (freshUrl) urlToUse = freshUrl
+    } catch {}
+  }
+
+  const tryBlobDownload = async (url: string) => {
+    const res = await fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit' })
+    if (!res.ok) throw new Error('fetch-failed')
+    const disp = res.headers.get('content-disposition') || ''
+    const nameMatch = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp)
+    const filename = nameMatch ? decodeURIComponent(nameMatch[1]) : 'angebot.pdf'
+    const blob = await res.blob()
+    const objUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(objUrl)
+  }
+  
+  const tryOpenAsLastResort = (url: string) => { 
+    window.open(url, '_blank', 'noopener,noreferrer') 
+  }
+
+  try { 
+    await tryBlobDownload(urlToUse); 
+    return 
+  } catch {
+    try {
+        const fresh = await apiFetch(`/offers/${offerId}/export-url`)
+        const freshUrl = fresh?.url || fresh?.download_url || fresh?.pdf
+        if (freshUrl) { 
+            try { 
+                await tryBlobDownload(freshUrl); 
+                return 
+            } catch { 
+                tryOpenAsLastResort(freshUrl); 
+                return 
+            } 
+        }
+    } catch {}
+    
+    tryOpenAsLastResort(urlToUse)
+  }
+}
+
+function Spinner() { 
+  return (
+    <div className="py-2 flex justify-center">
+      <Loader2 className="h-4 w-4 animate-spin text-neutral-400"/>
+    </div>
+  ) 
+}
+
+function FitFormula({ html }: { html: string }) {
+  const outerRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
+  
+  useEffect(() => {
+    const outer = outerRef.current, inner = innerRef.current
+    if (!outer || !inner) return
+    
+    inner.style.transform = 'scale(1)'
+    inner.style.transformOrigin = 'left top'
+    
+    const maxW = outer.clientWidth - 20
+    const w = inner.scrollWidth
+    
+    if (w > maxW && maxW > 0) {
+      const scale = Math.max(0.65, maxW / w)
+      inner.style.transform = `scale(${scale})`
+    }
+  }, [html])
+  
+  return (
+    <div ref={outerRef} className="w-full overflow-hidden">
+      <div ref={innerRef} className="w-fit max-w-full">
+        <div className="math-note rounded-lg px-3 py-2 border border-white/10">
+          <div className="katex-block text-left break-words" dangerouslySetInnerHTML={{ __html: html }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FormulaBlock({ input }: { input: string }) {
+  let content: JSX.Element
+  
+  try {
+    const html = katex.renderToString(input, {
+      displayMode: true,
+      throwOnError: true,
+      strict: false,
+      trust: false,
+      maxSize: 100
+    })
+    
+    content = <FitFormula html={html} />
+  } catch (e) {
+    console.warn('KaTeX render error:', e);
+    content = (
+      <div className="math-note rounded-lg px-3 py-2 border border-white/10 bg-coffee-800/40">
+        <div className="text-sm text-sand/85 font-mono break-words leading-relaxed">
+          {input}
+        </div>
+      </div>
+    )
+  }
+  
+  return <div className="my-2">{content}</div>
+}
+
+function TypeWriter({ text, speed = 16, instant = false }: { text: string; speed?: number; instant?: boolean }) {
+  const [out, setOut] = useState('')
+  const safeText = safeString(text)
+
+  useEffect(() => {
+    if (instant) {
+      setOut(safeText)
+      return
+    }
+    
+    let i = 0, alive = true
+    const tick = () => { 
+      if(alive && i<=safeText.length){ 
+        setOut(safeText.slice(0,i)); 
+        i++; 
+        setTimeout(tick, speed) 
+      } 
+    }
+    tick()
+    return () => { alive = false }
+  }, [safeText, speed, instant])
+  
+  return <span>{out}</span>
+}
+
+function MessageRow({ role, text, instant = false }: { role: string, text: string, instant?: boolean }) {
+  const safeContent = safeString(text)
+  const displayContent = strip(safeContent)
+  
+  return (
+    <div className={`flex items-start gap-3 mb-2 ${instant ? '' : 'animate-fade-in'}`}>
+      <div className="shrink-0 text-neutral-300 mt-1">
+        {role==='ai' ? <Cpu size={18}/> : role==='formula' ? <FunctionSquare size={18}/> : <CheckCircle2 size={18}/>}
+      </div>
+      <div className="text-[16px] leading-relaxed text-neutral-100">
+        {role==='formula' ? <FormulaBlock input={displayContent} /> : <TypeWriter text={displayContent} instant={instant} />}
+      </div>
+    </div>
+  )
+}
+
+function SmartImage({ file, instant = false }: { file: FeedFile, instant?: boolean }) {
+  const [isPortrait, setIsPortrait] = useState(false)
+  
+  return (
+    <img 
+      src={file.url}
+      onLoad={(e) => {
+        const img = e.currentTarget
+        setIsPortrait(img.naturalHeight > img.naturalWidth)
+      }}
+      className={`rounded-lg border border-white/10 shadow-lg hover:shadow-xl transition-shadow ${
+        isPortrait ? 'w-[60%] ml-0' : 'w-full'
+      } ${instant ? '' : 'animate-fade-in'}`}
+      alt="result" 
+    />
+  )
+}
+
+/* ========= MAIN COMPONENT ========= */
+export default function LiveFeed() {
+  const [rows, setRows] = useState<Row[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
+  const [offerId, setOfferId] = useState<string|null>(null)
+  const [runId, setRunId] = useState<string|null>(null)
+  const [computing, setComputing] = useState(false)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [canDownloadAdminPdf, setCanDownloadAdminPdf] = useState(false)
+  const [progress, setProgress] = useState(0) // 0-100
+  const [currentStageName, setCurrentStageName] = useState<string | null>(null)
+
+  const filesByStage = useRef<Record<string, FeedFile[]>>({})
+  const processedStages = useRef<Set<string>>(new Set())
+  const stageQueue = useRef<string[]>([])
+  const processing = useRef(false)
+  const sinceRef = useRef<number|undefined>(undefined)
+  const currentStageRef = useRef<string|null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const titleIndexRef = useRef<Record<string, number>>({})
+  
+  const finalPdfUrlRef = useRef<string|null>(null)
+  const isHistoryMode = useRef(false)
+  const allStagesCompleted = useRef(false)
+
+  const queuedStages = useRef<Set<string>>(new Set())
+  const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean } | null>(null)
+
+  // ✅ [FIX CRITIC] Session ID pentru a invalida procesele vechi la reset
+  const sessionRef = useRef<number>(0)
+  const activeRunIdRef = useRef<string|null>(null)
+
+  useEffect(() => { 
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) 
+  }, [rows])
+
+  // Actualizează progresul periodic când se procesează etape
+  useEffect(() => {
+    if (!computing && !runId) {
+      setProgress(0)
+      setCurrentStageName(null)
+      return
+    }
+    
+    const interval = setInterval(() => {
+      if (!computing && !runId) {
+        setProgress(0)
+        setCurrentStageName(null)
+        return
+      }
+      
+      const { progress: newProgress, currentStageName: newStageName } = calculateProgress(
+        processedStages.current,
+        currentStageRef.current
+      )
+      
+      setProgress(newProgress)
+      setCurrentStageName(newStageName)
+    }, 500) // Actualizează la fiecare 500ms
+    
+    return () => clearInterval(interval)
+  }, [computing, runId])
+
+  // Obține flag-ul can_download_admin_pdf din /me
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await apiFetch('/me')
+        const canDownload = me?.tenant?.can_download_admin_pdf === true
+        setCanDownloadAdminPdf(canDownload)
+      } catch {
+        setCanDownloadAdminPdf(false)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    activeRunIdRef.current = runId
+  }, [runId])
+
+  useEffect(() => {
+    const reset = () => { 
+      // ✅ INCREMENTEAZĂ SESIUNEA LA RESET (Oprește orice proces async vechi)
+      sessionRef.current = sessionRef.current + 1
+
+      setRows([]); 
+      setGroups([]); 
+      filesByStage.current={}; 
+      processedStages.current.clear(); 
+      stageQueue.current=[]; 
+      processing.current=false; 
+      sinceRef.current=undefined; 
+      currentStageRef.current = null;
+      titleIndexRef.current = {};
+      finalPdfUrlRef.current = null;
+      isHistoryMode.current = false;
+      allStagesCompleted.current = false;
+      queuedStages.current.clear();
+      pendingCompletionRef.current = null;
+      
+      setRunId(null)
+      activeRunIdRef.current = null
+      setComputing(false)
+      setProgress(0)
+      setCurrentStageName(null)
+    }
+    
+    window.addEventListener('offer:compute-started', (e:any) => { 
+      // 1. Întâi resetăm totul (inclusiv incrementarea sessionRef pentru filtrare)
+      reset() 
+      
+      // 2. Apoi setăm noile valori
+      setOfferId(e.detail.offerId); 
+      setComputing(true) // Activează progress bar-ul
+      // Folosim setTimeout pentru a ne asigura că React procesează reset-ul înainte de setarea noilor valori
+      // Deși reset() e sincron, separarea ajută la claritate și batching
+      setTimeout(() => {
+          setRunId(e.detail.runId);
+          activeRunIdRef.current = e.detail.runId; // Actualizăm și ref-ul manual pentru siguranță
+          isHistoryMode.current = false;
+          allStagesCompleted.current = false;
+      }, 0);
+    })
+
+    window.addEventListener('offer:new', reset)
+    
+    return () => {
+        window.removeEventListener('offer:new', reset)
+    }
+  }, [])
+
+  const nextTitle = (stage: string): string => {
+    const variants = STAGE_TITLES[stage] || [stage]
+    const idx = (titleIndexRef.current[stage] ?? -1) + 1
+    titleIndexRef.current[stage] = idx % variants.length
+    return variants[titleIndexRef.current[stage]]
+  }
+
+  useEffect(() => {
+    const loadHistory = async (e: any) => {
+      // ✅ Invalidăm sesiunea veche și aici
+      sessionRef.current = sessionRef.current + 1
+      
+      const id = e.detail.offerId as string
+      setOfferId(id)
+      isHistoryMode.current = true
+      allStagesCompleted.current = false
+      
+      try {
+        const historyData = await apiFetch(`/calc-events/history?offer_id=${id}`)
+        
+        if (historyData.items && historyData.items.length > 0) {
+          setRows([])
+          setGroups([])
+          filesByStage.current = {}
+          processedStages.current.clear()
+          stageQueue.current = []
+          processing.current = false
+          currentStageRef.current = null
+          
+          setRunId(historyData.run_id)
+          activeRunIdRef.current = historyData.run_id
+          
+          for (const ev of historyData.items) {
+            const match = ev.message.match(/^\s*\[([^\]]+)\]/)
+            if (match && ev.payload?.files) {
+              const stage = match[1].trim()
+              const newFiles = ev.payload.files.filter((f: any) => isImage(f))
+              const existing = filesByStage.current[stage] || []
+              const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
+              
+              if (uniqueNew.length > 0) {
+                filesByStage.current[stage] = [...existing, ...uniqueNew]
+              }
+            }
+          }
+          
+          const uniqueStages = [...new Set(
+            historyData.items
+              .map((ev: any) => ev.message.match(/^\s*\[([^\]]+)\]/)?.[1])
+              .filter(Boolean)
+          )] as string[]
+          
+          stageQueue.current = uniqueStages.filter(s => STAGE_TO_SEQUENCE[s])
+          await processQueueInstant()
+          allStagesCompleted.current = true
+          
+          try {
+            const fresh = await apiFetch(`/offers/${id}/export-url`)
+            const url = fresh?.url || fresh?.download_url || fresh?.pdf
+            if (url) {
+              addCongrats(id, url)
+              window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
+                detail: { offerId: id, pdfUrl: url } 
+              }))
+            }
+          } catch {}
+        } else {
+          setRunId(null)
+          activeRunIdRef.current = null
+          setRows([])
+          setGroups([])
+          filesByStage.current = {}
+          processedStages.current.clear()
+          stageQueue.current = []
+          processing.current = false
+          currentStageRef.current = null
+          allStagesCompleted.current = true
+          
+          try {
+            const fresh = await apiFetch(`/offers/${id}/export-url`)
+            const url = fresh?.url || fresh?.download_url || fresh?.pdf
+            
+            if (url) {
+              setPdfUrl(url)
+              setComputing(false)
+              window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
+                detail: { offerId: id, pdfUrl: url } 
+              }))
+            } else {
+              setPdfUrl(null)
+              setComputing(false)
+            }
+          } catch {
+            setPdfUrl(null)
+            setComputing(false)
+          }
+        }
+      } catch (err) {
+        setRunId(null)
+        activeRunIdRef.current = null
+        setRows([])
+        setGroups([])
+        filesByStage.current = {}
+        processedStages.current.clear()
+        stageQueue.current = []
+        processing.current = false
+        currentStageRef.current = null
+        setPdfUrl(null)
+        setComputing(false)
+        allStagesCompleted.current = true
+        setProgress(100)
+        setCurrentStageName('Abgeschlossen')
+      }
+    }
+    
+    window.addEventListener('offer:selected', loadHistory)
+    return () => window.removeEventListener('offer:selected', loadHistory)
+  }, [])
+
+  useEffect(() => {
+    if(!runId || isHistoryMode.current) return
+    
+    // ✅ CAPTURE SESSIONS ID
+    const mySessionId = sessionRef.current
+    
+    const iv = setInterval(async () => {
+      // ✅ CHECK 1: Sesiune invalidată înainte de request
+      if (sessionRef.current !== mySessionId) return
+      
+      try {
+        const res = await apiFetch(`/calc-events?run_id=${runId}${sinceRef.current ? `&sinceId=${sinceRef.current}` : ''}`)
+        
+        // ✅ CHECK 2: Sesiune invalidată în timpul request-ului
+        if (sessionRef.current !== mySessionId) return
+        if (activeRunIdRef.current !== runId) return
+
+        if(res.items?.length) {
+          const last = res.items[res.items.length-1]
+          sinceRef.current = last.id
+          
+          for(const ev of res.items) {
+            const match = ev.message.match(/^\s*\[([^\]]+)\]/)
+            if(!match) continue
+            const stage = match[1].trim()
+            
+            if(ev.payload?.files?.length) {
+              const newImages = ev.payload.files.filter(isImage)
+              const existing = filesByStage.current[stage] || []
+              const uniqueNew = newImages.filter((nf: FeedFile) => !existing.some(ex => ex.url === nf.url))
+              
+              if (uniqueNew.length > 0) {
+                  filesByStage.current[stage] = [...existing, ...uniqueNew]
+                  const pdf = ev.payload.files.find(isPdf)
+                  if(pdf && (stage === 'pdf_generation' || stage === 'final')) {
+                     finalPdfUrlRef.current = pdf.url
+                  }
+              }
+            }
+
+            if(stage === 'computation_complete') {
+              allStagesCompleted.current = true
+              setProgress(100)
+              setCurrentStageName('Abgeschlossen')
+              await new Promise(r => setTimeout(r, 1500));
+              if (sessionRef.current !== mySessionId) return // Check after delay
+
+              let realPdfUrl: string | null = null
+              let adminPdfUrl: string | null = null
+              if(offerId) {
+                try {
+                    // Obține URL-ul pentru PDF-ul normal și admin PDF-ul dacă e disponibil
+                    const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
+                    realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf
+                    adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
+                } catch(e) {
+                    console.warn("Failed to fetch export url on complete", e)
+                }
+              }
+
+              if (!realPdfUrl && finalPdfUrlRef.current) {
+                realPdfUrl = finalPdfUrlRef.current
+              }
+
+              if (realPdfUrl && offerId) {
+                pendingCompletionRef.current = { 
+                  offerId, 
+                  pdfUrl: realPdfUrl,
+                  adminPdfUrl: adminPdfUrl,
+                  canDownloadAdminPdf: canDownloadAdminPdf
+                }
+                if (STAGE_TO_SEQUENCE[stage] && !queuedStages.current.has(stage)) {
+                  queuedStages.current.add(stage)
+                  stageQueue.current.push(stage)
+                  processQueue()
+                }
+              }
+              continue
+            }
+
+            if (STAGE_TO_SEQUENCE[stage]) {
+              if (processedStages.current.has(stage)) {
+                if (ev.payload?.files?.length) {
+                  const newImages = ev.payload.files.filter(isImage)
+                  setGroups(prev => {
+                    const groupIndex = prev.findIndex(g => g.stage === stage)
+                    if (groupIndex >= 0) {
+                      const group = prev[groupIndex]
+                      const newItems = group.items.map(item => {
+                          if (item.kind === 'image') {
+                              const uniqueForState = newImages.filter((nf: FeedFile) => !item.files.some(ex => ex.url === nf.url))
+                              if (uniqueForState.length > 0) {
+                                  return { ...item, files: [...item.files, ...uniqueForState] }
+                              }
+                          }
+                          return item
+                      })
+                      if (newItems !== group.items) {
+                          const updatedGroup = { ...group, items: newItems }
+                          const next = [...prev]
+                          next[groupIndex] = updatedGroup
+                          setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+                          return next
+                      }
+                    }
+                    return prev
+                  })
+                }
+              } else if (!queuedStages.current.has(stage) && currentStageRef.current !== stage) {
+                queuedStages.current.add(stage)
+                stageQueue.current.push(stage)
+                processQueue()
+              }
+            }
+          }
+        }
+      } catch {}
+    }, 1000)
+    
+    return () => clearInterval(iv)
+  }, [runId, offerId])
+
+  const processQueue = async () => {
+    // ✅ CHECK RUN ID
+    if (!activeRunIdRef.current && !isHistoryMode.current) return
+
+    if(processing.current || !stageQueue.current.length) return
+    processing.current = true
+    const stage = stageQueue.current.shift()!
+    currentStageRef.current = stage
+    
+    // Actualizează progresul cu etapa curentă
+    const progressData = calculateProgress(
+      processedStages.current,
+      stage
+    )
+    setProgress(progressData.progress)
+    setCurrentStageName(progressData.currentStageName)
+    
+    // ✅ PASS CURRENT SESSION ID
+    await executeStage(stage, false, sessionRef.current)
+    
+    processedStages.current.add(stage)
+    currentStageRef.current = null
+    
+    // Actualizează progresul după finalizarea etapei
+    const finalProgressData = calculateProgress(
+      processedStages.current,
+      null
+    )
+    setProgress(finalProgressData.progress)
+    setCurrentStageName(finalProgressData.currentStageName)
+    
+    processing.current = false
+    processQueue()
+  }
+
+  const processQueueInstant = async () => {
+    while(stageQueue.current.length > 0) {
+      const stage = stageQueue.current.shift()!
+      await executeStageInstant(stage)
+      processedStages.current.add(stage)
+      queuedStages.current.add(stage)
+    }
+  }
+
+  // ✅ RECEIVE SESSION ID & CHECK VALIDITY
+  const executeStage = async (stage: string, instant: boolean = false, sessionId?: number) => {
+    const isAborted = () => sessionId !== undefined && sessionRef.current !== sessionId
+    if (isAborted()) return
+
+    const indices = STAGE_TO_SEQUENCE[stage]
+    if(!indices) return
+
+    const gid = generateId('g-')
+    const title = nextTitle(stage)
+    
+    setGroups(prev => {
+      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items: [] }
+      const next = [...prev, g]
+      setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+      return next
+    })
+
+    const addItem = (item: SyntheticItem) => {
+      setGroups(prev => {
+        const idx = prev.findIndex(g => g.id === gid)
+        if(idx<0) return prev
+        const g = { ...prev[idx], items: [...prev[idx].items, item] }
+        const next = [...prev]; 
+        next[idx] = g
+        setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+        return next
+      })
+    }
+    
+    const replaceSpinner = (item: SyntheticItem) => {
+       setGroups(prev => {
+        const idx = prev.findIndex(g => g.id === gid)
+        if(idx<0) return prev
+        const items = [...prev[idx].items]
+        if(items.length > 0 && items[items.length-1].kind === 'spinner') {
+            items[items.length-1] = item
+        } else {
+            items.push(item)
+        }
+        const g = { ...prev[idx], items }
+        const next = [...prev]; 
+        next[idx] = g
+        setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+        return next
+      }) 
+    }
+
+    if (stage === 'computation_complete') {
+      const completion = pendingCompletionRef.current
+      if (completion) {
+        const item: CongratsItem = {
+          kind: 'congrats',
+          stage: 'final',
+          offerId: completion.offerId,
+          pdfUrl: completion.pdfUrl,
+          adminPdfUrl: completion.adminPdfUrl || null,
+          canDownloadAdminPdf: completion.canDownloadAdminPdf || false,
+          __id: 'final'
+        }
+        addItem(item)
+        window.dispatchEvent(new CustomEvent('offer:pdf-ready', {
+          detail: { offerId: completion.offerId, pdfUrl: completion.pdfUrl }
+        }))
+        pendingCompletionRef.current = null
+      }
+      if (!instant) {
+        setRows(prev => [...prev, { kind: 'gap', id: generateId('gap-') }])
+      }
+      return
+    }
+
+    if (indices.length > 0) {
+        await playMessage(indices[0], addItem, replaceSpinner, instant)
+        if (isAborted()) return // ✅ STOP
+    }
+
+    if (STAGES_WITH_IMAGES.includes(stage)) {
+        if (!instant) {
+          addItem({ kind: 'spinner', stage, __id: generateId('spin-') } as SpinnerItem)
+        }
+        
+        let foundFiles: FeedFile[] = []
+        const start = Date.now()
+        
+        while(Date.now() - start < 25000) {
+            if (isAborted()) return // ✅ STOP
+
+            const files = filesByStage.current[stage]
+            if (files && files.length > 0) {
+                foundFiles = files
+                if (!instant) await new Promise(r => setTimeout(r, 1000))
+                if (isAborted()) return // ✅ STOP
+                foundFiles = filesByStage.current[stage] || foundFiles
+                break
+            }
+            await new Promise(r => setTimeout(r, 1000))
+        }
+
+        if (foundFiles.length > 0) {
+            if (instant) {
+              addItem({ kind: 'image', stage, files: foundFiles, __id: generateId('img-') } as ImageItem)
+            } else {
+              replaceSpinner({ kind: 'image', stage, files: foundFiles, __id: generateId('img-') } as ImageItem)
+              await new Promise(r => setTimeout(r, EXTRA_MARGIN_AFTER_IMAGE_MS))
+            }
+        } else {
+            if (!instant) {
+              setGroups(prev => {
+                   const idx = prev.findIndex(g => g.id === gid)
+                   if(idx<0) return prev
+                   const items = prev[idx].items.filter(i => i.kind !== 'spinner')
+                   const next = [...prev]; 
+                   next[idx] = { ...prev[idx], items }
+                   setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+                   return next
+              })
+            }
+        }
+    }
+
+    for (let i = 1; i < indices.length; i++) {
+        if (isAborted()) return // ✅ STOP
+
+        addItem({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
+        await playMessage(indices[i], addItem, replaceSpinner, instant)
+    }
+    
+    if (!instant) {
+      setRows(prev => [...prev, { kind: 'gap', id: generateId('gap-') }])
+    }
+  }
+
+  const executeStageInstant = async (stage: string) => {
+    const indices = STAGE_TO_SEQUENCE[stage]
+    if(!indices) return
+    const gid = generateId('g-')
+    const title = nextTitle(stage)
+    const items: SyntheticItem[] = []
+
+    for (let i = 0; i < indices.length; i++) {
+      const m = MESSAGES[indices[i]]
+      if (m) {
+        if (i > 0) {
+          items.push({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
+        }
+        items.push({ kind: 'text', role: 'ai', text: m.ai, stage, __id: `ai-${indices[i]}` } as TextItem)
+        items.push({ kind: 'text', role: 'formula', text: m.formula, stage, __id: `f-${indices[i]}` } as TextItem)
+        items.push({ kind: 'text', role: 'rezultat', text: m.rezultat, stage, __id: `r-${indices[i]}` } as TextItem)
+      }
+    }
+
+    if (STAGES_WITH_IMAGES.includes(stage)) {
+      const files = filesByStage.current[stage]
+      if (files && files.length > 0) {
+        items.push({ kind: 'image', stage, files, __id: generateId('img-') } as ImageItem)
+      }
+    }
+
+    setGroups(prev => {
+      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items }
+      const next = [...prev, g]
+      setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+      return next
+    })
+  }
+
+  const playMessage = async (idx: number, add: any, replace: any, instant: boolean = false) => {
+    const m = MESSAGES[idx]; 
+    if(!m) return
+    
+    if (instant) {
+      add({ kind:'text', role:'ai', text:m.ai, __id:`t1-${idx}` } as TextItem)
+      add({ kind:'text', role:'formula', text:m.formula, __id:`t2-${idx}` } as TextItem)
+      add({ kind:'text', role:'rezultat', text:m.rezultat, __id:`t3-${idx}` } as TextItem)
+    } else {
+      add({ kind:'spinner', stage:'' } as SpinnerItem)
+      const cleanAI = strip(m.ai)
+      const t1 = await paraphrase(cleanAI) 
+      replace({ kind:'text', role:'ai', text:t1, __id:`t1-${idx}` } as TextItem)
+      await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
+
+      add({ kind:'spinner', stage:'' } as SpinnerItem)
+      replace({ kind:'text', role:'formula', text:m.formula, __id:`t2-${idx}` } as TextItem)
+      await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
+
+      add({ kind:'spinner', stage:'' } as SpinnerItem)
+      const cleanR = strip(m.rezultat)
+      const t3 = await paraphrase(cleanR)
+      replace({ kind:'text', role:'rezultat', text:t3, __id:`t3-${idx}` } as TextItem)
+      await new Promise(r => setTimeout(r, SAFE_GAP_BETWEEN_ITEMS_MS))
+    }
+  }
+
+  const addCongrats = (oid: string, url: string) => {
+     setGroups(prev => {
+         const clean = prev.filter(g => g.stage !== 'final')
+         const g: Group = { 
+           id: 'final', 
+           stage: 'final', 
+           startedAt: new Date().toISOString(), 
+           title: 'Fertig', 
+           items: [
+             { kind: 'congrats', stage: 'final', offerId: oid, pdfUrl: url, __id: 'final' } as CongratsItem
+           ]
+         }
+         const next = [...clean, g]
+         setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
+         return next
+     })
+  }
+
+  return (
+    <div className="h-full w-full overflow-hidden flex flex-col">
+      {/* Progress Bar */}
+      {computing && runId && (
+        <div className="shrink-0 px-3 pt-3 pb-2 border-b border-white/10 bg-panel/40">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-medium text-sand/80">
+              {currentStageName || 'Verarbeitung...'}
+            </div>
+            <div className="text-xs font-semibold text-[#FF9F0F]">
+              {progress}%
+            </div>
+          </div>
+          <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-[#FF9F0F] to-[#FFB84D] transition-all duration-500 ease-out rounded-full"
+              style={{ width: `${Math.max(2, progress)}%` }}
+            />
+          </div>
+        </div>
+      )}
+      
+      <div ref={scrollRef} className="pretty-scroll flex-1 overflow-y-auto p-3 space-y-8">
+         {rows.length===0 && (
+           <div className="text-neutral-400 text-center mt-10">
+             Bereit zum Start...
+           </div>
+         )}
+         
+         {rows.map(r => {
+             if(r.kind === 'gap') {
+               return (
+                 <div key={r.id} className="flex justify-center py-4">
+                   <Loader2 className="h-6 w-6 animate-spin text-sand/60" />
+                 </div>
+               )
+             }
+             
+             const g = r.group
+             const instant = isHistoryMode.current
+             
+             return (
+                 <div key={g.id} className={`border-b border-white/10 pb-6 ${instant ? '' : 'animate-slide-up'}`}>
+                     <div className="text-xs text-neutral-500 mb-1">
+                       {new Date(g.startedAt).toLocaleTimeString()}
+                     </div>
+                     <div className="text-lg font-bold text-sand mb-3">
+                       {g.title}
+                     </div>
+                     
+                     <div className="space-y-4">
+                         {g.items.filter(Boolean).map((it, idx) => {
+                             const uniqueKey = `${it.__id}-${idx}`;
+
+                             if(it.kind === 'text') {
+                               return <MessageRow key={uniqueKey} role={it.role} text={it.text} instant={instant} />
+                             }
+                             
+                             if(it.kind === 'spinner') {
+                               return <Spinner key={uniqueKey} />
+                             }
+                             
+                             if(it.kind === 'break') {
+                               return <div key={uniqueKey} className="h-px bg-white/5 my-2" />
+                             }
+                             
+                             if(it.kind === 'image') {
+                               return (
+                                 <div key={uniqueKey} className="grid gap-4">
+                                     {it.files.map((f, imgIdx) => (
+                                       <SmartImage key={`${f.url}-${imgIdx}`} file={f} instant={instant} />
+                                     ))}
+                                 </div>
+                               )
+                             }
+                             
+                             if(it.kind === 'congrats') {
+                               return (
+                                 <div
+                                   key={uniqueKey}
+                                   className="relative overflow-hidden rounded-xl2 p-4 shadow-soft animate-pulse-slow"
+                                   style={{
+                                     border: '1px solid rgba(216,162,94,0.32)',
+                                     background:
+                                       'linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02)),' +
+                                       'rgba(62,44,34,0.92)'
+                                   }}
+                                 >
+                                   <div className="congrats-ribbon" />
+                                   <div className="flex items-start gap-3">
+                                     <div
+                                       className="shrink-0 h-9 w-9 rounded-full flex items-center justify-center animate-pop shadow-soft bg-[#FF9F0F] text-white"
+                                     >
+                                       <CheckCircle2 className="h-6 w-6" />
+                                     </div>
+                                     <div className="flex-1">
+                                       <div className="text-[18px] font-semibold text-[#FF9F0F]">
+                                         Angebot erfolgreich erstellt!
+                                       </div>
+                                       <div className="text-sm text-white/70 mt-1">
+                                         Das PDF ist bereit. Sie können das Dokument über den Button unten herunterladen.
+                                       </div>
+                                       <div className="mt-3 flex flex-col gap-2">
+                                         <button
+                                           onClick={() => downloadPdfWithRefresh(it.offerId, it.pdfUrl)}
+                                           className="btn-sun"
+                                         >
+                                           <Download className="h-4 w-4" /> Angebot herunterladen (PDF)
+                                         </button>
+                                         {it.canDownloadAdminPdf && it.adminPdfUrl && (
+                                           <button
+                                             onClick={() => downloadPdfWithRefresh(it.offerId, it.adminPdfUrl!)}
+                                             className="btn-sun-secondary"
+                                           >
+                                             <Download className="h-4 w-4" /> Detailliertes Angebot herunterladen (PDF)
+                                           </button>
+                                         )}
+                                       </div>
+                                     </div>
+                                   </div>
+                                 </div>
+                               )
+                             }
+                             
+                             return null
+                         })}
+                     </div>
+                 </div>
+             )
+         })}
+      </div>
+      
+      <style jsx global>{`
+        :root {
+          --color-caramel: #D8A25E;
+          --color-sand: #E8D4B8;
+          --color-coffee: #3E2C22;
+          --color-ink: #1A1410;
+        }
+        
+        @keyframes fade-in {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes slide-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes pulse-slow {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.8; }
+        }
+        
+        @keyframes pop-in { 
+          0% { transform: scale(.6); opacity: 0 } 
+          100% { transform: scale(1); opacity: 1 } 
+        }
+        
+        @keyframes shimmer {
+          from { transform: translate3d(-2%, -1%, 0); opacity: .85; }
+          to   { transform: translate3d(2%, 1%, 0);  opacity: 1; }
+        }
+        
+        .animate-fade-in {
+          animation: fade-in 0.3s ease-out;
+        }
+        
+        .animate-slide-up {
+          animation: slide-up 0.4s ease-out;
+        }
+        
+        .animate-pulse-slow {
+          animation: pulse-slow 2s ease-in-out infinite;
+        }
+        
+        .animate-pop {
+          animation: pop-in .45s cubic-bezier(.21,1.02,.73,1) both;
+        }
+        
+        .congrats-ribbon {
+          position: absolute;
+          inset: -20%;
+          background:
+            radial-gradient(ellipse at top left, rgba(255,159,15,.15), transparent 55%),
+            radial-gradient(ellipse at bottom right, rgba(255,159,15,.12), transparent 55%);
+          pointer-events: none;
+          animation: shimmer 3.2s ease-in-out infinite alternate;
+        }
+        
+        .btn-sun {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 1rem;
+          background: #FF9F0F;
+          color: white;
+          font-weight: 600;
+          border-radius: 0.5rem;
+          border: none;
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 0 2px 8px rgba(255,159,15,0.3);
+        }
+        
+        .btn-sun:hover {
+          background: #FF9F0F;
+          opacity: 0.9;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(255,159,15,0.4);
+        }
+        
+        .btn-sun:active {
+          transform: translateY(0);
+          box-shadow: 0 2px 6px rgba(255,159,15,0.3);
+        }
+        
+        .btn-sun-secondary {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 1rem;
+          background: rgba(255,159,15,0.15);
+          color: #FF9F0F;
+          font-weight: 600;
+          border-radius: 0.5rem;
+          border: 1px solid rgba(255,159,15,0.4);
+          cursor: pointer;
+          transition: all 0.2s;
+          box-shadow: 0 2px 8px rgba(255,159,15,0.15);
+        }
+        
+        .btn-sun-secondary:hover {
+          background: rgba(255,159,15,0.25);
+          border-color: rgba(255,159,15,0.6);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(255,159,15,0.25);
+        }
+        
+        .btn-sun-secondary:active {
+          transform: translateY(0);
+          box-shadow: 0 2px 6px rgba(255,159,15,0.15);
+        }
+        
+        .rounded-xl2 {
+          border-radius: 0.75rem;
+        }
+        
+        .shadow-soft {
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        }
+        
+        .text-sand {
+          color: var(--color-sand);
+        }
+        
+        .text-sand\\/85 {
+          color: rgba(232, 212, 184, 0.85);
+        }
+        
+        .text-sand\\/60 {
+          color: rgba(232, 212, 184, 0.6);
+        }
+      `}</style>
+    </div>
+  )
+}
