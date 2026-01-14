@@ -1164,12 +1164,15 @@ export default function StepWizard() {
       if (architecturalPlanData && architecturalPlanData.storagePath) {
           setProcessStatus((DE.common as any).validatingPlan || 'Plan wird überprüft...')
           
+          const validatePayload = { 
+              storagePath: architecturalPlanData.storagePath, 
+              mimeType: architecturalPlanData.mime 
+          }
+          console.log(`🔍 [VALIDATE] Sending validation request:`, validatePayload)
+          
           const aiRes = await apiFetch('/validate-plan', {
               method: 'POST',
-              body: JSON.stringify({ 
-                  storagePath: architecturalPlanData.storagePath, 
-                  mimeType: architecturalPlanData.mime 
-              })
+              body: JSON.stringify(validatePayload)
           })
           
           const aiJson = aiRes.valid !== undefined ? aiRes : await aiRes.json?.().catch(()=>({valid:true}));
