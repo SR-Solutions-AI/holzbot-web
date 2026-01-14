@@ -38,8 +38,13 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     // Mică curățenie ca să nu avem dublu slash (//)
     const cleanBase = base.endsWith('/') ? base.slice(0, -1) : base
     const cleanPath = path.startsWith('/') ? path : `/${path}`
+    
+    // Adăugăm prefixul /api dacă base URL-ul este https://api.holzbot.com (pentru VPS)
+    // și path-ul nu începe deja cu /api
+    const needsApiPrefix = cleanBase.includes('api.holzbot.com') && !cleanPath.startsWith('/api')
+    const finalPath = needsApiPrefix ? `/api${cleanPath}` : cleanPath
 
-    const res = await fetch(`${cleanBase}${cleanPath}`, { ...options, headers })
+    const res = await fetch(`${cleanBase}${finalPath}`, { ...options, headers })
     
     if (!res.ok) {
         // 404 on export-url is a normal state: PDF not generated yet.

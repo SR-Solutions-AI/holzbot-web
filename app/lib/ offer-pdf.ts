@@ -17,7 +17,9 @@ export function storagePublicUrl(storagePath: string) {
 
 // Cere lista de fisiere din backend si returneaza primul PDF (cel mai nou)
 export async function getFirstPdfUrlForOffer(offerId: string): Promise<string | null> {
-  const res = await fetch(`${API_URL}/file?offerId=${offerId}`, { cache: "no-store" });
+  const needsApiPrefix = API_URL.includes('api.holzbot.com')
+  const apiPath = needsApiPrefix ? '/api/file' : '/file'
+  const res = await fetch(`${API_URL}${apiPath}?offerId=${offerId}`, { cache: "no-store" });
   if (!res.ok) return null;
 
   const payload = await res.json();
