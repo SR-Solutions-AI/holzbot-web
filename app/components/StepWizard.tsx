@@ -616,6 +616,8 @@ export default function StepWizard() {
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savingStepsRef = useRef<Set<string>>(new Set()) // Track in-flight saves to prevent duplicates
 
   const saveDebounceRef = useRef<any>(null)
   const lastSavedRef = useRef<string>('')
@@ -979,16 +981,37 @@ export default function StepWizard() {
   }
 
   async function saveStepLive(stepKey: string, dataObj: Record<string, any>) {
+    // Prevent duplicate saves for the same step
+    if (savingStepsRef.current.has(stepKey)) {
+      console.log(`⏭️ [SAVE] Skipping duplicate save for step ${stepKey}`)
+      return
+    }
+    
+    savingStepsRef.current.add(stepKey)
+    
     try {
       console.log(`💾 [SAVE] Saving step ${stepKey}:`, dataObj)
       setSaveStatus('saving')
       const id = await ensureOffer()
+      const startTime = Date.now()
       const response = await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: dataObj }) })
-      console.log(`✅ [SAVE] Step ${stepKey} saved successfully for offer ${id}`)
+      const duration = Date.now() - startTime
+      console.log(`✅ [SAVE] Step ${stepKey} saved successfully for offer ${id} (took ${duration}ms)`)
+      
       // Update drafts locally so data is available when user navigates back
       setDrafts(prev => ({ ...prev, [stepKey]: dataObj }))
       await maybeUpdateOfferTitle(id)
-      window.dispatchEvent(new Event('offers:refresh'))
+      
+      // Only refresh HistoryList after dateGenerale step (first step)
+      // Other steps don't need to refresh the list
+      if (stepKey === 'dateGenerale') {
+        // Debounced refresh to avoid multiple reloads
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+        refreshTimerRef.current = setTimeout(() => {
+          window.dispatchEvent(new Event('offers:refresh'))
+        }, 500) // Debounce refresh by 500ms to batch multiple saves
+      }
+      
       setSaveStatus('saved')
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1600)
@@ -997,6 +1020,11 @@ export default function StepWizard() {
       setSaveStatus('error')
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000)
+    } finally {
+      // Remove from in-flight set after a short delay to allow for rapid successive saves
+      setTimeout(() => {
+        savingStepsRef.current.delete(stepKey)
+      }, 1000)
     }
   }
   
@@ -1065,9 +1093,22 @@ export default function StepWizard() {
       return
     }
     
+    // Cancel any pending autosave to avoid duplicate saves
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current)
+      saveDebounceRef.current = null
+    }
+    
+    // Cancel any pending autosave to avoid duplicate saves
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current)
+      saveDebounceRef.current = null
+    }
+    
     // Save current step before continuing
     if (offerId) {
       try {
+        console.log(`🔍 [ONCONTINUE] Saving step ${step.key} before continue with form data:`, form)
         await saveStepLive(step.key, form)
       } catch (e) {
         console.error('Failed to save step before continue:', e)
@@ -1220,7 +1261,7 @@ export default function StepWizard() {
       const id = await ensureOffer()
       await uploadSingleFile(id, name, file)
 
-      window.dispatchEvent(new Event('offers:refresh'))
+      // Don't refresh HistoryList after upload - only after dateGenerale step
       setSaveStatus('saved')
       if (savedTimerRef.current) clearTimeout(savedTimerRef.current)
       savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1600)
@@ -1257,7 +1298,7 @@ export default function StepWizard() {
         }
         await apiFetch(`/offers/${id}`, { method: 'PATCH', body: JSON.stringify({ meta: updatedMeta }) })
       }
-      window.dispatchEvent(new Event('offers:refresh'))
+      // Don't refresh here - let saveStepLive handle it with debouncing to avoid duplicate refreshes
     } catch {}
   }
 
@@ -2628,7 +2669,7 @@ function DynamicFields({
                     setForm(next)
                     const id = await ensureOffer()
                     await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
-                    window.dispatchEvent(new Event('offers:refresh'))
+                    // Don't refresh HistoryList after select changes - only after dateGenerale step
                   }}
                   options={(f as any).options}
                   placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}

@@ -44,9 +44,19 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     const needsApiPrefix = cleanBase.includes('api.holzbot.com') && !cleanPath.startsWith('/api')
     const finalPath = needsApiPrefix ? `/api${cleanPath}` : cleanPath
 
-    const res = await fetch(`${cleanBase}${finalPath}`, { ...options, headers })
+    // Add timeout for requests (30 seconds max)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000) // 30s timeout
     
-    if (!res.ok) {
+    try {
+      const res = await fetch(`${cleanBase}${finalPath}`, { 
+        ...options, 
+        headers,
+        signal: controller.signal 
+      })
+      clearTimeout(timeoutId)
+      
+      if (!res.ok) {
         // 404 on export-url is a normal state: PDF not generated yet.
         // Avoid noisy console errors and let callers treat it as "no pdf".
         if (res.status === 404 && /\/offers\/[^/]+\/export-url$/.test(cleanPath)) {
@@ -57,7 +67,15 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         const errorText = await res.text().catch(() => res.statusText)
         console.error(`API Fetch Error [${res.status}] la ${cleanBase}${cleanPath}:`, errorText)
         throw new Error(`${res.status} ${res.statusText}`)
+      }
+      
+      return res.json()
+    } catch (error: any) {
+      clearTimeout(timeoutId)
+      if (error.name === 'AbortError') {
+        console.error(`API Fetch Timeout (>30s) la ${cleanBase}${finalPath}`)
+        throw new Error('Request timeout - server took too long to respond')
+      }
+      throw error
     }
-    
-    return res.json()
 }

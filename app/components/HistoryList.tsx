@@ -1,6 +1,6 @@
 
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { apiFetch } from '../lib/supabaseClient'
 import { Plus, Loader2 } from 'lucide-react'
 
@@ -54,11 +54,22 @@ export default function HistoryList({ variant='wood' }: { variant?: 'wood' | 'de
     setItems((data.items || []) as OfferListItem[])
   }
 
+  const loadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  
   useEffect(() => { load() }, [])
   useEffect(() => {
-    const h = () => load()
+    const h = () => {
+      // Debounce reloads to avoid multiple rapid refreshes
+      if (loadDebounceRef.current) clearTimeout(loadDebounceRef.current)
+      loadDebounceRef.current = setTimeout(() => {
+        load()
+      }, 300) // Debounce by 300ms
+    }
     window.addEventListener('offers:refresh', h)
-    return () => window.removeEventListener('offers:refresh', h)
+    return () => {
+      window.removeEventListener('offers:refresh', h)
+      if (loadDebounceRef.current) clearTimeout(loadDebounceRef.current)
+    }
   }, [])
 
   // [FIX CRITIC] Funcția de handler securizată - creează direct offer nou fără modal
