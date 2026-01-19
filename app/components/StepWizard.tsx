@@ -1716,12 +1716,12 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, onBlur }: { form:
         <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
           <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
           <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun
-              value={form.finisajInteriorBeci || 'Tencuială'}
-              onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })}
-              options={finishOptions}
-              displayFor={(opt) => tOption('materialeFinisaj', 'finisajInteriorBeci', opt)}
-            />
+              <SelectSun
+                value={form.finisajInteriorBeci || ''}
+                onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })}
+                options={finishOptions}
+                displayFor={(opt) => tOption('materialeFinisaj', 'finisajInteriorBeci', opt)}
+              />
           </div>
           {errors.finisajInteriorBeci && (
             <span className="text-xs text-orange-400">{errors.finisajInteriorBeci}</span>
@@ -1740,7 +1740,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, onBlur }: { form:
               <span className="wiz-label text-sun/90">Innenausbau - {floorLabel}</span>
               <div className={errors[`finisajInterior_${floorKey}`] ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
                 <SelectSun
-                  value={form[`finisajInterior_${floorKey}`] || 'Tencuială'}
+                  value={form[`finisajInterior_${floorKey}`] || ''}
                   onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })}
                   options={finishOptions}
                   displayFor={(opt) => tOption('materialeFinisaj', `finisajInterior_${floorKey}`, opt)}
@@ -1755,7 +1755,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, onBlur }: { form:
               <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
               <div className={errors[`fatada_${floorKey}`] ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
                 <SelectSun
-                  value={form[`fatada_${floorKey}`] || 'Tencuială'}
+                  value={form[`fatada_${floorKey}`] || ''}
                   onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })}
                   options={finishOptions}
                   displayFor={(opt) => tOption('materialeFinisaj', `fatada_${floorKey}`, opt)}
@@ -1776,7 +1776,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, onBlur }: { form:
             <span className="wiz-label text-sun/90">Innenausbau - Dachgeschoss</span>
             <div className={errors.finisajInteriorMansarda ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
               <SelectSun
-                value={form.finisajInteriorMansarda || 'Tencuială'}
+                value={form.finisajInteriorMansarda || ''}
                 onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })}
                 options={finishOptions}
                 displayFor={(opt) => tOption('materialeFinisaj', 'finisajInteriorMansarda', opt)}
@@ -1809,7 +1809,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, onBlur }: { form:
         <span className="wiz-label text-sun/90">Dachmaterial</span>
         <div className={errors.materialAcoperis ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
           <SelectSun
-            value={form.materialAcoperis || 'Țiglă'}
+            value={form.materialAcoperis || ''}
             onChange={(v) => setForm({ ...form, materialAcoperis: v })}
             options={['Țiglă', 'Tablă', 'Membrană']}
             displayFor={(opt) => tOption('materialeFinisaj', 'materialAcoperis', opt)}

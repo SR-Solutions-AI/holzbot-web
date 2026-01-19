@@ -486,14 +486,6 @@
           },
           "options": [
             {
-              "value": "2-fach verglast",
-              "labels": {
-                "ro": "2-fach verglast",
-                "de": "2-fach verglast",
-                "en": "Double glazed"
-              }
-            },
-            {
               "value": "3-fach verglast",
               "labels": {
                 "ro": "3-fach verglast",
@@ -1007,5 +999,7 @@
     }
   ]
 }
+
+
 
 
