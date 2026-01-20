@@ -538,32 +538,270 @@ export default function AdminDashboard() {
                 ×
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-6 processing-modal-scroll">
+            <div className="flex-1 overflow-y-auto p-4 space-y-8 processing-modal-scroll">
               {processingImages[processingModal] ? (
-                Object.entries(processingImages[processingModal]).map(([kind, images]) => {
-                  if (!images || images.length === 0) return null
-                  const kindLabels: Record<string, string> = {
-                    cubicasa_step: 'CubiCasa Schritte',
-                    cluster: 'Cluster',
-                    cluster_preview: 'Cluster Vorschau',
-                    visualization: 'Visualisierungen',
+                (() => {
+                  // Organizează pozele în secțiuni structurate
+                  const organized: Record<string, {
+                    title: string;
+                    description?: string;
+                    images: Array<{ id: string; url: string; filename: string; plan_id?: string }>;
+                    order: number;
+                  }> = {};
+
+                  // Procesează fiecare tip de imagine
+                  Object.entries(processingImages[processingModal]).forEach(([kind, images]) => {
+                    if (!images || images.length === 0) return;
+
+                    if (kind === 'cubicasa_step') {
+                      // Organizează cubicasa steps în categorii
+                      images.forEach((img) => {
+                        const filename = img.filename.toLowerCase();
+                        let category = 'other';
+                        let title = 'Alte Pași CubiCasa';
+                        let description = '';
+                        let order = 999;
+
+                        // Detectare pereți
+                        if (filename.includes('01_ai_walls') || filename.includes('walls_raw')) {
+                          category = 'walls_raw';
+                          title = '1. Detectare Pereți (AI)';
+                          description = 'Detectare inițială a pereților';
+                          order = 1;
+                        } else if (filename.includes('01a_walls_filtered') || filename.includes('walls_filtered')) {
+                          category = 'walls_filtered';
+                          title = '1a. Filtrare Pereți';
+                          description = 'Pereți filtrați';
+                          order = 2;
+                        } else if (filename.includes('01b_walls_closed') || filename.includes('walls_closed')) {
+                          category = 'walls_closed';
+                          title = '1b. Închidere Pereți';
+                          description = 'Pereți cu goluri închise';
+                          order = 3;
+                        } else if (filename.includes('01c_ai_walls_thinned') || filename.includes('walls_thinned')) {
+                          category = 'walls_thinned';
+                          title = '1c. Subțiere Pereți';
+                          description = 'Pereți subțiați';
+                          order = 4;
+                        } else if (filename.includes('02_ai_walls_closed') || filename.includes('walls_closed_final')) {
+                          category = 'walls_closed_final';
+                          title = '2. Pereți Închiși Finali';
+                          description = 'Pereți după procesare completă';
+                          order = 5;
+                        } else if (filename.includes('02c_wall_closures') || filename.includes('wall_closures')) {
+                          category = 'wall_closures';
+                          title = '2c. Vizualizare Închideri';
+                          description = 'Vizualizare camere detectate';
+                          order = 6;
+                        } else if (filename.includes('02d_walls_closed_overlay') || filename.includes('overlay')) {
+                          category = 'overlay';
+                          title = '2d. Overlay Pereți';
+                          description = 'Overlay pereți pe plan original';
+                          order = 7;
+                        }
+                        // Detectare terasa
+                        else if (filename.includes('02g') || filename.includes('terrace') || filename.includes('terasa')) {
+                          if (filename.includes('00_preprocessed')) {
+                            category = 'terrace_preprocessed';
+                            title = '3a. Terasa - Preprocesare';
+                            description = 'Imagine preprocesată pentru OCR';
+                            order = 10;
+                          } else if (filename.includes('01_ocr_result') || filename.includes('ocr_result')) {
+                            category = 'terrace_ocr';
+                            title = '3b. Terasa - Rezultate OCR';
+                            description = 'Toate detecțiile OCR';
+                            order = 11;
+                          } else if (filename.includes('01b_accepted_detections') || filename.includes('accepted')) {
+                            category = 'terrace_accepted';
+                            title = '3c. Terasa - Detecții Acceptate';
+                            description = 'Detecții acceptate pentru terasa';
+                            order = 12;
+                          } else if (filename.includes('01c_best_detection_with_fill')) {
+                            category = 'terrace_best';
+                            title = '3d. Terasa - Cea Mai Bună Detecție + Flood Fill';
+                            description = 'Detecția cu cel mai mare procent + flood fill';
+                            order = 13;
+                          } else if (filename.includes('02c_flood_fill_attempt')) {
+                            category = 'terrace_flood_fill';
+                            title = '3e. Terasa - Tentative Flood Fill';
+                            description = 'Toate tentativele de flood fill';
+                            order = 14;
+                          } else if (filename.includes('02_terrace_fill') || filename.includes('terrace_fill')) {
+                            category = 'terrace_fill_result';
+                            title = '3f. Terasa - Rezultat Final';
+                            description = 'Rezultat final după flood fill';
+                            order = 15;
+                          } else if (filename.includes('03_final_result')) {
+                            category = 'terrace_final';
+                            title = '3g. Terasa - Rezultat Final';
+                            description = 'Pereți noi adăugați pentru terasa';
+                            order = 16;
+                          } else {
+                            category = 'terrace_other';
+                            title = '3h. Terasa - Alte Pași';
+                            description = 'Alți pași pentru terasa';
+                            order = 17;
+                          }
+                        }
+                        // Detectare garaje
+                        else if (filename.includes('02h') || filename.includes('garage') || filename.includes('carport')) {
+                          if (filename.includes('00_preprocessed')) {
+                            category = 'garage_preprocessed';
+                            title = '4a. Garaje - Preprocesare';
+                            description = 'Imagine preprocesată pentru OCR';
+                            order = 20;
+                          } else if (filename.includes('01_ocr_result') || filename.includes('ocr_result')) {
+                            category = 'garage_ocr';
+                            title = '4b. Garaje - Rezultate OCR';
+                            description = 'Toate detecțiile OCR';
+                            order = 21;
+                          } else if (filename.includes('01b_accepted_detections') || filename.includes('accepted')) {
+                            category = 'garage_accepted';
+                            title = '4c. Garaje - Detecții Acceptate';
+                            description = 'Detecții acceptate pentru garaje';
+                            order = 22;
+                          } else if (filename.includes('01c_best_detection_with_fill')) {
+                            category = 'garage_best';
+                            title = '4d. Garaje - Cea Mai Bună Detecție + Flood Fill';
+                            description = 'Detecția cu cel mai mare procent + flood fill';
+                            order = 23;
+                          } else if (filename.includes('02c_flood_fill_attempt')) {
+                            category = 'garage_flood_fill';
+                            title = '4e. Garaje - Tentative Flood Fill';
+                            description = 'Toate tentativele de flood fill';
+                            order = 24;
+                          } else if (filename.includes('02_garage_fill') || filename.includes('garage_fill')) {
+                            category = 'garage_fill_result';
+                            title = '4f. Garaje - Rezultat Final';
+                            description = 'Rezultat final după flood fill';
+                            order = 25;
+                          } else if (filename.includes('03_final_result')) {
+                            category = 'garage_final';
+                            title = '4g. Garaje - Rezultat Final';
+                            description = 'Pereți noi adăugați pentru garaje';
+                            order = 26;
+                          } else {
+                            category = 'garage_other';
+                            title = '4h. Garaje - Alte Pași';
+                            description = 'Alți pași pentru garaje';
+                            order = 27;
+                          }
+                        }
+                        // Detectare scări
+                        else if (filename.includes('02i') || filename.includes('stairs') || filename.includes('scara')) {
+                          if (filename.includes('02_stairs_reconstruction') || filename.includes('reconstruction')) {
+                            category = 'stairs_reconstruction';
+                            title = '5a. Scări - Reconstruire Pereți';
+                            description = 'Reconstruire pereți în jurul scărilor';
+                            order = 30;
+                          } else if (filename.includes('02c_flood_fill_attempt')) {
+                            category = 'stairs_flood_fill';
+                            title = '5b. Scări - Tentative Flood Fill';
+                            description = 'Toate tentativele de flood fill';
+                            order = 31;
+                          } else if (filename.includes('03_final_result')) {
+                            category = 'stairs_final';
+                            title = '5c. Scări - Rezultat Final';
+                            description = 'Pereți noi adăugați pentru scări';
+                            order = 32;
+                          } else {
+                            category = 'stairs_other';
+                            title = '5d. Scări - Alte Pași';
+                            description = 'Alți pași pentru scări';
+                            order = 33;
+                          }
+                        }
+                        // Alte pași
+                        else {
+                          category = 'other';
+                          title = 'Alte Pași CubiCasa';
+                          description = 'Pași de procesare suplimentari';
+                          order = 999;
+                        }
+
+                        if (!organized[category]) {
+                          organized[category] = {
+                            title,
+                            description,
+                            images: [],
+                            order,
+                          };
+                        }
+                        organized[category].images.push(img);
+                      });
+                    } else {
+                      // Pentru alte tipuri de imagini (cluster, visualization, etc.)
+                      const kindLabels: Record<string, { title: string; description: string; order: number }> = {
+                        cluster: {
+                          title: 'Cluster Images',
+                          description: 'Imagini de cluster',
+                          order: 100,
+                        },
+                        cluster_preview: {
+                          title: 'Cluster Preview',
+                          description: 'Preview-uri de cluster',
+                          order: 101,
+                        },
+                        visualization: {
+                          title: 'Visualizări',
+                          description: 'Visualizări 3D și overlay-uri',
+                          order: 102,
+                        },
+                      };
+
+                      const config = kindLabels[kind] || {
+                        title: kind,
+                        description: '',
+                        order: 999,
+                      };
+
+                      if (!organized[kind]) {
+                        organized[kind] = {
+                          title: config.title,
+                          description: config.description,
+                          images: [],
+                          order: config.order,
+                        };
+                      }
+                      organized[kind].images.push(...images);
+                    }
+                  });
+
+                  // Sortează secțiunile după order
+                  const sortedSections = Object.entries(organized)
+                    .sort(([, a], [, b]) => a.order - b.order)
+                    .filter(([, section]) => section.images.length > 0);
+
+                  if (sortedSections.length === 0) {
+                    return <div className="text-sm text-white/60 text-center py-8">Keine Bilder gefunden</div>;
                   }
-                  return (
-                    <div key={kind} className="space-y-2">
-                      <div className="text-xs font-semibold text-white/80 uppercase tracking-wide">
-                        {kindLabels[kind] || kind}
+
+                  return sortedSections.map(([key, section]) => (
+                    <div key={key} className="space-y-3">
+                      <div className="space-y-1">
+                        <div className="text-sm font-semibold text-white/90">
+                          {section.title}
+                        </div>
+                        {section.description && (
+                          <div className="text-xs text-white/60">
+                            {section.description}
+                          </div>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                        {images.map((img) => (
+                        {section.images.map((img) => (
                           <div
                             key={img.id}
-                            className="relative rounded-lg overflow-hidden border border-white/15 bg-[#2A1F18] hover:border-[#FF9F0F]/25 transition"
+                            className="relative rounded-lg overflow-hidden border border-white/15 bg-[#2A1F18] hover:border-[#FF9F0F]/25 transition cursor-pointer group"
+                            onClick={() => {
+                              setLightbox({ kind: 'plan', url: img.url, mime: null });
+                            }}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={img.url}
                               alt={img.filename}
-                              className="w-full h-auto object-contain bg-white/5"
+                              className="w-full h-auto object-contain bg-white/5 group-hover:opacity-90 transition"
                               loading="lazy"
                             />
                             {img.plan_id ? (
@@ -571,15 +809,15 @@ export default function AdminDashboard() {
                                 {img.plan_id}
                               </div>
                             ) : null}
-                            <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/60 text-[9px] text-white/70 truncate">
+                            <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/70 text-[9px] text-white/80 truncate">
                               {img.filename}
                             </div>
                           </div>
                         ))}
                       </div>
                     </div>
-                  )
-                })
+                  ));
+                })()
               ) : (
                 <div className="text-sm text-white/60 text-center py-8">Lädt...</div>
               )}
