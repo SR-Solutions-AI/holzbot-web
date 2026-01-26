@@ -417,107 +417,117 @@ function PricingSection() {
 
       <div className="relative z-10 max-w-6xl mx-auto">
         
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-10 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch">
             
-            {/* === Card Stânga (Pachetul) - GLASSMORPHISM MARO === */}
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInLeft} className="lg:col-span-3 bg-[#2A1B15]/60 backdrop-blur-xl p-8 md:p-12 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden flex flex-col">
-                
-                 {/* Glow effect intern */}
-                <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-[#FF9F0F]/5 to-transparent opacity-50 pointer-events-none" />
-
-                <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-4 leading-tight relative z-10">Ihr maßgeschneiderter Holzbot</h2>
-                <p className="text-lg md:text-xl text-sand/90 mb-8 md:mb-10 relative z-10 leading-relaxed">Das Sprungbrett in die digitale Zukunft des Holzbaus.</p>
-
-                {/* Conținutul (Liste) - Spațiere și texte îmbunătățite */}
-                <motion.div variants={staggerContainer} initial="hidden" whileInView="visible" className="space-y-8 relative z-10 flex-grow">
-                    <div>
-                        <h4 className="text-[#FF9F0F] font-bold text-sm uppercase tracking-widest mb-5 flex items-center gap-2">
-                            <CheckCircle2 size={16} /> Was ist enthalten
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-6">
-                            {['KI-gestützte Baukostenanalyse in Echtzeit', 'Automatisierte Erstellung professioneller PDF-Schätzungsangebote', 'Vollständige Kalibrierung auf Ihre Betriebspreise', 'Intelligenter Bauplan-Import mit automatischer Erkennung'].map((item, i) => (
-                                <motion.div variants={fadeInUp} key={i} className="flex items-start gap-3 text-white text-base md:text-[18px] leading-snug">
-                                    <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                                    <span>{item}</span>
-                                </motion.div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Separator fin */}
-                    <div className="h-px w-full bg-gradient-to-r from-white/5 via-white/20 to-white/5" />
-
-                    <div>
-                        <h4 className="text-[#FF9F0F] font-bold text-sm uppercase tracking-widest mb-5 flex items-center gap-2">
-                             <TrendingUp size={16} /> Warum es wichtig ist
-                        </h4>
-                        <div className="space-y-3">
-                             {['⁠Spart Zeit, weil unnötige Kalkulationen für unrealistische Anfragen wegfallen.', 'Gewinnt mehr Kunden, weil Interessenten schneller eine klare Einschätzung bekommen.', '⁠Erhöht Abschlusschancen, weil Sie im Erstgespräch professionell und vorbereitet auftreten.'].map((item, i) => (
-                                <motion.div variants={fadeInUp} key={i} className="flex items-start gap-3 text-white text-lg md:text-[20px] leading-snug">
-                                    <Plus className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                                    <span>{item}</span>
-                                </motion.div>
-                            ))}
-                        </div>
-                    </div>
-                </motion.div>
-
-            </motion.div>
-
-            {/* === Card Dreapta (Prețuri) - GLASSMORPHISM ÎNTUNECAT === */}
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInRight} className="lg:col-span-2 bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative relative overflow-hidden">
+            {/* === Card Stânga: Holzbot Dachstuhl-Paket === */}
+            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInLeft} className="bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative overflow-hidden">
                  
                  {/* Decor subtil de lumină în colț */}
                  <div className="absolute top-0 right-0 w-48 h-48 bg-[#FF9F0F]/15 blur-[80px] rounded-full pointer-events-none mix-blend-screen" />
 
                  <div>
-                    <h3 className="pt-8 md:pt-12 px-6 md:px-12 text-2xl md:text-3xl font-bold text-white mb-6 md:mb-10">Transparente Preise</h3>
+                    {/* Imagine rotundă */}
+                    <div className="flex justify-center pt-8 md:pt-12 mb-6">
+                        <img src="/images/roof.png" alt="Dachstuhl" className="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-[#FF9F0F]/30" />
+                    </div>
 
+                    <h3 className="px-6 md:px-12 text-2xl md:text-3xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Dachstuhl-Paket</h3>
+                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Zimmereien & Abbundbetriebe</p>
+
+                    {/* Lista de caracteristici */}
+                    <div className="px-6 md:px-12 space-y-4 mb-8">
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Dachplan-Analyse: Holzbot erkennt die Dachgeometrie und ermittelt automatisch die wichtigsten Maße aus dem Plan.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Schätzungsangebot in Minuten: Ihre Firmenpreise und Kalkulationslogik sind hinterlegt – Ausgabe als übersichtliches PDF.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Für Zimmerei & Abbund: Ideal für schnelle Vor-Kalkulationen im Dachstuhlbau und in der Angebotsphase.</p>
+                        </div>
+                    </div>
+                 </div>
+
+                 {/* Prețuri mutat jos */}
+                 <div className="mt-auto">
                     {/* Box Preț 1 - Implementare */}
                     <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center justify-center gap-2 mb-2">
                             <Briefcase size={16} className="text-[#FF9F0F]" />
-                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Entwicklungskosten (Einmalig)</p>
+                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight">€5.000</div>
-                        <p className="text-sand/70 text-sm leading-relaxed">Einmalige Einrichtung, tiefgehende Analyse Ihrer Daten und Systemkonfiguration.</p>
+                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">2.000 €</div>
                     </div>
 
                     {/* Box Preț 2 - Mentenanță */}
-                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
-                        <div className="flex items-center gap-2 mb-2">
+                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
+                        <div className="flex items-center justify-center gap-2 mb-2">
                             <Shield size={16} className="text-[#FF9F0F]" />
                             <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight">€500</div>
-                        <p className="text-sand/70 text-sm leading-relaxed">Laufende KI-Optimierung, regelmäßige Feature-Updates, sicheres Hosting und priorisierter Support.</p>
+                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">200 €</div>
                     </div>
                     
-                    <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mt-5 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
+                    <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
+            </motion.div>
 
-                 {/* === Zona CTA Principală (Jos) === */}
-                 {/* FIX: Am scos 'md:flex-row'. Acum ramane flex-col (vertical) si pe desktop. */}
-                 <div className="mt-10 flex flex-col items-stretch justify-between bg-gradient-to-r from-[#FF9F0F]/80 to-[#FF9F0F]/90 rounded-b-2xl shadow-lg hover:shadow-[#FF9F0F]/20 hover:scale-[1.02] transition-all cursor-pointer group/btn relative overflow-hidden">
-                    
-                    {/* Zona Timp - Sus */}
-                    <div className="px-5 py-4 bg-black/20 text-white font-bold text-center leading-tight shrink-0 backdrop-blur-sm w-full border-b border-white/10">3-4 Wochen <br/> <span className="text-[10px] font-medium opacity-80 block mt-0.5 uppercase tracking-wide">Entwicklungsdauer</span></div>
+            {/* === Card Dreapta: Holzbot Neubau-Paket === */}
+            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInRight} className="bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                 
+                 {/* Decor subtil de lumină în colț */}
+                 <div className="absolute top-0 right-0 w-48 h-48 bg-[#FF9F0F]/15 blur-[80px] rounded-full pointer-events-none mix-blend-screen" />
 
-                    {/* Zona Text + Săgeată - Jos */}
-                    <div className="w-full p-4 flex justify-center">
-                        <div className="relative group rounded-2xl p-[1px] bg-gradient-to-r from-white/10 via-white/5 to-white/10 hover:via-[#FF9F0F]/50 transition-all duration-500 w-full">
-                            <a href="mailto:christian@holzbot.com" className="flex items-center justify-center gap-4 bg-[#874d00] px-4 py-4 rounded-2xl relative z-10 w-full">
-                                <div className="bg-[#FF9F0F]/10 p-2 rounded-lg text-[#FF9F0F] shrink-0">
-                                    <Mail size={24} />
-                                </div>
-                                {/* min-w-0 si whitespace-nowrap asigura ca textul nu se rupe ciudat */}
-                                <div className="text-left min-w-0">
-                                    <p className="text-sand/50 text-xs uppercase tracking-wider font-bold truncate">Kontaktieren Sie uns unter:</p>
-                                    <p className="text-white font-bold text-sm sm:text-lg group-hover:text-[#FF9F0F] transition-colors whitespace-nowrap overflow-hidden text-ellipsis">christian@holzbot.com</p>
-                                </div>
-                            </a>
+                 <div>
+                    {/* Imagine rotundă */}
+                    <div className="flex justify-center pt-8 md:pt-12 mb-6">
+                        <img src="/images/house.png" alt="Neubau" className="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-[#FF9F0F]/30" />
+                    </div>
+
+                    <h3 className="px-6 md:px-12 text-2xl md:text-3xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Neubau-Paket</h3>
+                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Holzhausbauer & Fertighausanbieter</p>
+
+                    {/* Lista de caracteristici */}
+                    <div className="px-6 md:px-12 space-y-4 mb-8">
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Grundriss-Analyse: Holzbot erkennt Bauelemente und ermittelt automatisch die wichtigsten Maße aus dem Plan.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Schätzungsangebot in Minuten: Ihre Firmenpreise und Kalkulationslogik sind hinterlegt – Ausgabe als übersichtliches PDF.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Inkl. Dachstuhl-Modul: Dachkonstruktion und Dachstuhl werden im Neubau-Paket automatisch mit kalkuliert.</p>
                         </div>
                     </div>
+                 </div>
+
+                 {/* Prețuri mutat jos */}
+                 <div className="mt-auto">
+                    {/* Box Preț 1 - Implementare */}
+                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                            <Briefcase size={16} className="text-[#FF9F0F]" />
+                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                        </div>
+                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">5.000 €</div>
+                    </div>
+
+                    {/* Box Preț 2 - Mentenanță */}
+                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                            <Shield size={16} className="text-[#FF9F0F]" />
+                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                        </div>
+                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">500 €</div>
+                    </div>
+                    
+                    <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
             </motion.div>
 
