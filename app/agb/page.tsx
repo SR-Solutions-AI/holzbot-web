@@ -113,10 +113,22 @@ export default function AGBPage() {
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§3 Preise & Zahlung</h2>
             <p className="mb-4 font-bold text-white">(1) Preise (zzgl. MwSt):</p>
-            <ul className="list-disc pl-6 mb-4 space-y-2 marker:text-[#FF9F0F]">
-              <li>5.000 € einmalige Implementierungsgebühr</li>
-              <li>500 € monatliche Wartungs- und Servicegebühr</li>
-            </ul>
+            <div className="mb-4 space-y-4">
+              <div>
+                <p className="font-bold text-white mb-2">Holzbot Dachstuhl-Paket</p>
+                <ul className="list-disc pl-6 space-y-2 marker:text-[#FF9F0F]">
+                  <li>2.000 € einmalige Implementierungsgebühr</li>
+                  <li>200 € monatliche Wartungs- und Servicegebühr</li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-bold text-white mb-2">Holzbot Neubau-Paket</p>
+                <ul className="list-disc pl-6 space-y-2 marker:text-[#FF9F0F]">
+                  <li>5.000 € einmalige Implementierungsgebühr</li>
+                  <li>500 € monatliche Wartungs- und Servicegebühr</li>
+                </ul>
+              </div>
+            </div>
             <p className="mb-4">(2) Die Zahlung erfolgt ausschließlich per SEPA-Lastschriftmandat. Andere Zahlungsmethoden werden nicht akzeptiert.</p>
             <p className="mb-4">(3) Die Implementierungsgebühr wird wie folgt abgerechnet:</p>
             <ul className="list-disc pl-6 mb-4 space-y-2 marker:text-[#FF9F0F]">
