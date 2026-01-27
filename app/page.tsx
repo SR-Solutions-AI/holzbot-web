@@ -285,14 +285,10 @@ function FAQSection() {
                         </li>
                         <li className="flex items-start gap-2">
                             <span className="text-[#FF9F0F]">•</span>
-                            <span>Dachstuhl- und Dachdeckerpreise</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#FF9F0F]">•</span>
                             <span>Preise von Subunternehmern, z. B. Dachdecker, Maurer, Fensterlieferant.</span>
                         </li>
                     </ul>
-                    <p className="font-bold text-white border-l-4 border-[#FF9F0F] pl-4 py-2 bg-[#FF9F0F]/10 rounded-r-xl">Auf Basis dieser Informationen erstellen wir eine individuelle, strukturierte Preis- und Leistungsdatenbank, die exakt zu Ihrem Betrieb passt.</p>
+                    <p>Auf Basis dieser Informationen erstellen wir eine individuelle, strukturierte Preis- und Leistungsdatenbank, die exakt zu Ihrem Betrieb passt.</p>
                 </div>
             </motion.div>
         </div>
