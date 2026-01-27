@@ -203,35 +203,96 @@ function FAQSection() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start">
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInLeft} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
                 <h3 className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3">
-                    <Users className="text-[#FF9F0F]" /> Für wen ist Holzbot?
+                    <Users className="text-[#FF9F0F]" /> Ist Holzbot für unsere Firma geeignet?
                 </h3>
-                <ul className="space-y-4">
-                    <li className="flex items-start gap-3">
-                        <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                        <span className="text-lg md:text-xl text-sand/90">Holzbau-Firmen mit 5 – 100 Mitarbeitern</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                        <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                        <span className="text-lg md:text-xl text-sand/90">Zimmereien mit vielen Kundenanfragen</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                        <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                        <span className="text-lg md:text-xl text-sand/90">Firmen, die mehr Angebote schneller bearbeiten möchten</span>
-                    </li>
-                    <li className="flex items-start gap-3">
-                        <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                        <span className="text-lg md:text-xl text-sand/90">Unternehmen, die ihren Verkauf modernisieren wollen</span>
-                    </li>
-                </ul>
+                <div className="space-y-6">
+                    <div>
+                        <p className="text-lg md:text-xl font-bold text-white mb-4 flex items-center gap-2">
+                            <CheckCircle2 className="text-[#FF9F0F] shrink-0" size={20} />
+                            Ja, wenn:
+                        </p>
+                        <ul className="space-y-3 ml-7">
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                                <span className="text-lg md:text-xl text-sand/90">Neubauten oder Dachstühle zu Ihren Hauptleistungen zählen</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie regelmäßig Zeit mit Angeboten verschwenden, die nicht zum Abschluss führen</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                                <span className="text-lg md:text-xl text-sand/90">Ihre Kunden mit fertigen Plänen kommen und schnell einen Preis erwarten</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie Preise oft zu spät nennen, weil mehrere Anfragen parallel bearbeitet werden müssen</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p className="text-lg md:text-xl font-bold text-white mb-4 flex items-center gap-2">
+                            <XCircle className="text-sand/70 shrink-0" size={20} />
+                            Nein, wenn:
+                        </p>
+                        <ul className="space-y-3 ml-7">
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie hauptsächlich Sanierungen, Renovierungen oder Aufstockungen umsetzen</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie Projekte fast ausschließlich selbst planen (keine Baupläne vom Kunden)</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie weniger als 5 Angebotsanfragen pro Monat bekommen</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
             </motion.div>
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInRight} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
                 <h3 className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3">
-                     <TrendingUp className="text-[#FF9F0F]" /> Sind die Preise von Holzbot zuverlässig?
+                     <TrendingUp className="text-[#FF9F0F]" /> Woher hat das System seine Preise und Daten?
                 </h3>
                 <div className="space-y-6 text-lg md:text-xl text-sand/90 leading-relaxed">
-                    <p>Holzbot arbeitet nicht mit Durchschnittswerten oder Fantasiezahlen.</p>
-                    <p>Bevor Sie das System nutzen, setzen wir uns mit Ihnen zusammen und stellen Holzbot so ein, dass es Ihre echten Preise verwendet.</p>
-                    <p className="font-bold text-white border-l-4 border-[#FF9F0F] pl-4 py-2 bg-[#FF9F0F]/10 rounded-r-xl">So bekommen Sie realistische Schätzungsangebote (± 8–10 %), genau für Ihre Firma</p>
+                    <p className="font-bold text-white text-xl md:text-2xl">Von Ihnen.</p>
+                    <p>Zu Beginn unserer Zusammenarbeit bauen wir die Preislogik von Holzbot auf Basis Ihrer Unternehmensdaten auf.</p>
+                    <p className="font-semibold text-white">Dafür stellen Sie uns folgende Informationen zur Verfügung:</p>
+                    <ul className="space-y-3 ml-4">
+                        <li className="flex items-start gap-3">
+                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                            <span>Beispielangebote und LVs aus Ihrer bisherigen Arbeit</span>
+                        </li>
+                        <li className="flex items-start gap-3">
+                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                            <span>Beispielpläne, wie sie typischerweise von Ihren Kunden eingehen</span>
+                        </li>
+                        <li className="flex items-start gap-3">
+                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
+                            <span>Ihre internen Preisdaten, z. B.</span>
+                        </li>
+                    </ul>
+                    <ul className="space-y-2 ml-8 text-base md:text-lg">
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F]">•</span>
+                            <span>Quadratmeterpreise (Außenwände, Innenwände, Decken, Böden etc.)</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F]">•</span>
+                            <span>Stückpreise (Bauteile, Positionen, Leistungen)</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F]">•</span>
+                            <span>Dachstuhl- und Dachdeckerpreise</span>
+                        </li>
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F]">•</span>
+                            <span>Preise von Subunternehmern, z. B. Dachdecker, Maurer, Fensterlieferant.</span>
+                        </li>
+                    </ul>
+                    <p className="font-bold text-white border-l-4 border-[#FF9F0F] pl-4 py-2 bg-[#FF9F0F]/10 rounded-r-xl">Auf Basis dieser Informationen erstellen wir eine individuelle, strukturierte Preis- und Leistungsdatenbank, die exakt zu Ihrem Betrieb passt.</p>
                 </div>
             </motion.div>
         </div>
