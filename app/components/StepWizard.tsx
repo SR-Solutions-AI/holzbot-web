@@ -240,6 +240,9 @@ const DE = {
     uploadingFiles: 'Dateien werden hochgeladen...',
     planInvalidTitle: 'Plan ungültig',
     planInvalidMsg: 'Die KI konnte keine Raumbezeichnungen oder Maßstäbe erkennen. Bitte laden Sie einen lesbaren Grundriss hoch.',
+    computeErrorTitle: 'Ein Problem ist aufgetreten',
+    computeErrorMessage: 'Die Berechnung konnte nicht abgeschlossen werden. Bitte starten Sie ein neues Projekt und versuchen Sie es erneut.',
+    computeErrorRetry: 'Erneut versuchen',
   },
 } as const
 
@@ -624,6 +627,8 @@ export default function StepWizard() {
 
   const creatingRef = useRef(false)
   const [computing, setComputing] = useState(false)
+  const [computeFailed, setComputeFailed] = useState(false)
+  const [computeRunId, setComputeRunId] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [computeStartTime, setComputeStartTime] = useState<number | null>(null)
 
@@ -769,6 +774,8 @@ export default function StepWizard() {
       setValidationError(null)
       setPdfUrl(null)
       setComputing(false)
+      setComputeFailed(false)
+      setComputeRunId(null)
       setComputeStartTime(null)
       setSaveStatus('idle')
       creatingRef.current = false
@@ -791,6 +798,7 @@ export default function StepWizard() {
       if (!detail?.pdfUrl) return
       if (offerId && detail.offerId && offerId !== detail.offerId) return
       
+      setComputeFailed(false)
       const now = Date.now();
       const elapsed = computeStartTime ? (now - computeStartTime) : MIN_ANIMATION_TIME;
       const remainingTime = Math.max(0, MIN_ANIMATION_TIME - elapsed);
@@ -798,6 +806,7 @@ export default function StepWizard() {
       setTimeout(() => {
           setPdfUrl(detail.pdfUrl || null)
           setComputing(false)
+          setComputeRunId(null)
           setComputeStartTime(null)
           window.dispatchEvent(new Event('offers:refresh'))
       }, remainingTime);
@@ -805,6 +814,85 @@ export default function StepWizard() {
     window.addEventListener('offer:pdf-ready', onReady as EventListener)
     return () => window.removeEventListener('offer:pdf-ready', onReady as EventListener)
   }, [offerId, computeStartTime])
+
+  // 4b. Compute Failed Listener (Python/Engine beendet mit Fehler vor PDF)
+  useEffect(() => {
+    const onFailed = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { offerId?: string }
+      if (offerIdRef.current && detail?.offerId && detail.offerId !== offerIdRef.current) return
+      setComputeFailed(true)
+      setComputing(false)
+      setComputeRunId(null)
+    }
+    window.addEventListener('offer:compute-failed', onFailed as EventListener)
+    return () => window.removeEventListener('offer:compute-failed', onFailed as EventListener)
+  }, [])
+
+  // 4c. Direct poll calc-events by run_id (no LiveFeed queue) – on any error-level event show error UI
+  const calcEventsSinceRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (!computing || !computeRunId || computeFailed) return
+    calcEventsSinceRef.current = undefined
+    const POLL_INTERVAL = 2000
+    const iv = setInterval(async () => {
+      try {
+        const since = calcEventsSinceRef.current
+        const url = since != null ? `/calc-events?run_id=${encodeURIComponent(computeRunId)}&sinceId=${since}` : `/calc-events?run_id=${encodeURIComponent(computeRunId)}`
+        const res = await apiFetch(url) as { items?: Array<{ id: number; level?: string }> }
+        const items = res?.items ?? []
+        for (const ev of items) {
+          if (ev.id != null) calcEventsSinceRef.current = ev.id
+          if (ev.level === 'error') {
+            setComputeFailed(true)
+            setComputing(false)
+            setComputeRunId(null)
+            return
+          }
+        }
+      } catch (_) {}
+    }, POLL_INTERVAL)
+    return () => clearInterval(iv)
+  }, [computing, computeRunId, computeFailed])
+
+  // 4d. Fallback: Offer-Status pollen – bei status 'failed' ODER status 'ready' ohne PDF (z. B. 0 house_blueprint) Fehler anzeigen.
+  // Bei status 'ready' + URL einmal pdf-ready dispatchen und Interval sofort stoppen (vermeidet export-url la nesfârșit).
+  // API GET /offers/:id liefert { offer: { status, ... }, steps, files } – status aus offer lesen
+  useEffect(() => {
+    if (!computing || !offerId || pdfUrl || computeFailed) return
+    const POLL_MS = 2500
+    let iv: ReturnType<typeof setInterval> | null = null
+    const check = async () => {
+      try {
+        const data = await apiFetch(`/offers/${offerId}`) as { offer?: { status?: string } }
+        const status = data?.offer?.status
+        if (status === 'failed') {
+          if (iv) clearInterval(iv)
+          iv = null
+          setComputeFailed(true)
+          setComputing(false)
+          return
+        }
+        if (status === 'ready') {
+          const exportRes = await apiFetch(`/offers/${offerId}/export-url`).catch(() => null) as { url?: string; download_url?: string; pdf?: string } | null
+          const url = exportRes?.url || exportRes?.download_url || exportRes?.pdf
+          if (iv) clearInterval(iv)
+          iv = null
+          if (url) {
+            window.dispatchEvent(new CustomEvent('offer:pdf-ready', { detail: { offerId, pdfUrl: url } }))
+          } else {
+            setComputeFailed(true)
+            setComputing(false)
+          }
+          return
+        }
+      } catch {}
+    }
+    check()
+    iv = setInterval(check, POLL_MS)
+    return () => {
+      if (iv) clearInterval(iv)
+    }
+  }, [computing, offerId, pdfUrl, computeFailed])
 
   // 5. Offer Selected Listener
   useEffect(() => {
@@ -1231,8 +1319,10 @@ export default function StepWizard() {
       })
       
       setPdfUrl(null)
+      setComputeFailed(false)
       setComputing(true)
       setComputeStartTime(Date.now())
+      setComputeRunId(run_id)
       
       window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: run_id } }))
       window.dispatchEvent(new Event('offers:refresh'))
@@ -1250,6 +1340,38 @@ export default function StepWizard() {
     // Save current form data before going back
     stashDraft()
     setDir('back'); setIdx(i => i - 1); setAnimKey(k => k + 1)
+  }
+
+  /** Angebot abbrechen / Neues Projekt: Compute abbrechen, Offer löschen, State zurücksetzen, offer:new dispatch */
+  async function handleResetToNewProject() {
+    const id = offerIdRef.current
+    try {
+      if (id) {
+        await apiFetch(`/offers/${id}/compute/cancel`, { method: 'POST' }).catch(() => {})
+        await apiFetch(`/offers/${id}`, { method: 'DELETE' }).catch(() => {})
+      }
+    } catch (err: any) {
+      console.error('Reset failed:', err)
+    }
+    setOfferId(null)
+    offerIdRef.current = null
+    setIdx(0)
+    setForm({})
+    setDrafts({})
+    setErrors({})
+    setShowErrors(false)
+    setValidationError(null)
+    setComputeFailed(false)
+    setComputeRunId(null)
+    setPdfUrl(null)
+    setComputing(false)
+    setComputeStartTime(null)
+    setProcessStatus('')
+    setSaveStatus('idle')
+    creatingRef.current = false
+    activeCreationPromise.current = null
+    window.dispatchEvent(new CustomEvent('offer:new', { detail: { creationId: Date.now() } }))
+    window.dispatchEvent(new Event('offers:refresh'))
   }
 
   async function onUpload(name: string, file: File | null) {
@@ -1350,7 +1472,29 @@ export default function StepWizard() {
     )}
 
       <div className="wizard-stage flex flex-col flex-1 min-h-0 items-stretch justify-start relative">
-        {computing && !pdfUrl ? (
+        {computeFailed && !pdfUrl ? (
+          <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6 px-4" style={{ minHeight: '68vh' }}>
+            <div className="wizard-card wizard-sunny max-w-lg w-full p-6 flex flex-col items-center gap-5 animate-fade-in">
+              <div className="p-4 bg-orange-900/30 border border-orange-500/50 rounded-xl flex items-start gap-3 w-full">
+                <AlertTriangle className="shrink-0 text-orange-400 h-6 w-6 mt-0.5" />
+                <div>
+                  <div className="font-bold text-orange-200 text-lg">{DE.common.computeErrorTitle}</div>
+                  <div className="text-sm text-orange-100/80 mt-2">{DE.common.computeErrorMessage}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => handleResetToNewProject()}
+                className={`
+                  flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out
+                  bg-gradient-to-b from-[#e08414] to-[#f79116]
+                  hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95
+                `}
+              >
+                {DE.common.computeErrorRetry}
+              </button>
+            </div>
+          </div>
+        ) : computing && !pdfUrl ? (
           <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6" style={{ minHeight: '68vh' }}>
             <img 
               src="/houseblueprint.gif" 
@@ -1586,43 +1730,9 @@ export default function StepWizard() {
                 Nein
               </button>
               <button
-                onClick={async () => {
+                onClick={() => {
                   setShowCancelConfirm(false);
-                  if (!offerId) return;
-                  
-                  try {
-                    // Oprește procesul
-                    await apiFetch(`/offers/${offerId}/compute/cancel`, { method: 'POST' });
-                    
-                    // Șterge oferta
-                    await apiFetch(`/offers/${offerId}`, { method: 'DELETE' });
-                    
-                    // Resetează formularul și trimite la o ofertă nouă
-                    setOfferId(null);
-                    offerIdRef.current = null;
-                    setComputing(false);
-                    setPdfUrl(null);
-                    setIdx(0);
-                    setForm({});
-                    setDrafts({});
-                    setErrors({});
-                    setValidationError(null);
-                    setProcessStatus('');
-                    setSaveStatus('idle');
-                    creatingRef.current = false;
-                    
-                    // Trimite eveniment pentru a reseta LiveFeed
-                    const uniqueId = Date.now();
-                    window.dispatchEvent(new CustomEvent('offer:new', {
-                      detail: { creationId: uniqueId }
-                    }));
-                    
-                    // Refresh lista de oferte
-                    window.dispatchEvent(new Event('offers:refresh'));
-                  } catch (err: any) {
-                    console.error('Failed to cancel offer:', err);
-                    alert(`Fehler beim Abbrechen: ${err?.message || err}`);
-                  }
+                  handleResetToNewProject();
                 }}
                 className={`
                   flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out

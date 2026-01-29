@@ -16,6 +16,7 @@ const STAGE_TO_SEQUENCE: Record<string, number[]> = {
   floor_classification: [4],
   detections: [5],
   scale: [6],
+  scale_flood: [6],
   count_objects: [7],
   exterior_doors: [8, 9],
   measure_objects: [10],
@@ -75,6 +76,8 @@ function calculateProgress(processedStages: Set<string>, currentStage: string | 
 const STAGES_WITH_IMAGES = [
   'segmentation',        
   'classification', 
+  'scale',  // ✅ Adăugat pentru a afișa walls_3d.png
+  'scale_flood',
   'count_objects', 
   'exterior_doors',
   'area'
@@ -111,6 +114,11 @@ const STAGE_TITLES: Record<string, string[]> = {
     'Maßstabsberechnung und Kalibrierung',
     'Pixel-zu-Meter Konversion',
     'Referenzmessung und Skalierung'
+  ],
+  scale_flood: [
+    'Flood-Fill (Innen/Außen) – Strukturprüfung',
+    'Segmentierung der Außenhülle',
+    'Validierung der Wandkontakte'
   ],
   count_objects: [
     'Inventarisierung der Öffnungen',
@@ -179,7 +187,7 @@ type SyntheticItem = TextItem | SpinnerItem | ImageItem | BreakItem | CongratsIt
 type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[] }
 type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: string }
 
-const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp)(\?|$)/i.test(f.url)
+const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(f.url)
 const isPdf = (f: FeedFile) => f.mime?.includes('pdf') || /\.pdf(\?|$)/i.test(f.url)
 
 const generateId = (prefix: string = '') => 
