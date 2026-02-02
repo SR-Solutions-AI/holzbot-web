@@ -472,12 +472,71 @@ function PricingSection() {
       <motion.div animate={{ opacity: [0.3, 0.6, 0.3], scale: [1, 1.1, 1] }} transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }} className="absolute top-0 right-0 w-[180vw] h-[180vw] md:w-[600px] md:h-[600px] bg-[#FF9F0F]/10 blur-[100px] md:blur-[150px] rounded-full pointer-events-none z-1" />
 
 
-      <div className="relative z-10 max-w-6xl mx-auto">
+      <div className="relative z-10 max-w-7xl mx-auto">
         
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10 items-stretch">
             
-            {/* === Card Stânga: Holzbot Dachstuhl-Paket === */}
+            {/* === Card 1: Holzbot Mengen-Paket === */}
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInLeft} className="bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative overflow-hidden">
+                 
+                 {/* Decor subtil de lumină în colț */}
+                 <div className="absolute top-0 right-0 w-48 h-48 bg-[#FF9F0F]/15 blur-[80px] rounded-full pointer-events-none mix-blend-screen" />
+
+                 <div>
+                    {/* Imagine rotundă */}
+                    <div className="flex justify-center pt-8 md:pt-12 mb-6">
+                        <img src="/images/blueprint.png" alt="Mengen-Paket" className="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-[#FF9F0F]/30" />
+                    </div>
+
+                    <h3 className="px-6 md:px-12 text-xl md:text-2xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Mengen-Paket</h3>
+                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Mengenermittlung &amp; Projektvorbereitung</p>
+
+                    {/* Lista de caracteristici */}
+                    <div className="px-6 md:px-12 space-y-4 mb-8">
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Automatische Mengenermittlung aus Bauplänen: Holzbot erkennt Bauteile, Flächen, Längen und Stückzahlen direkt aus dem Plan und erstellt eine strukturierte Mengenermittlung.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Bis zu 50 Mengenermittlungen pro Monat: Ideal für Firmen mit mehreren Anfragen, die schnell und sauber Mengen als Grundlage für Kalkulation und Angebot benötigen.</p>
+                        </div>
+                        <div className="flex items-start gap-3">
+                            <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Fertig aufbereitet für Ihre Weiterverarbeitung: Ausgabe als Excel oder PDF, perfekt für interne Kalkulation, Nachkalkulation oder Übergabe an Angebot &amp; AV.</p>
+                        </div>
+                    </div>
+                 </div>
+
+                 {/* Prețuri mutat jos */}
+                 <div className="mt-auto">
+                    {/* Preise (kompakt) */}
+                    <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Briefcase size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">0 €</div>
+                        </div>
+
+                        <div className="my-3 h-px bg-white/10" />
+
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Shield size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">250 €</div>
+                        </div>
+                    </div>
+                    
+                    <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
+                 </div>
+            </motion.div>
+
+            {/* === Card 2: Holzbot Dachstuhl-Paket === */}
+            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInUp} className="bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative overflow-hidden">
                  
                  {/* Decor subtil de lumină în colț */}
                  <div className="absolute top-0 right-0 w-48 h-48 bg-[#FF9F0F]/15 blur-[80px] rounded-full pointer-events-none mix-blend-screen" />
@@ -488,8 +547,8 @@ function PricingSection() {
                         <img src="/images/roof.png" alt="Dachstuhl" className="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-[#FF9F0F]/30" />
                     </div>
 
-                    <h3 className="px-6 md:px-12 text-2xl md:text-3xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Dachstuhl-Paket</h3>
-                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Zimmereien & Abbundbetriebe</p>
+                    <h3 className="px-6 md:px-12 text-xl md:text-2xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Dachstuhl-Paket</h3>
+                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Zimmereien &amp; Abbundbetriebe</p>
 
                     {/* Lista de caracteristici */}
                     <div className="px-6 md:px-12 space-y-4 mb-8">
@@ -503,36 +562,39 @@ function PricingSection() {
                         </div>
                         <div className="flex items-start gap-3">
                             <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Für Zimmerei & Abbund: Ideal für schnelle Vor-Kalkulationen im Dachstuhlbau und in der Angebotsphase.</p>
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Für Zimmerei &amp; Abbund: Ideal für schnelle Vor-Kalkulationen im Dachstuhlbau und in der Angebotsphase.</p>
                         </div>
                     </div>
                  </div>
 
                  {/* Prețuri mutat jos */}
                  <div className="mt-auto">
-                    {/* Box Preț 1 - Implementare */}
-                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                            <Briefcase size={16} className="text-[#FF9F0F]" />
-                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                    {/* Preise (kompakt) */}
+                    <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Briefcase size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">2.000 €</div>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">2.000 €</div>
-                    </div>
 
-                    {/* Box Preț 2 - Mentenanță */}
-                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                            <Shield size={16} className="text-[#FF9F0F]" />
-                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                        <div className="my-3 h-px bg-white/10" />
+
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Shield size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">200 €</div>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">200 €</div>
                     </div>
                     
                     <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
             </motion.div>
 
-            {/* === Card Dreapta: Holzbot Neubau-Paket === */}
+            {/* === Card 3: Holzbot Neubau-Paket === */}
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-100px" }} variants={fadeInRight} className="bg-black/50 backdrop-blur-xl rounded-[2.5rem] border border-white/10 flex flex-col justify-between shadow-2xl relative overflow-hidden">
                  
                  {/* Decor subtil de lumină în colț */}
@@ -544,8 +606,8 @@ function PricingSection() {
                         <img src="/images/house.png" alt="Neubau" className="w-32 h-32 md:w-40 md:h-40 rounded-full object-cover border-4 border-[#FF9F0F]/30" />
                     </div>
 
-                    <h3 className="px-6 md:px-12 text-2xl md:text-3xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Neubau-Paket</h3>
-                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Holzhausbauer & Fertighausanbieter</p>
+                    <h3 className="px-6 md:px-12 text-xl md:text-2xl font-bold text-[#FF9F0F] mb-4 text-center">Holzbot Neubau-Paket</h3>
+                    <p className="px-6 md:px-12 text-white text-lg md:text-xl mb-6 text-center">Für Holzhausbauer &amp; Systemanbieter</p>
 
                     {/* Lista de caracteristici */}
                     <div className="px-6 md:px-12 space-y-4 mb-8">
@@ -566,22 +628,25 @@ function PricingSection() {
 
                  {/* Prețuri mutat jos */}
                  <div className="mt-auto">
-                    {/* Box Preț 1 - Implementare */}
-                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                            <Briefcase size={16} className="text-[#FF9F0F]" />
-                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                    {/* Preise (kompakt) */}
+                    <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Briefcase size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">5.000 €</div>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">5.000 €</div>
-                    </div>
 
-                    {/* Box Preț 2 - Mentenanță */}
-                    <div className="mx-6 md:mx-12 bg-black/30 p-6 rounded-2xl border border-white/5 mb-5 backdrop-blur-sm">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                            <Shield size={16} className="text-[#FF9F0F]" />
-                            <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                        <div className="my-3 h-px bg-white/10" />
+
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                                <Shield size={16} className="text-[#FF9F0F]" />
+                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Monatliches Abo</p>
+                            </div>
+                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">500 €</div>
                         </div>
-                        <div className="text-3xl md:text-4xl font-black text-white mb-3 tracking-tight text-center">500 €</div>
                     </div>
                     
                     <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
