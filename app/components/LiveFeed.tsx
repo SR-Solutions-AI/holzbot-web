@@ -846,7 +846,7 @@ export default function LiveFeed() {
                           if (item.kind === 'image') {
                               const uniqueForState = newImages.filter((nf: FeedFile) => !item.files.some(ex => ex.url === nf.url))
                               if (uniqueForState.length > 0) {
-                                  return { ...item, files: [...item.files, ...uniqueNew] }
+                                  return { ...item, files: [...item.files, ...uniqueForState] }
                               }
                           }
                           return item
