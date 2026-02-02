@@ -495,15 +495,15 @@ function PricingSection() {
                     <div className="px-6 md:px-12 space-y-4 mb-8">
                         <div className="flex items-start gap-3">
                             <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Automatische Mengenermittlung aus Bauplänen: Holzbot erkennt Bauteile, Flächen, Längen und Stückzahlen direkt aus dem Plan und erstellt eine strukturierte Mengenermittlung.</p>
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Automatische Mengenermittlung: Holzbot erkennt Bauteile, Flächen, Längen und Öffnungen direkt aus dem Bauplan.</p>
                         </div>
                         <div className="flex items-start gap-3">
                             <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Bis zu 50 Mengenermittlungen pro Monat: Ideal für Firmen mit mehreren Anfragen, die schnell und sauber Mengen als Grundlage für Kalkulation und Angebot benötigen.</p>
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Strukturierte Ausgabe: Saubere Mengenermittlung als Excel oder PDF, ideal für interne Vorbereitung und Nachkalkulation.</p>
                         </div>
                         <div className="flex items-start gap-3">
                             <Check className="text-[#FF9F0F] shrink-0 mt-0.5" size={18} />
-                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Fertig aufbereitet für Ihre Weiterverarbeitung: Ausgabe als Excel oder PDF, perfekt für interne Kalkulation, Nachkalkulation oder Übergabe an Angebot &amp; AV.</p>
+                            <p className="text-sand/90 text-sm md:text-base leading-relaxed">Bis zu 50 Projekte/Monat: Schnelle, konsistente Mengen als Grundlage für Angebot, AVA oder weitere Planung.</p>
                         </div>
                     </div>
                  </div>
