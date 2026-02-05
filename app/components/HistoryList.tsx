@@ -32,26 +32,36 @@ function translateText(text?: string | null): string {
 export default function HistoryList({ variant='wood' }: { variant?: 'wood' | 'default' }) {
   const [items, setItems] = useState<OfferListItem[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
   
   // State pentru a bloca interfața în timpul creării
   const [isCreating, setIsCreating] = useState(false)
 
   async function load() {
-    console.log('🔍 [HISTORY] Loading offers list...')
-    const data = await apiFetch('/offers?limit=50')
-    const offersWithMeta = data.items?.map((it: any) => ({ 
-      id: it.id, 
-      referinta: it?.meta?.referinta, 
-      title: it.title,
-      meta: it.meta,
-      fullItem: it
-    }))
-    console.log('🔍 [HISTORY] Loaded offers:', offersWithMeta)
-    // Log first offer in detail to see structure
-    if (offersWithMeta && offersWithMeta.length > 0) {
-      console.log('🔍 [HISTORY] First offer details:', JSON.stringify(offersWithMeta[0], null, 2))
+    setApiError(null)
+    try {
+      console.log('🔍 [HISTORY] Loading offers list...')
+      const data = await apiFetch('/offers?limit=50')
+      const offersWithMeta = data.items?.map((it: any) => ({ 
+        id: it.id, 
+        referinta: it?.meta?.referinta, 
+        title: it.title,
+        meta: it.meta,
+        fullItem: it
+      }))
+      console.log('🔍 [HISTORY] Loaded offers:', offersWithMeta)
+      if (offersWithMeta && offersWithMeta.length > 0) {
+        console.log('🔍 [HISTORY] First offer details:', JSON.stringify(offersWithMeta[0], null, 2))
+      }
+      setItems((data.items || []) as OfferListItem[])
+    } catch (e: any) {
+      const isNetwork = e?.message === 'Failed to fetch' || e?.name === 'TypeError'
+      setItems([])
+      setApiError(isNetwork
+        ? 'API nicht erreichbar. Bitte Backend starten: cd holzbot-api && npm run start:dev'
+        : (e?.message || 'Fehler beim Laden'))
+      console.warn('[HISTORY] Load failed:', e)
     }
-    setItems((data.items || []) as OfferListItem[])
   }
 
   const loadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -122,6 +132,13 @@ export default function HistoryList({ variant='wood' }: { variant?: 'wood' | 'de
           {isCreating ? 'Wird erstellt...' : 'Neues Projekt'}
         </button>
       </div>
+
+      {/* Hinweis wenn API nicht erreichbar */}
+      {apiError && (
+        <div className="mb-3 px-2 py-2 rounded-lg bg-orange-900/30 border border-orange-500/50 text-orange-200 text-sm">
+          {apiError}
+        </div>
+      )}
 
       {/* Liste der Projekte */}
       <div className="flex-1 overflow-y-auto hide-scroll space-y-3 pr-1 min-h-0">

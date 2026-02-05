@@ -2,7 +2,13 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+**Backend (API) required:** The dashboard and offers need the Holzbot API running on port 4000. From the repo root:
+
+```bash
+cd holzbot-api && npm install && npm run start:dev
+```
+
+Then start the frontend:
 
 ```bash
 npm run dev

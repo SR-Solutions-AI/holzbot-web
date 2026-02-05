@@ -168,6 +168,8 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover {
 .wizard-dot{ height: 12px; width: 12px; border-radius: 9999px; background: rgba(255,255,255,.16); outline: 2px solid rgba(0,0,0,.28); box-shadow: 0 0 0 1px rgba(255,255,255,.05) inset; }
 .wizard-dot.active{ background: var(--color-sun); box-shadow: 0 0 0 2px rgba(0,0,0,.32), 0 0 16px rgba(255,182,122,.42); }
 .wizard-dot.done{ background: linear-gradient(180deg, var(--color-sun), var(--color-sun-600)); box-shadow: 0 0 0 2px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.22); }
+.wizard-dot.skipped{ background: rgba(255,255,255,.08); opacity: .6; }
+.wizard-step.skipped .wizard-label{ opacity: .55; color: rgba(255,255,255,.5); }
 
 /* Stage */
 .wizard-stage{ min-height: 0; display: flex; align-items: center; justify-content: center; }
