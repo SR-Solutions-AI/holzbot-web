@@ -148,7 +148,12 @@ export const formStepsDachstuhl: Step[] = [
     fields: [
       { type: 'select', name: 'projektumfang', label: 'Projektumfang', options: ['Dachstuhl', 'Dachdeckung', 'Dachstuhl + Dachdeckung'] },
       { type: 'select', name: 'nutzungDachraum', label: 'Nutzung des Dachraums', options: ['Nicht ausgebaut', 'Wohnraum / ausgebaut'] },
-      { type: 'select', name: 'leistungenEnthalten', label: 'Leistungen enthalten', options: ['Abbund', 'Lieferung', 'Montage', 'Kranarbeiten', 'Gerüst', 'Entsorgung'] },
+      { type: 'bool', name: 'leistungAbbund', label: 'Abbund' },
+      { type: 'bool', name: 'leistungLieferung', label: 'Lieferung' },
+      { type: 'bool', name: 'leistungMontage', label: 'Montage' },
+      { type: 'bool', name: 'leistungKranarbeiten', label: 'Kranarbeiten' },
+      { type: 'bool', name: 'leistungGeruest', label: 'Gerüst' },
+      { type: 'bool', name: 'leistungEntsorgung', label: 'Entsorgung' },
     ],
   },
   {

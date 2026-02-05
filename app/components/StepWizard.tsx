@@ -1229,6 +1229,7 @@ export default function StepWizard() {
                     <img src="/images/blueprint.png" alt="Mengenermittlung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                   </div>
                   <div className="text-white font-extrabold text-lg text-center">Mengenermittlung</div>
+                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Ermittlung von Maßen für Hauspläne</div>
                   <div className="flex-1" />
                   <button
                     type="button"
@@ -1246,6 +1247,7 @@ export default function StepWizard() {
                     <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                   </div>
                   <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
+                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Dachstühle</div>
                   <div className="flex-1" />
                   <button
                     type="button"
@@ -1263,6 +1265,7 @@ export default function StepWizard() {
                     <img src="/images/house.png" alt="Neubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                   </div>
                   <div className="text-white font-extrabold text-lg text-center">Neubau</div>
+                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Neubauten</div>
                   <div className="flex-1" />
                   <button
                     type="button"
@@ -1321,6 +1324,13 @@ export default function StepWizard() {
                   setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
                   errors={visibleErrors}
                   drafts={drafts}
+                />
+              ) : step.key === 'projektdaten' ? (
+                <ProjektdatenStepContent
+                  form={form}
+                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('projektdaten', v) }}
+                  errors={visibleErrors}
+                  onEnter={onContinue}
                 />
               ) : step.key !== 'upload' ? (
                 <div className="space-y-4">
@@ -1478,6 +1488,79 @@ function ClientStep({ form, setForm, errors, onEnter }:{ form: Record<string, an
           </label>
         )
       })}
+    </div>
+  )
+}
+
+const LEISTUNGEN_OPTIONS = [
+  { name: 'leistungAbbund', label: 'Abbund' },
+  { name: 'leistungLieferung', label: 'Lieferung' },
+  { name: 'leistungMontage', label: 'Montage' },
+  { name: 'leistungKranarbeiten', label: 'Kranarbeiten' },
+  { name: 'leistungGeruest', label: 'Gerüst' },
+  { name: 'leistungEntsorgung', label: 'Entsorgung' },
+] as const
+
+function ProjektdatenStepContent({
+  form,
+  setForm,
+  errors,
+  onEnter,
+}: {
+  form: Record<string, any>
+  setForm: (v: Record<string, any>) => void
+  errors: Errors
+  onEnter: () => void
+}) {
+  return (
+    <div className="space-y-5">
+      <label className="flex flex-col gap-1" data-field="projektumfang">
+        <span className="wiz-label text-sun/90">Projektumfang</span>
+        <div className={errors.projektumfang ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
+          <SelectSun
+            value={form.projektumfang ?? ''}
+            onChange={(v) => setForm({ ...form, projektumfang: v })}
+            options={['Dachstuhl', 'Dachdeckung', 'Dachstuhl + Dachdeckung']}
+            placeholder="Wählen Sie eine Option"
+          />
+        </div>
+        {errors.projektumfang && <span className="text-xs text-orange-400">{errors.projektumfang}</span>}
+      </label>
+      <label className="flex flex-col gap-1" data-field="nutzungDachraum">
+        <span className="wiz-label text-sun/90">Nutzung des Dachraums</span>
+        <div className={errors.nutzungDachraum ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
+          <SelectSun
+            value={form.nutzungDachraum ?? ''}
+            onChange={(v) => setForm({ ...form, nutzungDachraum: v })}
+            options={['Nicht ausgebaut', 'Wohnraum / ausgebaut']}
+            placeholder="Wählen Sie eine Option"
+          />
+        </div>
+        {errors.nutzungDachraum && <span className="text-xs text-orange-400">{errors.nutzungDachraum}</span>}
+      </label>
+
+      <div className="pt-2 border-t border-white/10">
+        <div className="wiz-label text-sun/90 mb-3">Leistungen enthalten</div>
+        <div className="grid grid-cols-2 gap-3">
+          {LEISTUNGEN_OPTIONS.map(({ name, label }) => (
+            <label
+              key={name}
+              className="flex items-center gap-3 p-3 rounded-xl bg-black/20 border border-white/10 hover:border-[#FF9F0F]/30 transition-colors cursor-pointer"
+              data-field={name}
+            >
+              <input
+                type="checkbox"
+                className="sun-checkbox shrink-0"
+                checked={!!form[name]}
+                onChange={(e) => setForm({ ...form, [name]: e.target.checked })}
+                onKeyDown={(e) => handleInputEnter(e, onEnter)}
+              />
+              <span className="text-sm font-medium text-sand/90">{label}</span>
+              {errors[name] && <span className="ml-auto text-xs text-orange-400">{errors[name]}</span>}
+            </label>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
