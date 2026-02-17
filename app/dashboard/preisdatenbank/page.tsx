@@ -152,9 +152,11 @@ export default function PreisdatenbankPage() {
           apiRes && typeof apiRes === 'object' && 'params' in apiRes && apiRes.params
             ? apiRes.params
             : (apiRes as Record<string, number>)
-        const customOptions =
-          apiRes && typeof apiRes === 'object' && 'customOptions' in apiRes && apiRes.customOptions
-            ? apiRes.customOptions
+        const rawCustom =
+          apiRes && typeof apiRes === 'object' && 'customOptions' in apiRes ? apiRes.customOptions : undefined
+        const customOptions: Record<string, Array<{ label: string; value: string; price_key: string }>> =
+          rawCustom && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
+            ? (rawCustom as Record<string, Array<{ label: string; value: string; price_key: string }>>)
             : {}
         const paramLabelOverrides =
           apiRes && typeof apiRes === 'object' && 'paramLabelOverrides' in apiRes && apiRes.paramLabelOverrides
