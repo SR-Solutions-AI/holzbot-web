@@ -11,7 +11,7 @@ export default function DashboardFooter() {
         <div className="flex items-center gap-4">
            {/* eslint-disable-next-line @next/next/no-img-element */}
            <img src="/logo.png" alt="Holzbot" className="h-6 w-auto object-contain opacity-80" />
-           <p>© 2025 SR SOLUTIONS AI SRL <span className="opacity-30 mx-1">|</span> Alle Rechte vorbehalten.</p>
+           <p>© 2026 SR SOLUTIONS AI SRL <span className="opacity-30 mx-1">|</span> Alle Rechte vorbehalten.</p>
         </div>
         <div className="flex gap-6 font-medium">
             <Link href="/agb" className="hover:text-[#FF9F0F] transition-colors">AGB</Link>

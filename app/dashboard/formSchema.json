@@ -320,115 +320,79 @@
       ]
     },
     {
-      "key": "tipAcoperis",
+      "key": "daemmungDachdeckung",
       "labels": {
-        "ro": "Dachart",
-        "de": "Dachart",
-        "en": "Roof type"
-      },
-      "subtitle": {
-        "ro": "Wählen Sie die gewünschte Dachform",
-        "de": "Wählen Sie die gewünschte Dachform",
-        "en": "Select the desired roof shape"
+        "ro": "Dämmung & Dachdeckung",
+        "de": "Dämmung & Dachdeckung",
+        "en": "Insulation & roof covering"
       },
       "fields": [
         {
-          "name": "tipAcoperis",
+          "name": "daemmung",
           "type": "select",
           "labels": {
-            "ro": "Dachart",
-            "de": "Dachart",
-            "en": "Roof type"
+            "ro": "Dämmung",
+            "de": "Dämmung",
+            "en": "Insulation"
           },
           "options": [
-            {
-              "value": "Flachdach",
-              "labels": {
-                "ro": "Flachdach",
-                "de": "Flachdach",
-                "en": "Flat roof"
-              }
-            },
-            {
-              "value": "Pultdach",
-              "labels": {
-                "ro": "Pultdach",
-                "de": "Pultdach",
-                "en": "Shed roof"
-              }
-            },
-            {
-              "value": "Gründach",
-              "labels": {
-                "ro": "Gründach",
-                "de": "Gründach",
-                "en": "Green roof"
-              }
-            },
-            {
-              "value": "Satteldach",
-              "labels": {
-                "ro": "Satteldach",
-                "de": "Satteldach",
-                "en": "Gable roof"
-              }
-            },
-            {
-              "value": "Krüppelwalmdach",
-              "labels": {
-                "ro": "Krüppelwalmdach",
-                "de": "Krüppelwalmdach",
-                "en": "Hip and valley roof"
-              }
-            },
-            {
-              "value": "Mansardendach",
-              "labels": {
-                "ro": "Mansardendach",
-                "de": "Mansardendach",
-                "en": "Mansard roof"
-              }
-            },
-            {
-              "value": "Mansardendach mit Fußwalm",
-              "labels": {
-                "ro": "Mansardendach mit Fußwalm",
-                "de": "Mansardendach mit Fußwalm",
-                "en": "Mansard roof with foot hip"
-              }
-            },
-            {
-              "value": "Mansardendach mit Schlepp",
-              "labels": {
-                "ro": "Mansardendach mit Schlepp",
-                "de": "Mansardendach mit Schlepp",
-                "en": "Mansard roof with extension"
-              }
-            },
-            {
-              "value": "Mansardenwalmdach",
-              "labels": {
-                "ro": "Mansardenwalmdach",
-                "de": "Mansardenwalmdach",
-                "en": "Mansard hip roof"
-              }
-            },
-            {
-              "value": "Walmdach",
-              "labels": {
-                "ro": "Walmdach",
-                "de": "Walmdach",
-                "en": "Hip roof"
-              }
-            },
-            {
-              "value": "Paralleldach",
-              "labels": {
-                "ro": "Paralleldach",
-                "de": "Paralleldach",
-                "en": "Parallel roof"
-              }
-            }
+            { "value": "Keine", "labels": { "ro": "Keine", "de": "Keine", "en": "None" } },
+            { "value": "Zwischensparren", "labels": { "ro": "Zwischensparren", "de": "Zwischensparren", "en": "Between rafters" } },
+            { "value": "Aufsparren", "labels": { "ro": "Aufsparren", "de": "Aufsparren", "en": "On rafters" } },
+            { "value": "Kombination", "labels": { "ro": "Kombination", "de": "Kombination", "en": "Combination" } }
+          ]
+        },
+        {
+          "name": "unterdach",
+          "type": "select",
+          "labels": {
+            "ro": "Unterdach",
+            "de": "Unterdach",
+            "en": "Under-roof"
+          },
+          "options": [
+            { "value": "Folie", "labels": { "ro": "Folie", "de": "Folie", "en": "Membrane" } },
+            { "value": "Schalung + Folie", "labels": { "ro": "Schalung + Folie", "de": "Schalung + Folie", "en": "Decking + membrane" } }
+          ]
+        },
+        {
+          "name": "dachstuhlTyp",
+          "type": "select",
+          "labels": {
+            "ro": "Dachstuhl-Typ",
+            "de": "Dachstuhl-Typ",
+            "en": "Roof truss type"
+          },
+          "options": [
+            { "value": "Sparrendach", "labels": { "ro": "Sparrendach", "de": "Sparrendach", "en": "Rafter roof" } },
+            { "value": "Pfettendach", "labels": { "ro": "Pfettendach", "de": "Pfettendach", "en": "Purlin roof" } },
+            { "value": "Kehlbalkendach", "labels": { "ro": "Kehlbalkendach", "de": "Kehlbalkendach", "en": "Collar beam roof" } },
+            { "value": "Sonderkonstruktion", "labels": { "ro": "Sonderkonstruktion", "de": "Sonderkonstruktion", "en": "Special construction" } }
+          ]
+        },
+        {
+          "name": "sichtdachstuhl",
+          "type": "bool",
+          "labels": {
+            "ro": "Sichtdachstuhl",
+            "de": "Sichtdachstuhl",
+            "en": "Visible roof truss"
+          }
+        },
+        {
+          "name": "dachdeckung",
+          "type": "select",
+          "labels": {
+            "ro": "Dachdeckung",
+            "de": "Dachdeckung",
+            "en": "Roof covering"
+          },
+          "options": [
+            { "value": "Ziegel", "labels": { "ro": "Ziegel", "de": "Ziegel", "en": "Tiles" } },
+            { "value": "Betonstein", "labels": { "ro": "Betonstein", "de": "Betonstein", "en": "Concrete tiles" } },
+            { "value": "Blech", "labels": { "ro": "Blech", "de": "Blech", "en": "Metal sheet" } },
+            { "value": "Schindel", "labels": { "ro": "Schindel", "de": "Schindel", "en": "Shingles" } },
+            { "value": "Sonstiges", "labels": { "ro": "Sonstiges", "de": "Sonstiges", "en": "Other" } }
           ]
         }
       ]
@@ -751,41 +715,6 @@
                 "ro": "Mix",
                 "de": "Mischung",
                 "en": "Mix"
-              }
-            }
-          ]
-        },
-        {
-          "name": "materialAcoperis",
-          "type": "select",
-          "labels": {
-            "ro": "Material acoperiș",
-            "de": "Dachmaterial",
-            "en": "Roof material"
-          },
-          "options": [
-            {
-              "value": "Țiglă",
-              "labels": {
-                "ro": "Țiglă",
-                "de": "Dachziegel",
-                "en": "Roof tile"
-              }
-            },
-            {
-              "value": "Tablă",
-              "labels": {
-                "ro": "Tablă",
-                "de": "Dachblech",
-                "en": "Sheet metal"
-              }
-            },
-            {
-              "value": "Membrană",
-              "labels": {
-                "ro": "Membrană",
-                "de": "Dachmembran",
-                "en": "Roof membrane"
               }
             }
           ]

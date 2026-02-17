@@ -1,7 +1,8 @@
 'use client'
 
-import { useRouter } from 'next/navigation' 
-import { LogOut, User } from 'lucide-react' 
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { LogOut, User, Database } from 'lucide-react' 
 import { supabase } from '../lib/supabaseClient' 
 import { apiFetch } from '../lib/supabaseClient'
 import { useEffect, useState } from 'react'
@@ -10,7 +11,8 @@ import { useEffect, useState } from 'react'
 const LOGO_IMAGE_URL = '/logo.png' 
 
 export default function DashboardHeader() {
-  const router = useRouter()
+  const pathname = usePathname()
+  const isPreisdatenbank = pathname?.includes('/preisdatenbank')
   const [me, setMe] = useState<{ user?: { email?: string | null }, tenant?: { config?: any } | null } | null>(null)
 
   // --- FUNCTIA DE LOGOUT (FIXED) ---
@@ -79,19 +81,33 @@ export default function DashboardHeader() {
             />
           </div>
 
-          {/* Right: email + logout (button styled like the rest of the app) */}
-          <div className="flex justify-end items-center gap-3 min-w-0">
-            <div className="hidden sm:flex items-center gap-2 text-xs sm:text-sm text-sand/70 truncate max-w-[240px]">
+          {/* Right: email + Preisdatenbank/Angebote + logout */}
+          <div className="flex justify-end items-center gap-2 sm:gap-3 min-w-0">
+            <div className="hidden sm:flex items-center gap-2 text-xs sm:text-sm text-sand/70 truncate max-w-[200px]">
               <User size={16} className="flex-shrink-0" />
               <span className="truncate">{email || ''}</span>
             </div>
+            {isPreisdatenbank ? (
+              <Link
+                href="/dashboard"
+                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                title="Zurück zu Angebot generieren"
+              >
+                <span className="hidden sm:inline">Angebot generieren</span>
+              </Link>
+            ) : (
+              <Link
+                href="/dashboard/preisdatenbank"
+                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                title="Preisdatenbank"
+              >
+                <Database size={18} className="shrink-0" />
+                <span className="hidden sm:inline">Preisdatenbank</span>
+              </Link>
+            )}
             <button
               onClick={handleLogout}
-              className={`
-                flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out
-                bg-gradient-to-b from-[#e08414] to-[#f79116]
-                hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95
-              `}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-md transition-all duration-200 ease-out border border-white/30 bg-coffee-850 hover:bg-coffee-800 hover:border-[#FF9F0F]/50"
               title="Log Out"
             >
               <span className="hidden sm:inline">Log Out</span>

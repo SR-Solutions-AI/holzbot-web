@@ -80,7 +80,8 @@ const STAGES_WITH_IMAGES = [
   'scale_flood',
   'count_objects', 
   'exterior_doors',
-  'area'
+  'area',
+  'roof'  // house_3d.png, house_3d_pyramid.png, house_3d_shed.png
 ]
 
 /* ========= TITLURI DINAMICE ========= */
@@ -182,13 +183,14 @@ type TextItem = { kind: 'text'; stage: string; role: 'ai'|'formula'|'rezultat'; 
 type SpinnerItem = { kind: 'spinner'; stage: string; __id: string }
 type ImageItem = { kind: 'image'; stage: string; files: FeedFile[]; __id: string }
 type BreakItem = { kind: 'break'; stage: string; __id: string }
-type CongratsItem = { kind: 'congrats'; stage: 'final'; pdfUrl: string; offerId: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; __id: string }
+type CongratsItem = { kind: 'congrats'; stage: 'final'; pdfUrl: string; offerId: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null; __id: string }
 type SyntheticItem = TextItem | SpinnerItem | ImageItem | BreakItem | CongratsItem
 type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[] }
 type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: string }
 
 const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(f.url)
 const isPdf = (f: FeedFile) => f.mime?.includes('pdf') || /\.pdf(\?|$)/i.test(f.url)
+const isDisplayable = (f: FeedFile) => isImage(f)
 
 const generateId = (prefix: string = '') => 
   `${prefix}${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`
@@ -488,7 +490,6 @@ function MessageRow({ role, text, instant = false }: { role: string, text: strin
 
 function SmartImage({ file, instant = false }: { file: FeedFile, instant?: boolean }) {
   const [isPortrait, setIsPortrait] = useState(false)
-  
   return (
     <img 
       src={file.url}
@@ -530,7 +531,7 @@ export default function LiveFeed() {
   const allStagesCompleted = useRef(false)
 
   const queuedStages = useRef<Set<string>>(new Set())
-  const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean } | null>(null)
+  const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null } | null>(null)
 
   // ✅ [FIX CRITIC] Session ID pentru a invalida procesele vechi la reset
   const sessionRef = useRef<number>(0)
@@ -671,7 +672,7 @@ export default function LiveFeed() {
             const match = ev.message.match(/^\s*\[([^\]]+)\]/)
             if (match && ev.payload?.files) {
               const stage = match[1].trim()
-              const newFiles = ev.payload.files.filter((f: any) => isImage(f))
+              const newFiles = ev.payload.files.filter((f: any) => isDisplayable(f))
               const existing = filesByStage.current[stage] || []
               const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
               
@@ -781,7 +782,7 @@ export default function LiveFeed() {
             const stage = match[1].trim()
             
             if(ev.payload?.files?.length) {
-              const newImages = ev.payload.files.filter(isImage)
+              const newImages = ev.payload.files.filter(isDisplayable)
               const existing = filesByStage.current[stage] || []
               const uniqueNew = newImages.filter((nf: FeedFile) => !existing.some(ex => ex.url === nf.url))
               
@@ -803,12 +804,14 @@ export default function LiveFeed() {
 
               let realPdfUrl: string | null = null
               let adminPdfUrl: string | null = null
+              let roofMeasurementsPdfUrl: string | null = null
               if(offerId) {
                 try {
                     // Obține URL-ul pentru PDF-ul normal și admin PDF-ul dacă e disponibil
                     const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
                     realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf
                     adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
+                    roofMeasurementsPdfUrl = exportRes?.roofMeasurementsPdf?.download_url || exportRes?.roofMeasurementsPdf?.url || null
                 } catch(e) {
                     console.warn("Failed to fetch export url on complete", e)
                 }
@@ -823,7 +826,8 @@ export default function LiveFeed() {
                   offerId, 
                   pdfUrl: realPdfUrl,
                   adminPdfUrl: adminPdfUrl,
-                  canDownloadAdminPdf: canDownloadAdminPdf
+                  canDownloadAdminPdf: canDownloadAdminPdf,
+                  roofMeasurementsPdfUrl: roofMeasurementsPdfUrl
                 }
                 if (STAGE_TO_SEQUENCE[stage] && !queuedStages.current.has(stage)) {
                   queuedStages.current.add(stage)
@@ -837,7 +841,7 @@ export default function LiveFeed() {
             if (STAGE_TO_SEQUENCE[stage]) {
               if (processedStages.current.has(stage)) {
                 if (ev.payload?.files?.length) {
-                  const newImages = ev.payload.files.filter(isImage)
+                  const newImages = ev.payload.files.filter(isDisplayable)
                   setGroups(prev => {
                     const groupIndex = prev.findIndex(g => g.stage === stage)
                     if (groupIndex >= 0) {
@@ -978,6 +982,7 @@ export default function LiveFeed() {
           pdfUrl: completion.pdfUrl,
           adminPdfUrl: completion.adminPdfUrl || null,
           canDownloadAdminPdf: completion.canDownloadAdminPdf || false,
+          roofMeasurementsPdfUrl: completion.roofMeasurementsPdfUrl || null,
           __id: 'final'
         }
         addItem(item)
@@ -1249,6 +1254,14 @@ export default function LiveFeed() {
                                              className="btn-sun-secondary"
                                            >
                                              <Download className="h-4 w-4" /> Detailliertes Angebot herunterladen (PDF)
+                                           </button>
+                                         )}
+                                         {it.roofMeasurementsPdfUrl && (
+                                           <button
+                                             onClick={() => downloadPdfWithRefresh(it.offerId, it.roofMeasurementsPdfUrl!)}
+                                             className="btn-sun-secondary"
+                                           >
+                                             <Download className="h-4 w-4" /> Dämmung & Dachdeckung herunterladen (PDF)
                                            </button>
                                          )}
                                        </div>

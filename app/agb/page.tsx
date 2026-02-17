@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { ArrowLeft, Mail } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { motion, Variants } from 'framer-motion'
 
 // Constante necesare pentru Footer
@@ -43,7 +43,7 @@ function FooterSection() {
         </div>
         <div className="h-px w-full bg-white/10 mb-10" />
         <div className="flex flex-col md:flex-row justify-between items-center gap-6 text-sm text-sand/40">
-           <p>Copyright 2025 | SR SOLUTIONS AI SRL | UID: RO50767531</p>
+           <p>Copyright 2026 | SR SOLUTIONS AI SRL | UID: RO50767531</p>
            <div className="flex gap-6">
               <Link href="/agb" className="hover:text-white transition-colors">AGB</Link>
               <Link href="/impressum" className="hover:text-white transition-colors">Impressum</Link>
@@ -81,9 +81,9 @@ export default function AGBPage() {
           className="mb-16"
         >
             <motion.h1 variants={fadeInUp} className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-6 text-white leading-tight">
-              Allgemeine <br/> <span className="text-[#FF9F0F]">Geschäftsbedingungen</span>
+              Allgemeine <br/> <span className="text-[#FF9F0F]">Geschäftsbedingungen (AGB)</span> – Holzbot
             </motion.h1>
-            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 22. November 2025</motion.p>
+            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 16. Februar 2026</motion.p>
         </motion.div>
 
         {/* Content */}
@@ -95,7 +95,7 @@ export default function AGBPage() {
         >
           
           <motion.div variants={fadeInUp} className="p-8 bg-white/5 border border-white/10 rounded-3xl backdrop-blur-sm">
-            <p className="font-bold text-white text-xl mb-1">SR SOLUTIONS AI S.R.L.</p>
+            <p className="font-bold text-white text-xl mb-1">SR SOLUTIONS AI S.R.L. (&quot;SR Solutions&quot;)</p>
             <p className="text-sand/60">Strada Republicii 35, 437335 Șomcuta Mare, Maramureș, Rumänien</p>
           </motion.div>
 
@@ -106,46 +106,24 @@ export default function AGBPage() {
 
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§2 Vertragsgegenstand</h2>
-            <p className="mb-4">(1) Holzbot ist eine cloudbasierte Software, die ausschließlich über die Plattform www.holzbot.com bereitgestellt und verwendet wird. Der Kunde erhält, nach Fertigstellung, einen personalisierten Zugang zu seinem Konto mit Passwort und Benutzername.</p>
+            <p className="mb-4">(1) Holzbot ist eine cloudbasierte Software, die ausschließlich über die Plattform www.holzbot.com bereitgestellt und verwendet wird. Der Kunde erhält einen personalisierten Zugang zu seinem Konto mit Passwort und Benutzername am 1. Kalendertag des Folgemonats, nach der Unterzeichnung des Bestellformulars.</p>
             <p>(2) Holzbot erstellt automatisierte Preisschätzungen auf Basis von Bauplänen und Eingabedaten des Kunden. Diese Schätzungen sind unverbindlich und ersetzen keine manuelle Kalkulation.</p>
           </motion.section>
 
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§3 Preise & Zahlung</h2>
-            <p className="mb-4 font-bold text-white">(1) Preise (zzgl. MwSt):</p>
-            <div className="mb-4 space-y-4">
-              <div>
-                <p className="font-bold text-white mb-2">Holzbot Dachstuhl-Paket</p>
-                <ul className="list-disc pl-6 space-y-2 marker:text-[#FF9F0F]">
-                  <li>2.000 € einmalige Implementierungsgebühr</li>
-                  <li>200 € monatliche Wartungs- und Servicegebühr</li>
-                </ul>
-              </div>
-              <div>
-                <p className="font-bold text-white mb-2">Holzbot Neubau-Paket</p>
-                <ul className="list-disc pl-6 space-y-2 marker:text-[#FF9F0F]">
-                  <li>5.000 € einmalige Implementierungsgebühr</li>
-                  <li>500 € monatliche Wartungs- und Servicegebühr</li>
-                </ul>
-              </div>
-            </div>
-            <p className="mb-4">(2) Die Zahlung erfolgt ausschließlich per SEPA-Lastschriftmandat. Andere Zahlungsmethoden werden nicht akzeptiert.</p>
-            <p className="mb-4">(3) Die Implementierungsgebühr wird wie folgt abgerechnet:</p>
-            <ul className="list-disc pl-6 mb-4 space-y-2 marker:text-[#FF9F0F]">
-              <li>50 % bei Bestellung,</li>
-              <li>50 % nach schriftlicher Mitteilung der Fertigstellung der Implementierung.</li>
-            </ul>
-            <p className="mb-4">Die Mitteilung erfolgt per E-Mail, WhatsApp oder SMS von SR Solutions an den Kunden.</p>
-            <p className="mb-4">(4) Die monatliche Wartung beginnt am 1. Kalendertag des Folgemonats, nachdem die Implementierung abgeschlossen wurde.</p>
-            <p className="mb-4">(5) Die monatliche Wartungsgebühr wird immer am 1. Kalendertag eines Monats in Rechnung gestellt und ist bis spätestens 15. Kalendertag desselben Monats vollständig zu begleichen.</p>
-            <p>(6) Bei Nichtzahlung oder Rücklastschrift ist SR Solutions berechtigt, den Zugang zu Holzbot sofort und vollständig zu sperren, ohne Anspruch auf Rückerstattung oder Gutschrift bereits geleisteter Zahlungen.</p>
+            <p className="mb-4">(1) Die Preise für jedes Holzbot-Paket können auf www.holzbot.com aufgefunden werden.</p>
+            <p className="mb-4">(2) Die Zahlung erfolgt per SEPA-Lastschriftmandat oder per monatlicher Überweisung.</p>
+            <p className="mb-4">(3) Das monatliche Abo beginnt am 1. Kalendertag des Folgemonats, nach der Unterzeichnung des Bestellformulars.</p>
+            <p className="mb-4">(4) Die monatliche Abogebühr wird immer am 1. Kalendertag eines Monats in Rechnung gestellt und ist bis spätestens 15. Kalendertag desselben Monats vollständig zu begleichen.</p>
+            <p className="mb-4">(5) Bei Nichtzahlung oder Rücklastschrift ist SR Solutions berechtigt, den Zugang zu Holzbot sofort und vollständig zu sperren, ohne Anspruch auf Rückerstattung oder Gutschrift bereits geleisteter Zahlungen.</p>
+            <p>(6) Bei Zahlungsverzug von mehr als 30 Tagen ist der Anbieter berechtigt, den Vertrag außerordentlich zu kündigen.</p>
           </motion.section>
 
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§4 Laufzeit & Kündigung</h2>
-            <p className="mb-2">(1) Mindestlaufzeit: 12 Monate.</p>
-            <p className="mb-2">(2) Danach jederzeit mit 30 Tagen zum Monatsende kündbar.</p>
-            <p>(3) Bereits bezahlte Beträge werden nicht erstattet.</p>
+            <p className="mb-2">(1) Der Vertrag ist jederzeit kündbar.</p>
+            <p>(2) Bereits bezahlte Beträge werden nicht erstattet.</p>
           </motion.section>
 
           <motion.section variants={fadeInUp}>

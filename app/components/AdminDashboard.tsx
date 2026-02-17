@@ -266,15 +266,17 @@ export default function AdminDashboard() {
                 // map our known labels to step+field buckets
                 const map: Record<string, { stepKey: string; fieldKey: string }> = {
                   'System': { stepKey: 'sistemConstructiv', fieldKey: 'tipSistem' },
-                  'Vorfertigungsgrad': { stepKey: 'sistemConstructiv', fieldKey: 'gradPrefabricare' },
+                  'Baustellenzufahrt': { stepKey: 'sistemConstructiv', fieldKey: 'accesSantier' },
                   'Fundament': { stepKey: 'sistemConstructiv', fieldKey: 'tipFundatie' },
                   'Dachtyp': { stepKey: 'sistemConstructiv', fieldKey: 'tipAcoperis' },
+                  'Dachdeckung': { stepKey: 'daemmungDachdeckung', fieldKey: 'dachdeckung' },
+                  'Dachstuhl': { stepKey: 'daemmungDachdeckung', fieldKey: 'dachstuhlTyp' },
                   'Angebotsumfang': { stepKey: 'materialeFinisaj', fieldKey: 'nivelOferta' },
                   'Fassade': { stepKey: 'materialeFinisaj', fieldKey: 'fatada' },
                   'Fenster': { stepKey: 'materialeFinisaj', fieldKey: 'tamplarie' },
                   'Innenausbau': { stepKey: 'materialeFinisaj', fieldKey: 'finisajInterior' },
                   'Dachmaterial': { stepKey: 'materialeFinisaj', fieldKey: 'materialAcoperis' },
-                  'Heizung': { stepKey: 'performanta', fieldKey: 'incalzire' },
+                  'Heizung': { stepKey: 'performanta', fieldKey: 'tipIncalzire' },
                   'Energie': { stepKey: 'performanta', fieldKey: 'nivelEnergetic' },
                   'Gelände': { stepKey: 'logistica', fieldKey: 'teren' },
                   'Zufahrt': { stepKey: 'logistica', fieldKey: 'accesSantier' },
@@ -287,7 +289,7 @@ export default function AdminDashboard() {
             // Build ALL steps from raw steps (preferred), falling back to derived rows.
             const settingsRaw = (o.settings_raw ?? null) as Record<string, any> | null
             const allStepKeys = settingsRaw ? Object.keys(settingsRaw) : []
-            const FORM_ORDER = ['dateGenerale','client','sistemConstructiv','materialeFinisaj','performanta','performantaEnergetica','logistica','conditiiSantier','upload']
+            const FORM_ORDER = ['dateGenerale','client','sistemConstructiv','structuraCladirii','daemmungDachdeckung','ferestreUsi','materialeFinisaj','performanta','performantaEnergetica','logistica','conditiiSantier','upload']
             const stepKeys = (allStepKeys.length ? allStepKeys : FORM_ORDER)
               .slice()
               .sort((a, b) => {

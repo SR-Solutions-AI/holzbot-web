@@ -40,7 +40,7 @@ function FooterSection() {
         </div>
         <div className="h-px w-full bg-white/10 mb-10" />
         <div className="flex flex-col md:flex-row justify-between items-center gap-6 text-sm text-sand/40">
-           <p>Copyright 2025 | SR SOLUTIONS AI SRL | UID: RO50767531</p>
+           <p>Copyright 2026 | SR SOLUTIONS AI SRL | UID: RO50767531</p>
            <div className="flex gap-6">
               <Link href="/agb" className="hover:text-white transition-colors">AGB</Link>
               <Link href="/impressum" className="hover:text-white transition-colors">Impressum</Link>

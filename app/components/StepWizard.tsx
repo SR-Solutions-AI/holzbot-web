@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import { apiFetch } from '../lib/supabaseClient'
-// Wir importieren nur den Typ, keine statischen Daten
-import { type Field, formSteps, formStepsDachstuhl } from '../dashboard/formConfig'
+import { buildFormStepsFromJson } from '../../lib/buildFormFromJson'
+import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
+import { type Field, formStepsDachstuhl } from '../dashboard/formConfig'
 import { CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, Loader2, AlertTriangle, X } from 'lucide-react'
 
 const SimplePdfViewer = dynamic(() => import('./SimplePdfViewer.client'), {
@@ -68,7 +69,7 @@ const DE = {
   // Wir behalten die statischen Übersetzungen als Fallback, falls die DB keine Labels liefert
   fieldsGlobal: {
     'Tip sistem': 'Systemtyp',
-    'Grad prefabricare': 'Vorfertigungsgrad',
+    'Baustellenzufahrt': 'Baustellenzufahrt',
     'Tip fundație': 'Fundamenttyp',
     'Tip acoperiș': 'Dachtyp',
     'Material pereți': 'Wandmaterial',
@@ -232,23 +233,22 @@ const DE = {
   },
 } as const
 
-/* Helpers */
+/* Helpers: prioritate la label/placeholder din JSON (fallback), apoi DE */
 function tStepLabel(key: string, fallback: string) {
-  return (DE.steps as any)?.[key] ?? fallback ?? key
+  const fromJson = typeof fallback === 'string' && fallback.trim()
+  return fromJson ? fallback : (DE.steps as any)?.[key] ?? key
 }
-// Aktualisiert: Priorisiere das Label vom API, fallback auf DE
 function tFieldLabel(stepKey: string, fieldName: string, fallback: string | undefined) {
-  const fb = fallback ?? fieldName ?? ''
+  const fromJson = typeof fallback === 'string' && fallback.trim()
+  if (fromJson) return fallback
+  const fb = fieldName ?? ''
   return (DE.fieldsGlobal as any)?.[fb] ?? fb
 }
 function tPlaceholder(stepKey: string, fieldName: string, fallback?: string) {
-  return fallback
+  return typeof fallback === 'string' && fallback.trim() ? fallback : undefined
 }
 function tOption(stepKey: string, fieldName: string, value: string) {
-  return (
-    (DE.optionsGlobal as any)?.[value] ??
-    value
-  )
+  return (DE.optionsGlobal as any)?.[value] ?? value
 }
 
 /* ================= VALIDATORS ================= */
@@ -534,6 +534,11 @@ export default function StepWizard() {
 
   const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'neubau' | null>(null)
 
+  /** Opțiuni custom per tag (din Preisdatenbank) – se îmbină cu opțiunile din schema la select-uri. */
+  const [customOptionsForm, setCustomOptionsForm] = useState<Record<string, Array<{ label: string; value: string }>>>({})
+  /** Override-uri de etichete pentru variabile (Preisdatenbank) – folosite la afișarea opțiunilor în formular. */
+  const [paramLabelOverrides, setParamLabelOverrides] = useState<Record<string, string>>({})
+
   const lastProcessedCreationId = useRef<number>(0)
   const activeCreationPromise = useRef<Promise<string> | null>(null)
   const pendingOfferTypeIdRef = useRef<string | null>(null)
@@ -573,24 +578,91 @@ export default function StepWizard() {
 
   const visibleErrors = showErrors ? errors : {}
 
-  // -- UseEffect Hooks
-  
-  // 1. Formular din formConfig (ca pe VPS)
-  useEffect(() => {
-    setDynamicSteps(formSteps as any[])
-    setLoadingForm(false)
+  // Schema din data/form-schema/holzbau-form-steps.json (import static – la modificare fișier, salvează și refresh)
+  const formStepsFromJson = useMemo(
+    () => buildFormStepsFromJson(holzbauFormStepsJson as unknown),
+    []
+  )
+
+  // Mapare option value (din formular) -> price_key pentru override etichete (variabile prestabilite din Preisdatenbank)
+  const optionValueToPriceKey = useMemo(() => {
+    const out: Record<string, Record<string, string>> = {}
+    const schema = holzbauFormStepsJson as {
+      steps?: Array<{
+        fields?: Array<{ tag?: string; options?: string[] }>
+        priceSections?: Array<{ fieldTag?: string; variables?: Array<{ key: string; label: string }> }>
+      }>
+    }
+    const steps = Array.isArray(schema?.steps) ? schema.steps : []
+    for (const step of steps) {
+      const priceSections = step.priceSections ?? []
+      const fields = step.fields ?? []
+      for (const ps of priceSections) {
+        const tag = ps.fieldTag
+        if (!tag) continue
+        const field = fields.find((f: any) => f.tag === tag)
+        const options = (field as any)?.options ?? []
+        if (!out[tag]) out[tag] = {}
+        const vars = ps.variables || []
+        for (const opt of options) {
+          if (!opt || out[tag][opt]) continue
+          const v = vars.find((v: any) => (v.label || '').startsWith(opt))
+          if (v) out[tag][opt] = v.key
+        }
+        // fallback: first word of variable label (pentru câmpuri fără options sau compatibilitate)
+        for (const v of vars) {
+          const firstWord = (v.label || '').trim().split(/\s+/)[0]
+          if (firstWord && !out[tag][firstWord]) out[tag][firstWord] = v.key
+        }
+      }
+    }
+    return out
   }, [])
 
-  // 1b. Când user alege pachet (Dachstuhl vs Neubau/Mengen), folosim flow-ul corespunzător și resetăm la pasul 1
+  useEffect(() => {
+    setDynamicSteps(formStepsFromJson as any[])
+    setLoadingForm(false)
+  }, [formStepsFromJson])
+
+  // 1b. Când user alege pachet (Dachstuhl vs Neubau/Mengen), folosim flow-ul corespunzător
   useEffect(() => {
     if (selectedPackage === 'dachstuhl') {
       setDynamicSteps(formStepsDachstuhl as any[])
       setIdx(0)
-    } else if (selectedPackage === 'neubau' || selectedPackage === 'mengen') {
-      setDynamicSteps(formSteps as any[])
+    } else if ((selectedPackage === 'neubau' || selectedPackage === 'mengen') && formStepsFromJson.length > 0) {
+      setDynamicSteps(formStepsFromJson as any[])
       setIdx(0)
     }
+  }, [selectedPackage, formStepsFromJson])
+
+  const fetchPricingParameters = useCallback(() => {
+    if (selectedPackage !== 'neubau' && selectedPackage !== 'mengen') return
+    // Cache bust ca formularul să primească etichete actualizate după salvare în Preisdatenbank
+    const url = '/pricing-parameters?t=' + Date.now()
+    apiFetch(url)
+      .then((res: any) => {
+        const co = res?.customOptions
+        if (co && typeof co === 'object') setCustomOptionsForm(co)
+        const overrides = res?.paramLabelOverrides
+        if (overrides && typeof overrides === 'object') setParamLabelOverrides(overrides)
+      })
+      .catch(() => {})
   }, [selectedPackage])
+
+  useEffect(() => { fetchPricingParameters() }, [fetchPricingParameters])
+
+  // Re-fetch la revenirea pe tab/fereastră ca formularul să vadă etichete actualizate din Preisdatenbank
+  useEffect(() => {
+    if (selectedPackage !== 'neubau' && selectedPackage !== 'mengen') return
+    const refetch = () => { fetchPricingParameters() }
+    const onVisibility = () => { if (document.visibilityState === 'visible') refetch() }
+    window.addEventListener('focus', refetch)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', refetch)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [selectedPackage, fetchPricingParameters])
 
   // 2. New Project Listener
   useEffect(() => {
@@ -1142,7 +1214,7 @@ export default function StepWizard() {
     return (
       <div className="p-8 text-center text-red-300">
         Die Formulardefinition konnte nicht geladen werden. <br/>
-        Bitte überprüfen Sie, ob die API läuft (Port 4000) und ob Daten in der Tabelle <code>form_definitions</code> vorhanden sind.
+        Prüfen Sie, ob <code>data/form-schema/holzbau-form-steps.json</code> existiert.
       </div>
     )
   }
@@ -1304,13 +1376,29 @@ export default function StepWizard() {
                 </div>
               )}
               
-              {step.key === 'client' ? (
+              {step.key === 'client' && (!step.fields || step.fields.length === 0) ? (
                 <ClientStep
                   form={form}
                   setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('client', v) }}
                   errors={visibleErrors}
                   onEnter={onContinue}
                 />
+              ) : step.key === 'client' ? (
+                <div className="space-y-4">
+                  <DynamicFields
+                    stepKey={step.key}
+                    fields={step.fields}
+                    form={form}
+                    setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('client', v) }}
+                    onUpload={onUpload}
+                    ensureOffer={ensureOffer}
+                    errors={visibleErrors}
+                    onEnter={onContinue}
+                    customOptionsForm={customOptionsForm}
+                    paramLabelOverrides={paramLabelOverrides}
+                    optionValueToPriceKey={optionValueToPriceKey}
+                  />
+                </div>
               ) : step.key === 'structuraCladirii' ? (
                 <BuildingStructureStep
                   form={form}
@@ -1343,6 +1431,9 @@ export default function StepWizard() {
                     ensureOffer={ensureOffer}
                     errors={visibleErrors}
                     onEnter={onContinue}
+                    customOptionsForm={customOptionsForm}
+                    paramLabelOverrides={paramLabelOverrides}
+                    optionValueToPriceKey={optionValueToPriceKey}
                   />
                 </div>
               ) : (
@@ -1353,7 +1444,10 @@ export default function StepWizard() {
                     form={form} 
                     setForm={(v) => { setForm(v) }} 
                     onUpload={onUpload} 
-                    ensureOffer={ensureOffer} 
+                    ensureOffer={ensureOffer}
+                    customOptionsForm={customOptionsForm} 
+                    paramLabelOverrides={paramLabelOverrides}
+                    optionValueToPriceKey={optionValueToPriceKey}
                     errors={{}} 
                     onEnter={onContinue}
                   />
@@ -1614,12 +1708,6 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<
           </label>
         </div>
       )}
-      <label className="flex flex-col gap-1" data-field="materialAcoperis">
-        <span className="wiz-label text-sun/90">Dachmaterial</span>
-        <div className={errors.materialAcoperis ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-          <SelectSun value={form.materialAcoperis || ''} onChange={(v) => setForm({ ...form, materialAcoperis: v })} options={['Țiglă', 'Tablă', 'Membrană']} displayFor={(opt) => tOption('materialeFinisaj', 'materialAcoperis', opt)} />
-        </div>
-      </label>
     </div>
   )
 }
@@ -1912,7 +2000,8 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
 }
 
 function DynamicFields({
-  stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter
+  stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter, customOptionsForm = {},
+  paramLabelOverrides = {}, optionValueToPriceKey = {}
 }: {
   stepKey: string
   fields: Field[]
@@ -1922,6 +2011,9 @@ function DynamicFields({
   ensureOffer: () => Promise<string>
   errors: Errors
   onEnter: () => void
+  customOptionsForm?: Record<string, Array<{ label: string; value: string }>>
+  paramLabelOverrides?: Record<string, string>
+  optionValueToPriceKey?: Record<string, Record<string, string>>
 }) {
   
   let currentFields = fields;
@@ -1935,22 +2027,6 @@ function DynamicFields({
   return (
     <div className="grid grid-cols-1 gap-3">
       {currentFields.map(f => {
-        if (stepKey === 'tipAcoperis' && f.type === 'select' && f.name === 'tipAcoperis') {
-          return (
-            <div key={f.name} className="flex flex-col gap-1 mt-4" data-field={f.name}>
-              <div className="flex items-center justify-between mb-2">
-                <span className="wiz-label text-sun/90">{tFieldLabel(stepKey, f.name, f.label)}</span>
-                {form[f.name] && <span className="text-xs text-neutral-300/70">{DE.common.selected}: {form[f.name]}</span>}
-              </div>
-              <RoofGridSelect
-                value={form[f.name] ?? ''}
-                onChange={(v) => setForm({ ...form, [f.name]: v })}
-              />
-              {errors[f.name] && <span className="text-xs text-orange-400 mt-1">{errors[f.name]}</span>}
-            </div>
-          )
-        }
-
         if (f.type === 'upload') {
              return (
                  <SimpleUploadField 
@@ -1994,10 +2070,17 @@ function DynamicFields({
                     await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
                     window.dispatchEvent(new Event('offers:refresh'))
                   }}
-                  options={(f as any).options ?? []}
+                  options={[
+                    ...((f as any).options ?? []),
+                    ...((customOptionsForm[(f as any).tag] || []).map((o: { label: string; value: string }) => o.label)),
+                  ]}
                   placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}
                   displayFor={(opt) => {
                     const val = typeof opt === 'string' ? opt : optValue(opt)
+                    const tag = (f as any).tag
+                    const priceKey = tag && optionValueToPriceKey[tag]?.[val]
+                    const override = priceKey && paramLabelOverrides[priceKey]
+                    if (override) return override
                     if (isFireplaceField && fireplaceLabels[val]) return fireplaceLabels[val]
                     const objLabel = typeof opt === 'object' && opt !== null && (opt as any).label != null && (opt as any).label !== '' ? String((opt as any).label) : null
                     return objLabel ?? tOption(stepKey, f.name, val)
@@ -2060,7 +2143,12 @@ function DynamicFields({
             <span className="wiz-label text-sun/90">{displayLabel}</span>
             {f.type === 'textarea'
               ? <textarea {...common} className={`sun-textarea ${errors[f.name] ? 'ring-2 ring-orange-400/60 focus:ring-orange-400/60' : ''}`} />
-              : <input type={f.type === 'number' ? 'number' : 'text'} {...common} />}
+              : <input
+                  type={f.type === 'number' ? 'number' : 'text'}
+                  {...common}
+                  {...(f.type === 'number' && 'min' in f && f.min != null ? { min: f.min } : {})}
+                  {...(f.type === 'number' && 'max' in f && f.max != null ? { max: f.max } : {})}
+                />}
             {errors[f.name] && <span className="text-xs text-orange-400">{errors[f.name]}</span>}
           </label>
         )

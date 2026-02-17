@@ -5,6 +5,7 @@ export const ADMIN_STEP_LABELS_DE: Record<string, string> = {
   dateGenerale: 'Allgemeine Daten',
   client: 'Kunde',
   sistemConstructiv: 'Bausystem',
+  daemmungDachdeckung: 'Dämmung & Dachdeckung',
   materialeFinisaj: 'Materialien & Ausbaustufe',
   performanta: 'Energieeffizienz',
   performantaEnergetica: 'Energieeffizienz',
@@ -15,7 +16,7 @@ export const ADMIN_STEP_LABELS_DE: Record<string, string> = {
 
 export const ADMIN_FIELD_LABELS_DE: Record<string, string> = {
   tipSistem: 'Systemtyp',
-  gradPrefabricare: 'Vorfertigungsgrad',
+  accesSantier: 'Baustellenzufahrt',
   tipFundatie: 'Fundamenttyp',
   tipAcoperis: 'Dachtyp',
   nivelOferta: 'Gewünschter Angebotsumfang',
@@ -23,10 +24,13 @@ export const ADMIN_FIELD_LABELS_DE: Record<string, string> = {
   tamplarie: 'Fenster/Türen',
   finisajInterior: 'Innenausbau',
   materialAcoperis: 'Dachmaterial',
+  dachdeckung: 'Dachdeckung',
+  dachstuhlTyp: 'Dachstuhl-Typ',
+  daemmung: 'Dämmung',
   incalzire: 'Heizung',
+  tipIncalzire: 'Heizung',
   nivelEnergetic: 'Energie',
   teren: 'Gelände',
-  accesSantier: 'Baustellenzufahrt',
 }
 
 export const ADMIN_OPTION_DE: Record<string, string> = {
@@ -36,6 +40,11 @@ export const ADMIN_OPTION_DE: Record<string, string> = {
   'Soclu': 'Streifenfundament (Sockel)',
 
   // Roof materials
+  Ziegel: 'Ziegel',
+  Betonstein: 'Betonstein',
+  Blech: 'Blech',
+  Schindel: 'Schindel',
+  Sonstiges: 'Sonstiges',
   'Țiglă': 'Dachziegel',
   'Țiglă ceramică': 'Tondachziegel',
   'Țiglă beton': 'Betondachstein',

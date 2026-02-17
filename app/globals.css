@@ -112,19 +112,54 @@ html, body {
 .list-btn--active { @apply ring-2 ring-caramel; }
 
 /* ====== Scrollbar tematic (global) ====== */
-html .themed-scroll { scrollbar-width: thin; scrollbar-color: rgba(216,162,94,.55) transparent; }
-html .themed-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
-html .themed-scroll::-webkit-scrollbar-track { background: transparent; }
-html .themed-scroll::-webkit-scrollbar-thumb {
+html .themed-scroll,
+.themed-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216,162,94,.55) transparent;
+}
+html .themed-scroll::-webkit-scrollbar,
+.themed-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+html .themed-scroll::-webkit-scrollbar-track,
+.themed-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+html .themed-scroll::-webkit-scrollbar-thumb,
+.themed-scroll::-webkit-scrollbar-thumb {
   background: rgba(216,162,94,.55);
   border-radius: 9999px;
   border: 2px solid transparent;
   background-clip: padding-box;
   transition: background 120ms ease, transform 120ms ease;
 }
-html .themed-scroll::-webkit-scrollbar-thumb:hover {
+html .themed-scroll::-webkit-scrollbar-thumb:hover,
+.themed-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(216,162,94,.75);
   transform: translateX(-1px);
+}
+
+/* Preisdatenbank: scrollbar colorat (override) */
+.preisdatenbank-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216,162,94,.55) transparent;
+}
+.preisdatenbank-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.preisdatenbank-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.preisdatenbank-scroll::-webkit-scrollbar-thumb {
+  background: rgba(216,162,94,.55);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.preisdatenbank-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(216,162,94,.75);
 }
 
 /* KaTeX: permite wrap pe rânduri noi și aliniere la stânga */

@@ -66,7 +66,14 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
         // Încercăm să vedem și mesajul de eroare din spate
         const errorText = await res.text().catch(() => res.statusText)
         console.error(`API Fetch Error [${res.status}] la ${cleanBase}${cleanPath}:`, errorText)
-        throw new Error(`${res.status} ${res.statusText}`)
+        let message = `${res.status} ${res.statusText}`
+        try {
+          const body = JSON.parse(errorText)
+          if (body?.message) message = body.message
+        } catch {
+          if (errorText) message = errorText.slice(0, 200)
+        }
+        throw new Error(message)
       }
       
       return res.json()

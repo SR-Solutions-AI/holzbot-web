@@ -195,12 +195,12 @@ function BenefitsSection() {
 function FAQSection() {
   return (
     <section className="relative w-full bg-coffee-900 py-16 md:py-32 px-6 z-20 overflow-hidden">
-      <div className="relative z-10 max-w-6xl mx-auto">
+      <div className="relative z-10 max-w-[1600px] mx-auto">
         <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInUp} className="text-center mb-12 md:mb-20">
             <h2 className="text-4xl md:text-5xl lg:text-6xl font-extrabold text-white mb-6 leading-tight">Häufig gestellte Fragen</h2>
             <div className="h-1.5 w-32 bg-[#FF9F0F] rounded-full mx-auto" />
         </motion.div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 md:gap-10 items-stretch">
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInLeft} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
                 <h3 className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3">
                     <Users className="text-[#FF9F0F]" /> Ist Holzbot für unsere Firma geeignet?
@@ -209,86 +209,86 @@ function FAQSection() {
                     <div>
                         <p className="text-lg md:text-xl font-bold text-white mb-4 flex items-center gap-2">
                             <CheckCircle2 className="text-[#FF9F0F] shrink-0" size={20} />
-                            Ja, wenn:
+                            <span className="underline decoration-[#FF9F0F]/70 underline-offset-2">Ja, wenn:</span>
                         </p>
                         <ul className="space-y-3 ml-7">
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                                <span className="text-lg md:text-xl text-sand/90">Neubauten oder Dachstühle zu Ihren Hauptleistungen zählen</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90"><span className="font-semibold text-white">Neubauten oder Dachstühle</span> zu Ihren Hauptleistungen zählen</span>
                             </li>
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                                <span className="text-lg md:text-xl text-sand/90">Sie regelmäßig Zeit mit Angeboten verschwenden, die nicht zum Abschluss führen</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie regelmäßig Zeit mit <span className="font-semibold text-white">Angeboten verschwenden</span>, die nicht zum Abschluss führen</span>
                             </li>
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                                <span className="text-lg md:text-xl text-sand/90">Ihre Kunden mit fertigen Plänen kommen und schnell einen Preis erwarten</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Ihre Kunden mit fertigen Plänen kommen und <span className="font-semibold text-white">schnell einen Preis erwarten</span></span>
                             </li>
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                                <span className="text-lg md:text-xl text-sand/90">Sie Preise oft zu spät nennen, weil mehrere Anfragen parallel bearbeitet werden müssen</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie Preise oft <span className="font-semibold text-white">zu spät nennen</span>, weil mehrere Anfragen parallel bearbeitet werden müssen</span>
                             </li>
                         </ul>
                     </div>
                     <div>
                         <p className="text-lg md:text-xl font-bold text-white mb-4 flex items-center gap-2">
                             <XCircle className="text-sand/70 shrink-0" size={20} />
-                            Nein, wenn:
+                            <span className="underline decoration-sand/50 underline-offset-2">Nein, wenn:</span>
                         </p>
                         <ul className="space-y-3 ml-7">
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
-                                <span className="text-lg md:text-xl text-sand/90">Sie hauptsächlich Sanierungen, Renovierungen oder Aufstockungen umsetzen</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50 shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie hauptsächlich <span className="font-semibold text-white">Sanierungen, Renovierungen oder Aufstockungen</span> umsetzen</span>
                             </li>
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
-                                <span className="text-lg md:text-xl text-sand/90">Sie Projekte fast ausschließlich selbst planen (keine Baupläne vom Kunden)</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50 shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie Projekte fast ausschließlich selbst planen <span className="font-semibold text-white">(keine Baupläne vom Kunden)</span></span>
                             </li>
                             <li className="flex items-start gap-3">
-                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50" />
-                                <span className="text-lg md:text-xl text-sand/90">Sie weniger als 5 Angebotsanfragen pro Monat bekommen</span>
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-sand/50 shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie <span className="font-semibold text-white">weniger als 5 Angebotsanfragen</span> pro Monat bekommen</span>
                             </li>
                         </ul>
                     </div>
                 </div>
             </motion.div>
-            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInRight} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
+            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInUp} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
                 <h3 className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3">
-                     <TrendingUp className="text-[#FF9F0F]" /> Woher hat das System seine Preise und Daten?
+                    <TrendingUp className="text-[#FF9F0F]" /> Lohnt sich Holzbot für unser Unternehmen?
                 </h3>
                 <div className="space-y-6 text-lg md:text-xl text-sand/90 leading-relaxed">
-                    <p className="font-bold text-white text-xl md:text-2xl">Von Ihnen.</p>
-                    <p>Zu Beginn unserer Zusammenarbeit bauen wir die Preislogik von Holzbot auf Basis Ihrer Unternehmensdaten auf.</p>
-                    <p className="font-semibold text-white">Dafür stellen Sie uns folgende Informationen zur Verfügung:</p>
-                    <ul className="space-y-3 ml-4">
-                        <li className="flex items-start gap-3">
-                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                            <span>Beispielangebote und LVs aus Ihrer bisherigen Arbeit</span>
+                    <p className="font-bold text-white text-xl md:text-2xl underline decoration-[#FF9F0F] decoration-2 underline-offset-2">Ja, in den meisten Fällen deutlich.</p>
+                    <p>Eine typische Holzbau-Firma erstellt <span className="font-semibold text-white">ca. 8–12 Angebote pro Monat</span>.<br />Rund die Hälfte davon führt nicht zum Auftrag.</p>
+                    <p>Pro Angebot fallen durchschnittlich <span className="font-semibold text-white">4–6 Stunden</span> Kalkulationszeit an.<br />Bei ca. <span className="font-bold text-[#FF9F0F]">80 €</span> interner Stundensatz sind das rund <span className="font-bold text-[#FF9F0F]">400 € pro Angebot</span>.</p>
+                    <p>Wenn 5 Angebote pro Monat nicht beauftragt werden:</p>
+                    <p className="ml-4 font-semibold text-white">→ ca. 2.000 € interner Aufwand monatlich</p>
+                    <p>Gewinnen Sie durch schnellere Angebote nur <span className="font-semibold text-white">einen zusätzlichen Auftrag pro Jahr</span>:</p>
+                    <ul className="space-y-2 ml-4">
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F] font-bold">•</span>
+                            <span><span className="font-semibold text-white">Ø Projekt:</span> 500.000 €</span>
                         </li>
-                        <li className="flex items-start gap-3">
-                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                            <span>Beispielpläne, wie sie typischerweise von Ihren Kunden eingehen</span>
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F] font-bold">•</span>
+                            <span><span className="font-semibold text-white">Ø Gewinn (10 %):</span> 50.000 €</span>
                         </li>
-                        <li className="flex items-start gap-3">
-                            <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F]" />
-                            <span>Ihre internen Preisdaten, z. B.</span>
+                        <li className="flex items-start gap-2">
+                            <span className="text-[#FF9F0F] font-bold">•</span>
+                            <span className="font-semibold text-white">→ ≈ 4.000 € zusätzlicher Gewinn pro Monat</span>
                         </li>
                     </ul>
-                    <ul className="space-y-2 ml-8 text-base md:text-lg">
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#FF9F0F]">•</span>
-                            <span>Quadratmeterpreise (Außenwände, Innenwände, Decken, Böden etc.)</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#FF9F0F]">•</span>
-                            <span>Stückpreise (Bauteile, Positionen, Leistungen)</span>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#FF9F0F]">•</span>
-                            <span>Preise von Subunternehmern, z. B. Dachdecker, Maurer, Fensterlieferant.</span>
-                        </li>
-                    </ul>
-                    <p>Auf Basis dieser Informationen erstellen wir eine individuelle, strukturierte Preis- und Leistungsdatenbank, die exakt zu Ihrem Betrieb passt.</p>
+                    <p className="font-bold text-white text-xl md:text-2xl pt-2 py-2 px-4 rounded-xl bg-[#FF9F0F]/20 border border-[#FF9F0F]/40 inline-block">Total ≈ 6.000 € / Monat</p>
+                </div>
+            </motion.div>
+            <motion.div initial="hidden" whileInView="visible" viewport={{ once: true }} variants={fadeInRight} className="space-y-6 md:space-y-8 p-6 md:p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-[#FF9F0F]/30 transition-all">
+                <h3 className="text-2xl md:text-3xl font-bold text-white mb-6 flex items-center gap-3">
+                    <TrendingUp className="text-[#FF9F0F]" /> Woher hat Holzbot seine Preise und Daten?
+                </h3>
+                <div className="space-y-6 text-lg md:text-xl text-sand/90 leading-relaxed">
+                    <p className="font-bold text-white text-xl md:text-2xl underline decoration-[#FF9F0F] decoration-2 underline-offset-2">Von Ihnen.</p>
+                    <p>Holzbot arbeitet mit den Preis- und Leistungsdaten <span className="font-semibold text-white">Ihres Unternehmens</span>.<br />Sie hinterlegen Ihre <span className="font-semibold text-white">Quadratmeterpreise, Stückpreise und Subunternehmerkosten</span> direkt im System.</p>
+                    <p>Auf dieser Basis berechnet Holzbot Ihre Projekte automatisch mit <span className="font-bold text-[#FF9F0F]">genau den Zahlen, die Sie selbst verwenden</span>.</p>
+                    <p>Sie behalten jederzeit die <span className="font-semibold text-white underline decoration-[#FF9F0F]/60 underline-offset-1">volle Kontrolle</span> und können Ihre Preise im System selbst anpassen.</p>
                 </div>
             </motion.div>
         </div>
@@ -508,20 +508,9 @@ function PricingSection() {
                     </div>
                  </div>
 
-                 {/* Prețuri mutat jos */}
+                 {/* Prețuri: doar lunar */}
                  <div className="mt-auto">
-                    {/* Preise (kompakt) */}
                     <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
-                        <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-2">
-                                <Briefcase size={16} className="text-[#FF9F0F]" />
-                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
-                            </div>
-                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">0 €</div>
-                        </div>
-
-                        <div className="my-3 h-px bg-white/10" />
-
                         <div className="flex items-center justify-between gap-4">
                             <div className="flex items-center gap-2">
                                 <Shield size={16} className="text-[#FF9F0F]" />
@@ -530,7 +519,6 @@ function PricingSection() {
                             <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">250 €</div>
                         </div>
                     </div>
-                    
                     <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
             </motion.div>
@@ -567,20 +555,9 @@ function PricingSection() {
                     </div>
                  </div>
 
-                 {/* Prețuri mutat jos */}
+                 {/* Prețuri: doar lunar */}
                  <div className="mt-auto">
-                    {/* Preise (kompakt) */}
                     <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
-                        <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-2">
-                                <Briefcase size={16} className="text-[#FF9F0F]" />
-                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
-                            </div>
-                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">2.000 €</div>
-                        </div>
-
-                        <div className="my-3 h-px bg-white/10" />
-
                         <div className="flex items-center justify-between gap-4">
                             <div className="flex items-center gap-2">
                                 <Shield size={16} className="text-[#FF9F0F]" />
@@ -589,7 +566,6 @@ function PricingSection() {
                             <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">200 €</div>
                         </div>
                     </div>
-                    
                     <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
             </motion.div>
@@ -626,20 +602,9 @@ function PricingSection() {
                     </div>
                  </div>
 
-                 {/* Prețuri mutat jos */}
+                 {/* Prețuri: doar lunar */}
                  <div className="mt-auto">
-                    {/* Preise (kompakt) */}
                     <div className="mx-6 md:mx-12 bg-black/30 p-4 md:p-5 rounded-2xl border border-white/5 mb-4 backdrop-blur-sm">
-                        <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-2">
-                                <Briefcase size={16} className="text-[#FF9F0F]" />
-                                <p className="text-[#FF9F0F] font-bold text-xs uppercase tracking-wider">Implementierung</p>
-                            </div>
-                            <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">5.000 €</div>
-                        </div>
-
-                        <div className="my-3 h-px bg-white/10" />
-
                         <div className="flex items-center justify-between gap-4">
                             <div className="flex items-center gap-2">
                                 <Shield size={16} className="text-[#FF9F0F]" />
@@ -648,7 +613,6 @@ function PricingSection() {
                             <div className="text-xl md:text-2xl font-black text-white tracking-tight text-right whitespace-nowrap">500 €</div>
                         </div>
                     </div>
-                    
                     <p className="mx-6 md:mx-12 text-sand/50 text-[11px] mb-8 italic pl-2 border-l-2 border-[#FF9F0F]/30">Alle Preise zzgl. gesetzlicher MwSt.</p>
                  </div>
             </motion.div>
@@ -700,7 +664,7 @@ function FooterSection() {
         <div className="flex flex-col md:flex-row justify-between items-center gap-8">
            
            {/* DETALIU 3: Copyright + UID */}
-           <p className="text-sand/40 text-sm md:text-base font-medium text-center md:text-left order-2 md:order-1">Copyright 2025 | SR SOLUTIONS AI SRL <span className="block md:inline mx-0 md:mx-2 opacity-30">|</span> UID: RO50767531</p>
+           <p className="text-sand/40 text-sm md:text-base font-medium text-center md:text-left order-2 md:order-1">Copyright 2026 | SR SOLUTIONS AI SRL <span className="block md:inline mx-0 md:mx-2 opacity-30">|</span> UID: RO50767531</p>
 
            {/* Legal Links (Text mai mare) */}
            <div className="flex flex-wrap justify-center gap-6 md:gap-10 text-sm md:text-base font-medium text-sand/60 order-1 md:order-2">
