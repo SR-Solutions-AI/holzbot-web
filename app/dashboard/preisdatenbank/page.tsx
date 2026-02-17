@@ -147,20 +147,24 @@ export default function PreisdatenbankPage() {
               customOptions?: Record<string, Array<{ label: string; value: string; price_key: string }>>
               paramLabelOverrides?: Record<string, string>
             }
-          | Record<string, number>
-        const pricesMap =
-          apiRes && typeof apiRes === 'object' && 'params' in apiRes && apiRes.params
-            ? apiRes.params
-            : (apiRes as Record<string, number>)
+          | Record<string, unknown>
+        const rawParams =
+          apiRes && typeof apiRes === 'object' && 'params' in apiRes ? apiRes.params : undefined
+        const pricesMap: Record<string, number> =
+          rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)
+            ? (rawParams as Record<string, number>)
+            : (apiRes && typeof apiRes === 'object' ? (apiRes as Record<string, number>) : {})
         const rawCustom =
           apiRes && typeof apiRes === 'object' && 'customOptions' in apiRes ? apiRes.customOptions : undefined
         const customOptions: Record<string, Array<{ label: string; value: string; price_key: string }>> =
           rawCustom && typeof rawCustom === 'object' && !Array.isArray(rawCustom)
             ? (rawCustom as Record<string, Array<{ label: string; value: string; price_key: string }>>)
             : {}
-        const paramLabelOverrides =
-          apiRes && typeof apiRes === 'object' && 'paramLabelOverrides' in apiRes && apiRes.paramLabelOverrides
-            ? apiRes.paramLabelOverrides
+        const rawOverrides =
+          apiRes && typeof apiRes === 'object' && 'paramLabelOverrides' in apiRes ? apiRes.paramLabelOverrides : undefined
+        const paramLabelOverrides: Record<string, string> =
+          rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
+            ? (rawOverrides as Record<string, string>)
             : {}
         for (const sec of baseSectionsFromJson) {
           for (const sub of sec.subsections) {
