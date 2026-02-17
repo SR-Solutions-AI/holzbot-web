@@ -9,7 +9,7 @@ export type FormField =
   | { type: 'textarea'; name: string; label: string; placeholder?: string }
   | { type: 'number'; name: string; label: string; min?: number; max?: number }
   | { type: 'bool'; name: string; label: string }
-  | { type: 'select'; name: string; label: string; options: string[] }
+  | { type: 'select'; name: string; label: string; options: string[]; tag?: string }
   | { type: 'upload'; name: string; label: string; accept?: string; optional?: boolean; multiple?: boolean }
   | { type: 'price'; name: string; label: string; unit: string; default: number }
 
