@@ -389,8 +389,12 @@ export default function PreisdatenbankPage() {
       const res = await apiFetch('/pricing-parameters', {
         method: 'PATCH',
         body: JSON.stringify(body),
-      }) as { params?: Record<string, number> }
-      const updated = res?.params ?? res ?? {}
+      }) as { params?: Record<string, number> } | Record<string, number>
+      const rawUpdated = res && typeof res === 'object' && 'params' in res ? res.params : res
+      const updated: Record<string, number> =
+        rawUpdated && typeof rawUpdated === 'object' && !Array.isArray(rawUpdated)
+          ? (rawUpdated as Record<string, number>)
+          : {}
       pendingSaveRef.current = {}
       setDeletedKeys([])
       setPendingNewOptions([])
