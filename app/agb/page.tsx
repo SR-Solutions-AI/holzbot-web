@@ -83,7 +83,7 @@ export default function AGBPage() {
             <motion.h1 variants={fadeInUp} className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-6 text-white leading-tight">
               Allgemeine <br/> <span className="text-[#FF9F0F]">Geschäftsbedingungen (AGB)</span> – Holzbot
             </motion.h1>
-            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 16. Februar 2026</motion.p>
+            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 18. Februar 2026</motion.p>
         </motion.div>
 
         {/* Content */}
@@ -123,7 +123,7 @@ export default function AGBPage() {
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§4 Laufzeit & Kündigung</h2>
             <p className="mb-2">(1) Der Vertrag ist jederzeit kündbar.</p>
-            <p>(2) Bereits bezahlte Beträge werden nicht erstattet.</p>
+            <p>(2) Im Falle einer Kündigung endet der Vertrag zum Ende des laufenden Kalendermonats. Eine Rückerstattung oder Minderung bereits berechneter Monate erfolgt nicht.</p>
           </motion.section>
 
           <motion.section variants={fadeInUp}>
