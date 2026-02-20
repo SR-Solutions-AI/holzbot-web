@@ -146,6 +146,7 @@ export default function PreisdatenbankPage() {
               params?: Record<string, number>
               customOptions?: Record<string, Array<{ label: string; value: string; price_key: string }>>
               paramLabelOverrides?: Record<string, string>
+              hiddenKeys?: string[]
             }
           | Record<string, unknown>
         const rawParams =
@@ -166,12 +167,17 @@ export default function PreisdatenbankPage() {
           rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
             ? (rawOverrides as Record<string, string>)
             : {}
+        const rawHidden =
+          apiRes && typeof apiRes === 'object' && 'hiddenKeys' in apiRes ? apiRes.hiddenKeys : undefined
+        const hiddenKeysSet = new Set<string>(
+          Array.isArray(rawHidden) ? rawHidden.filter((k): k is string => typeof k === 'string') : []
+        )
         for (const sec of baseSectionsFromJson) {
           for (const sub of sec.subsections) {
             const tag = sub.fieldTag
             if (tag && customOptions[tag]) {
               for (const o of customOptions[tag]) {
-                allowedKeys.add(o.price_key)
+                if (!hiddenKeysSet.has(o.price_key)) allowedKeys.add(o.price_key)
               }
             }
           }
@@ -180,21 +186,25 @@ export default function PreisdatenbankPage() {
         const merged: PreisdatenbankSection[] = baseSectionsFromJson.map((sec) => ({
           ...sec,
           subsections: sec.subsections.map((sub) => {
-            const baseVars = sub.variables.map((v) => ({
-              ...v,
-              value: typeof pricesMap[v.id] === 'number' ? pricesMap[v.id] : v.value,
-              label: paramLabelOverrides[v.id] ?? v.label,
-            }))
+            const baseVars = sub.variables
+              .filter((v) => !hiddenKeysSet.has(v.id))
+              .map((v) => ({
+                ...v,
+                value: typeof pricesMap[v.id] === 'number' ? pricesMap[v.id] : v.value,
+                label: paramLabelOverrides[v.id] ?? v.label,
+              }))
             const tag = sub.fieldTag
             const customVars =
               tag && customOptions[tag]
-                ? customOptions[tag].map((o) => ({
-                    id: o.price_key,
-                    label: o.label,
-                    unit: sub.variables[0]?.unit ?? '€',
-                    value: typeof pricesMap[o.price_key] === 'number' ? pricesMap[o.price_key] : 0,
-                    isCustomOption: true,
-                  }))
+                ? customOptions[tag]
+                    .filter((o) => !hiddenKeysSet.has(o.price_key))
+                    .map((o) => ({
+                      id: o.price_key,
+                      label: o.label,
+                      unit: sub.variables[0]?.unit ?? '€',
+                      value: typeof pricesMap[o.price_key] === 'number' ? pricesMap[o.price_key] : 0,
+                      isCustomOption: true,
+                    }))
                 : []
             return {
               ...sub,
@@ -413,6 +423,7 @@ export default function PreisdatenbankPage() {
         }))
       )
       setSaveMessage('success')
+      window.dispatchEvent(new CustomEvent('pricing-parameters:saved'))
       setTimeout(() => setSaveMessage(null), 3000)
     } catch (err: any) {
       setSaveMessage('error')

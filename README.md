@@ -22,6 +22,16 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+### Supabase (Login) – local development
+
+If login fails with **CORS** or **522** when running on `http://localhost:3000`:
+
+1. In [Supabase Dashboard](https://supabase.com/dashboard) → your project → **Authentication** → **URL Configuration**:
+   - **Site URL**: add or set to `http://localhost:3000` for local dev.
+   - **Redirect URLs**: add `http://localhost:3000`, `http://localhost:3000/**`.
+2. Ensure the project is not **paused** (522 often means the project or origin is unreachable).
+3. Check `.env.local` has `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for that project.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

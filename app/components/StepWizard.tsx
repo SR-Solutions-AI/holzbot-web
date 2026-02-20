@@ -538,6 +538,8 @@ export default function StepWizard() {
   const [customOptionsForm, setCustomOptionsForm] = useState<Record<string, Array<{ label: string; value: string }>>>({})
   /** Override-uri de etichete pentru variabile (Preisdatenbank) – folosite la afișarea opțiunilor în formular. */
   const [paramLabelOverrides, setParamLabelOverrides] = useState<Record<string, string>>({})
+  /** Chei ascunse în Preisdatenbank – nu le afișăm în formular (select-uri / opțiuni). */
+  const [hiddenKeysForm, setHiddenKeysForm] = useState<Set<string>>(new Set())
 
   const lastProcessedCreationId = useRef<number>(0)
   const activeCreationPromise = useRef<Promise<string> | null>(null)
@@ -641,8 +643,20 @@ export default function StepWizard() {
     const url = '/pricing-parameters?t=' + Date.now()
     apiFetch(url)
       .then((res: any) => {
+        const hiddenArr = Array.isArray(res?.hiddenKeys) ? res.hiddenKeys.filter((k: unknown) => typeof k === 'string') as string[] : []
+        const hiddenSet = new Set(hiddenArr)
+        setHiddenKeysForm(hiddenSet)
         const co = res?.customOptions
-        if (co && typeof co === 'object') setCustomOptionsForm(co)
+        if (co && typeof co === 'object') {
+          const filtered: Record<string, Array<{ label: string; value: string }>> = {}
+          for (const [tag, arr] of Object.entries(co)) {
+            const list = Array.isArray(arr) ? arr : []
+            filtered[tag] = list
+              .filter((o: { label?: string; value?: string; price_key?: string }) => !hiddenSet.has(String(o?.price_key ?? '')))
+              .map((o: { label?: string; value?: string }) => ({ label: String(o?.label ?? ''), value: String(o?.value ?? '') }))
+          }
+          setCustomOptionsForm(filtered)
+        }
         const overrides = res?.paramLabelOverrides
         if (overrides && typeof overrides === 'object') setParamLabelOverrides(overrides)
       })
@@ -651,16 +665,19 @@ export default function StepWizard() {
 
   useEffect(() => { fetchPricingParameters() }, [fetchPricingParameters])
 
-  // Re-fetch la revenirea pe tab/fereastră ca formularul să vadă etichete actualizate din Preisdatenbank
+  // Re-fetch la revenirea pe tab/fereastră sau după salvare în Preisdatenbank
   useEffect(() => {
     if (selectedPackage !== 'neubau' && selectedPackage !== 'mengen') return
     const refetch = () => { fetchPricingParameters() }
     const onVisibility = () => { if (document.visibilityState === 'visible') refetch() }
+    const onPricingSaved = () => { refetch() }
     window.addEventListener('focus', refetch)
     document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pricing-parameters:saved', onPricingSaved)
     return () => {
       window.removeEventListener('focus', refetch)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pricing-parameters:saved', onPricingSaved)
     }
   }, [selectedPackage, fetchPricingParameters])
 
@@ -1094,7 +1111,7 @@ export default function StepWizard() {
         }
       }
 
-      const { run_id } = await apiFetch(`/offers/${id}/compute`, { method: 'POST', body: JSON.stringify({ payload: {} }) })
+      const { run_id } = await apiFetch(`/offers/${id}/compute`, { method: 'POST', body: JSON.stringify({ payload: {} }), timeoutMs: 180_000 })
       setPdfUrl(null)
       setComputeFailed(false)
       setComputing(true)
@@ -1397,6 +1414,7 @@ export default function StepWizard() {
                     customOptionsForm={customOptionsForm}
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
+                    hiddenKeysForm={hiddenKeysForm}
                   />
                 </div>
               ) : step.key === 'structuraCladirii' ? (
@@ -1405,6 +1423,8 @@ export default function StepWizard() {
                   setForm={(v, shouldAutosave = false) => { ensureOffer().catch(() => {}); setForm(v); if (shouldAutosave) scheduleAutosave('structuraCladirii', v) }}
                   errors={visibleErrors}
                   onBlur={() => scheduleAutosave('structuraCladirii', form)}
+                  hiddenKeysForm={hiddenKeysForm}
+                  optionValueToPriceKey={optionValueToPriceKey}
                 />
               ) : step.key === 'materialeFinisaj' ? (
                 <MaterialeFinisajStep
@@ -1434,6 +1454,7 @@ export default function StepWizard() {
                     customOptionsForm={customOptionsForm}
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
+                    hiddenKeysForm={hiddenKeysForm}
                   />
                 </div>
               ) : (
@@ -1448,6 +1469,7 @@ export default function StepWizard() {
                     customOptionsForm={customOptionsForm} 
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
+                    hiddenKeysForm={hiddenKeysForm}
                     errors={{}} 
                     onEnter={onContinue}
                   />
@@ -1720,7 +1742,10 @@ const FLOOR_TYPE_OPTIONS = [
   { value: 'mansarda_mit', label: 'Dachgeschoss mit Kniestock (Wohnfläche)' },
 ] as const
 
-function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record<string, any>; setForm: (v: Record<string, any>, shouldAutosave?: boolean) => void; errors: Errors; onBlur?: () => void }) {
+const FOUNDATION_OPTIONS = ['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt / Nutzkeller)', 'Keller (mit einfachem Ausbau)'] as const
+const FLOOR_HEIGHT_OPTIONS = ['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)'] as const
+
+function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>, shouldAutosave?: boolean) => void; errors: Errors; onBlur?: () => void; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>> }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
   const addFloorBtnRef = useRef<HTMLButtonElement>(null)
   const [addFloorPos, setAddFloorPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 })
@@ -1729,9 +1754,29 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
   const pilons = form.pilons === true
   const inaltimeEtaje = form.inaltimeEtaje || 'Standard (2,50 m)'
   const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+  const foundationOptions = FOUNDATION_OPTIONS.filter((opt) => {
+    const key = optionValueToPriceKey['foundation_type']?.[opt]
+    return !key || !hiddenKeysForm.has(key)
+  })
+  const floorHeightOptions = FLOOR_HEIGHT_OPTIONS.filter((opt) => {
+    const key = optionValueToPriceKey['floor_height']?.[opt]
+    return !key || !hiddenKeysForm.has(key)
+  })
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const hasBase = true
   const basementUse = tipFundatieBeci.includes('mit einfachem Ausbau')
+  useEffect(() => {
+    if (foundationOptions.length > 0 && !foundationOptions.includes(tipFundatieBeci)) {
+      setForm({ ...form, tipFundatieBeci: foundationOptions[0] })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when hidden options change; form used only for merge
+  }, [foundationOptions.length, foundationOptions.join(','), tipFundatieBeci])
+  useEffect(() => {
+    if (floorHeightOptions.length > 0 && !floorHeightOptions.includes(inaltimeEtaje)) {
+      setForm({ ...form, inaltimeEtaje: floorHeightOptions[0] })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when hidden options change
+  }, [floorHeightOptions.length, floorHeightOptions.join(','), inaltimeEtaje])
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const hasPod = listaEtaje.some((e: string) => e === 'pod')
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
@@ -1764,29 +1809,36 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
     const maxW = Math.max(...sizes.map(s => s.width))
     if (maxW > 0) setScaleFactor(targetWidth / maxW)
   }, [originalSizes])
+  // Înălțimi implicite pentru straturi (beci, base, pilons) până când imaginile se încarcă – astfel pozițiile sunt corecte de la început
+  const DEFAULT_LAYER_HEIGHT = 80
+  const DEFAULT_BASEMENT_HEIGHT = 100
   useEffect(() => {
     const next: Record<string, number> = {}
     Object.entries(originalSizes).forEach(([k, s]) => { next[k] = s.height * scaleFactor })
+    if (hasBasement && next.basement == null) next.basement = DEFAULT_BASEMENT_HEIGHT
+    if (hasBase && next.base == null) next.base = DEFAULT_LAYER_HEIGHT
+    if (pilons && next.pilons == null) next.pilons = DEFAULT_LAYER_HEIGHT
     setHeights(next)
-  }, [originalSizes, scaleFactor])
+  }, [originalSizes, scaleFactor, hasBasement, hasBase, pilons])
 
   const groundHeight = heights.ground ?? 0
   const groundBottom = 0
   const basementHeight = heights.basement ?? 0
-  // Beciul complet sub sol (nu suprapus cu parterul)
-  const basementBottom = hasBasement ? groundBottom - basementHeight : -1
+  // Piloni, fundație, beci: aliniere cu partea de SUS a imaginii ground (fix sub etajul cel mai de jos)
+  const groundTop = groundBottom + groundHeight
+  const basementBottom = hasBasement ? groundTop - basementHeight : -1
   const baseHeight = heights.base ?? 0
   let baseBottom = -10000
   if (hasBase && baseHeight > 0) {
     if (hasBasement) baseBottom = basementBottom - baseHeight
-    else baseBottom = groundBottom + groundHeight - baseHeight
+    else baseBottom = groundTop - baseHeight
   }
   const pilonsHeight = heights.pilons ?? 0
   let pilonsBottom = -10000
   if (pilons && pilonsHeight > 0) {
     if (hasBase && baseHeight > 0 && baseBottom > -10000) pilonsBottom = baseBottom - pilonsHeight
     else if (hasBasement) pilonsBottom = basementBottom - pilonsHeight
-    else pilonsBottom = groundBottom + groundHeight - pilonsHeight
+    else pilonsBottom = groundTop - pilonsHeight
   }
   const downBottom = groundBottom + groundHeight
   const upBottoms: number[] = []
@@ -1796,21 +1848,16 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
     currentBottom += heights[`up-${i}`] ?? 0
   }
   const roofBottom = (hasPod || hasMansarda) ? currentBottom : -1
-  let lowestBottom = 0
-  if (hasBasement) lowestBottom = Math.min(lowestBottom, basementBottom)
-  if (hasBase && baseBottom > -10000) lowestBottom = Math.min(lowestBottom, baseBottom)
-  if (pilons && pilonsBottom > -10000) lowestBottom = Math.min(lowestBottom, pilonsBottom)
   let topElementTop = currentBottom
   if (hasPod && (heights.roof ?? 0) > 0) topElementTop += heights.roof
   else if (hasMansarda) {
     if (mansardaType === 'ohne' && (heights['mansarde-small'] ?? 0) > 0) topElementTop += heights['mansarde-small']
     else if ((heights.mansarde ?? 0) > 0) topElementTop += heights.mansarde
   }
-  const heightFromLowest = topElementTop - lowestBottom
   const topMargin = (hasPod || hasMansarda) ? 30 : 75
-  const paddingTopValue = Math.max(topMargin, topMargin - lowestBottom)
-  // Spațiu suficient pentru elemente sub 0 (beci, fundație, piloni) + minim pentru frame
-  const frameHeight = Math.max(heightFromLowest + topMargin + Math.max(0, -lowestBottom), 320)
+  // Înălțimea frame-ului NU depinde de piloni / beci / fundație – doar de parter + etaje + acoperiș
+  const paddingTopValue = topMargin
+  const frameHeight = Math.max(topElementTop - groundBottom + topMargin, 320)
   const getScaledWidth = (key: string) => (originalSizes[key] ? originalSizes[key].width * scaleFactor : 300)
   const containerWidth = Math.max(...Object.keys(originalSizes).length ? Object.keys(originalSizes).map(getScaledWidth) : [300], 300)
   const contentWidth = containerWidth + 40 + 420 + 40 + 40
@@ -1853,16 +1900,18 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
         <div className="flex gap-10 items-center w-full">
         <div className="relative flex-shrink-0 border-2 border-white/20 rounded-xl overflow-hidden bg-panel/50" style={{ width: `${containerWidth}px`, height: `${frameHeight}px` }}>
           <div className="relative w-full h-full" style={{ paddingTop: `${paddingTopValue}px` }}>
+            {/* Ground și etaje la spate; piloni, fundație, beci desenate în față (z-index mai mare) */}
             <img src="/builder/ground.png" alt="Ground" className="absolute" style={{ width: `${getScaledWidth('ground')}px`, height: 'auto', bottom: `${groundBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 1 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('ground', img.naturalWidth, img.naturalHeight) }} />
-            {hasBase && <img src="/builder/base.png" alt="Base" className="absolute" style={{ width: `${getScaledWidth('base')}px`, height: 'auto', bottom: `${baseBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 60 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('base', img.naturalWidth, img.naturalHeight) }} />}
-            {pilons && <img src="/builder/pilons.png" alt="Pilons" className="absolute" style={{ width: `${getScaledWidth('pilons')}px`, height: 'auto', bottom: `${pilonsBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 50 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('pilons', img.naturalWidth, img.naturalHeight) }} />}
-            {hasBasement && <img src={basementUse ? '/builder/basement-live.png' : '/builder/basement-empty.png'} alt="Basement" className="absolute" style={{ width: `${getScaledWidth('basement')}px`, height: 'auto', bottom: `${basementBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 100 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('basement', img.naturalWidth, img.naturalHeight) }} />}
-            <img src={downImage} alt="Down" className="absolute" style={{ width: `${getScaledWidth('down')}px`, height: 'auto', bottom: `${downBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 3 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('down', img.naturalWidth, img.naturalHeight) }} />
+            <img src={downImage} alt="Down" className="absolute" style={{ width: `${getScaledWidth('down')}px`, height: 'auto', bottom: `${downBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 25 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('down', img.naturalWidth, img.naturalHeight) }} />
             {upImages.map((img, i) => (
-              <img key={`up-${i}`} src={img} alt={`Floor ${i + 1}`} className="absolute" style={{ width: `${getScaledWidth(`up-${i}`)}px`, height: 'auto', bottom: `${upBottoms[i] ?? 0}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 4 + i }} onLoad={(e) => { const im = e.currentTarget; if (im?.naturalWidth > 0 && im.naturalHeight > 0) updateOriginalSize(`up-${i}`, im.naturalWidth, im.naturalHeight) }} />
+              <img key={`up-${i}`} src={img} alt={`Floor ${i + 1}`} className="absolute" style={{ width: `${getScaledWidth(`up-${i}`)}px`, height: 'auto', bottom: `${upBottoms[i] ?? 0}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 30 + i }} onLoad={(e) => { const im = e.currentTarget; if (im?.naturalWidth > 0 && im.naturalHeight > 0) updateOriginalSize(`up-${i}`, im.naturalWidth, im.naturalHeight) }} />
             ))}
-            {hasPod && roofBottom >= 0 && <img src="/builder/roof.png" alt="Dachboden" className="absolute" style={{ width: `${getScaledWidth('roof')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('roof', img.naturalWidth, img.naturalHeight) }} />}
-            {hasMansarda && roofBottom >= 0 && (mansardaType === 'ohne' ? <img src={mansardeSmallImage} alt="Dachgeschoss ohne Kniestock" className="absolute" style={{ width: `${getScaledWidth('mansarde-small')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('mansarde-small', img.naturalWidth, img.naturalHeight) }} /> : <img src={mansardeImage} alt="Dachgeschoss mit Kniestock" className="absolute" style={{ width: `${getScaledWidth('mansarde')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('mansarde', img.naturalWidth, img.naturalHeight) }} />)}
+            {hasPod && roofBottom >= 0 && <img src="/builder/roof.png" alt="Dachboden" className="absolute" style={{ width: `${getScaledWidth('roof')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 50 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('roof', img.naturalWidth, img.naturalHeight) }} />}
+            {hasMansarda && roofBottom >= 0 && (mansardaType === 'ohne' ? <img src={mansardeSmallImage} alt="Dachgeschoss ohne Kniestock" className="absolute" style={{ width: `${getScaledWidth('mansarde-small')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 50 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('mansarde-small', img.naturalWidth, img.naturalHeight) }} /> : <img src={mansardeImage} alt="Dachgeschoss mit Kniestock" className="absolute" style={{ width: `${getScaledWidth('mansarde')}px`, height: 'auto', bottom: `${roofBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 50 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('mansarde', img.naturalWidth, img.naturalHeight) }} />)}
+            {/* Piloni, fundație, beci în față (z-index > etaje) și aliniate cu partea de sus a ground */}
+            {pilons && <img src="/builder/pilons.png" alt="Pilons" className="absolute" style={{ width: `${getScaledWidth('pilons')}px`, height: 'auto', bottom: `${pilonsBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 60 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('pilons', img.naturalWidth, img.naturalHeight) }} />}
+            {hasBase && <img src="/builder/base.png" alt="Base" className="absolute" style={{ width: `${getScaledWidth('base')}px`, height: 'auto', bottom: `${baseBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 65 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('base', img.naturalWidth, img.naturalHeight) }} />}
+            {hasBasement && <img src={basementUse ? '/builder/basement-live.png' : '/builder/basement-empty.png'} alt="Basement" className="absolute object-cover object-center" style={{ width: `${getScaledWidth('basement')}px`, height: `${basementHeight}px`, bottom: `${basementBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 70 }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('basement', img.naturalWidth, img.naturalHeight) }} />}
           </div>
         </div>
 
@@ -1873,7 +1922,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
             <SelectSun
               value={inaltimeEtaje}
               onChange={(v) => setForm({ ...form, inaltimeEtaje: v })}
-              options={['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)']}
+              options={floorHeightOptions}
               placeholder="Wählen Sie eine Option"
             />
           </div>
@@ -1884,9 +1933,9 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
           <span className="wiz-label text-sun/90">Untergeschoss / Fundament</span>
           <div className={errors.tipFundatieBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
-              value={tipFundatieBeci}
+              value={foundationOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (foundationOptions[0] ?? '')}
               onChange={(v) => setForm({ ...form, tipFundatieBeci: v })}
-              options={['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt / Nutzkeller)', 'Keller (mit einfachem Ausbau)']}
+              options={foundationOptions}
               placeholder="Wählen Sie eine Option"
             />
           </div>
@@ -2001,7 +2050,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur }: { form: Record
 
 function DynamicFields({
   stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter, customOptionsForm = {},
-  paramLabelOverrides = {}, optionValueToPriceKey = {}
+  paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>()
 }: {
   stepKey: string
   fields: Field[]
@@ -2014,6 +2063,7 @@ function DynamicFields({
   customOptionsForm?: Record<string, Array<{ label: string; value: string }>>
   paramLabelOverrides?: Record<string, string>
   optionValueToPriceKey?: Record<string, Record<string, string>>
+  hiddenKeysForm?: Set<string>
 }) {
   
   let currentFields = fields;
@@ -2071,7 +2121,11 @@ function DynamicFields({
                     window.dispatchEvent(new Event('offers:refresh'))
                   }}
                   options={[
-                    ...((f as any).options ?? []),
+                    ...((f as any).options ?? []).filter((opt: string) => {
+                    const tag = (f as any).tag
+                    const priceKey = tag && optionValueToPriceKey[tag]?.[opt]
+                    return !priceKey || !hiddenKeysForm.has(priceKey)
+                  }),
                     ...((customOptionsForm[(f as any).tag] || []).map((o: { label: string; value: string }) => o.label)),
                   ]}
                   placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}

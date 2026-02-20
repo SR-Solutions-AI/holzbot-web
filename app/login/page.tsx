@@ -20,7 +20,8 @@ function toGermanError(msg: string | null | undefined): string {
   if (m.includes('wrong password')) return 'Falsches Passwort.'
   if (m.includes('too many') || m.includes('rate limit'))
     return 'Zu viele Versuche. Bitte später erneut versuchen.'
-  if (m.includes('network')) return 'Netzwerkfehler. Bitte erneut versuchen.'
+  if (m.includes('network') || m.includes('failed to fetch') || m.includes('cors') || m.includes('522'))
+    return 'Verbindung zu Supabase fehlgeschlagen (Netzwerk/Timeout). Prüfen: Internet, Supabase-Projekt aktiv, und unter Supabase → Authentication → URL Configuration „http://localhost:3000“ bei Redirect URLs eintragen.'
   return DE.genericError
 }
 
