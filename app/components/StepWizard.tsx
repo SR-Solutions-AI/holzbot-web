@@ -2496,7 +2496,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               type="checkbox"
               className="sun-checkbox cursor-pointer"
               checked={form.hasWintergarden === true}
-              onChange={(e) => setForm(prev => ({ ...prev, hasWintergarden: e.target.checked }))}
+              onChange={(e) => setForm((prev: Record<string, any>) => ({ ...prev, hasWintergarden: e.target.checked }))}
             />
             <span className="text-sm font-medium text-sun/90">Wintergarten vorhanden</span>
           </label>
@@ -2506,7 +2506,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               type="checkbox"
               className="sun-checkbox cursor-pointer"
               checked={form.hasBalkone === true}
-              onChange={(e) => setForm(prev => ({ ...prev, hasBalkone: e.target.checked }))}
+              onChange={(e) => setForm((prev: Record<string, any>) => ({ ...prev, hasBalkone: e.target.checked }))}
             />
             <span className="text-sm font-medium text-sun/90">Balkone vorhanden</span>
           </label>
