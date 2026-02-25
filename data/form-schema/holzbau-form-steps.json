@@ -25,26 +25,12 @@
       "key": "sistemConstructiv",
       "label": "Allgemeine Projektinformationen",
       "fields": [
-        { "type": "select", "name": "tipSistem", "label": "Systemtyp", "options": ["Blockbau", "Holzrahmen", "Massivholz"], "tag": "system_type" },
         { "type": "select", "name": "nivelOferta", "label": "Angebotsumfang", "options": ["Rohbau/Tragwerk", "Tragwerk + Fenster", "Schlüsselfertiges Haus"], "tag": "offer_scope" },
         { "type": "select", "name": "accesSantier", "label": "Baustellenzufahrt", "options": ["Leicht (LKW 40t)", "Mittel", "Schwierig"], "tag": "site_access" },
         { "type": "select", "name": "teren", "label": "Gelände: eben oder Hang?", "options": ["Eben", "Leichte Hanglage", "Starke Hanglage"], "tag": "terrain" },
         { "type": "bool", "name": "utilitati", "label": "Strom-/Wasseranschluss vorhanden", "tag": "utilities_connection" }
       ],
       "priceSections": [
-        {
-          "title": "Systemtyp",
-          "subtitle": "Preise je nach Feld „Systemtyp“",
-          "fieldTag": "system_type",
-          "variables": [
-            { "key": "clt_interior_price", "label": "Blockbau Innen (€/m²)", "unit": "€/m²", "value": 160 },
-            { "key": "clt_exterior_price", "label": "Blockbau Außen (€/m²)", "unit": "€/m²", "value": 275 },
-            { "key": "holzrahmen_interior_price", "label": "Holzrahmen Innen (€/m²)", "unit": "€/m²", "value": 140 },
-            { "key": "holzrahmen_exterior_price", "label": "Holzrahmen Außen (€/m²)", "unit": "€/m²", "value": 230 },
-            { "key": "massivholz_interior_price", "label": "Massivholz Innen (€/m²)", "unit": "€/m²", "value": 200 },
-            { "key": "massivholz_exterior_price", "label": "Massivholz Außen (€/m²)", "unit": "€/m²", "value": 320 }
-          ]
-        },
         {
           "title": "Baustellenzufahrt",
           "subtitle": "Preise je nach Feld „Baustellenzufahrt“",
@@ -80,7 +66,9 @@
       "fields": [
         { "type": "select", "name": "tipFundatieBeci", "label": "Untergeschoss / Fundament", "options": ["Kein Keller (nur Bodenplatte)", "Keller (unbeheizt / Nutzkeller)", "Keller (mit einfachem Ausbau)"], "tag": "foundation_type" },
         { "type": "bool", "name": "pilons", "label": "Pfahlgründung erforderlich", "tag": "pilings_required" },
-        { "type": "select", "name": "inaltimeEtaje", "label": "Geschosshöhe", "options": ["Standard (2,50 m)", "Komfort (2,70 m)", "Hoch (2,85+ m)"], "tag": "floor_height" }
+        { "type": "select", "name": "inaltimeEtaje", "label": "Geschosshöhe", "options": ["Standard (2,50 m)", "Komfort (2,70 m)", "Hoch (2,85+ m)"], "tag": "floor_height" },
+        { "type": "bool", "name": "hasWintergarden", "label": "Wintergarten vorhanden", "tag": "has_wintergarden" },
+        { "type": "bool", "name": "hasBalkone", "label": "Balkone vorhanden", "tag": "has_balkone" }
       ],
       "priceSections": [
         {
@@ -118,6 +106,35 @@
             { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m) – Höhe (m)", "unit": "m", "value": 2.5 },
             { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m) – Höhe (m)", "unit": "m", "value": 2.7 },
             { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m) – Höhe (m)", "unit": "m", "value": 2.85 }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "wintergaertenBalkone",
+      "label": "Wintergärten & Balkone",
+      "fields": [
+        { "type": "select", "name": "wintergartenTyp", "label": "Wintergärten", "options": ["Glaswand", "Plexiglaswand"], "tag": "wintergarten_type" },
+        { "type": "select", "name": "balkonTyp", "label": "Balkone", "options": ["Holzgeländer", "Stahlgeländer", "Glasgeländer"], "tag": "balkon_type" }
+      ],
+      "priceSections": [
+        {
+          "title": "Wintergärten",
+          "subtitle": "Preise je nach Option",
+          "fieldTag": "wintergarten_type",
+          "variables": [
+            { "key": "wintergarten_glaswand_price", "label": "Glaswand (€)", "unit": "€", "value": 560 },
+            { "key": "wintergarten_plexiglaswand_price", "label": "Plexiglaswand (€)", "unit": "€", "value": 150 }
+          ]
+        },
+        {
+          "title": "Balkone",
+          "subtitle": "Preise je nach Option",
+          "fieldTag": "balkon_type",
+          "variables": [
+            { "key": "balkon_holzgelander_price", "label": "Holzgeländer (€)", "unit": "€", "value": 560 },
+            { "key": "balkon_stahlgelander_price", "label": "Stahlgeländer (€)", "unit": "€", "value": 150 },
+            { "key": "balkon_glasgelander_price", "label": "Glasgeländer (€)", "unit": "€", "value": 700 }
           ]
         }
       ]
@@ -200,6 +217,7 @@
       ],
       "priceSections": [
         {
+          "fieldTag": "window_quality",
           "title": "Fenster",
           "subtitle": "Preis pro m² Glasfläche (Fensterart: 2- oder 3-fach)",
           "variables": [
@@ -214,6 +232,45 @@
           "variables": [
             { "key": "door_interior_price", "label": "Innen (€/m²)", "unit": "€/m²", "value": 380 },
             { "key": "door_exterior_price", "label": "Außen (€/m²)", "unit": "€/m²", "value": 480 }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "wandaufbau",
+      "label": "Wandaufbau",
+      "fields": [],
+      "priceSections": [
+        {
+          "title": "Außenwände",
+          "subtitle": "Preise je nach Option (pro m²)",
+          "fieldTag": "wandaufbau_aussen",
+          "variables": [
+            { "key": "wandaufbau_aussen_clt_35", "label": "CLT 35cm (€/m²)", "unit": "€/m²", "value": 400 },
+            { "key": "wandaufbau_aussen_clt_32", "label": "CLT 32cm (€/m²)", "unit": "€/m²", "value": 380 },
+            { "key": "wandaufbau_aussen_clt_30", "label": "CLT 30cm (€/m²)", "unit": "€/m²", "value": 360 },
+            { "key": "wandaufbau_aussen_holzriegel_35", "label": "Holzriegel 35cm (€/m²)", "unit": "€/m²", "value": 300 },
+            { "key": "wandaufbau_aussen_holzriegel_32", "label": "Holzriegel 32cm (€/m²)", "unit": "€/m²", "value": 280 },
+            { "key": "wandaufbau_aussen_holzriegel_30", "label": "Holzriegel 30cm (€/m²)", "unit": "€/m²", "value": 260 },
+            { "key": "wandaufbau_aussen_beton_35", "label": "Beton 35cm (€/m²)", "unit": "€/m²", "value": 200 },
+            { "key": "wandaufbau_aussen_beton_32", "label": "Beton 32cm (€/m²)", "unit": "€/m²", "value": 180 },
+            { "key": "wandaufbau_aussen_beton_30", "label": "Beton 30cm (€/m²)", "unit": "€/m²", "value": 160 }
+          ]
+        },
+        {
+          "title": "Innenwände",
+          "subtitle": "Preise je nach Option (pro m²)",
+          "fieldTag": "wandaufbau_innen",
+          "variables": [
+            { "key": "wandaufbau_innen_clt_35", "label": "CLT 35cm (€/m²)", "unit": "€/m²", "value": 400 },
+            { "key": "wandaufbau_innen_clt_32", "label": "CLT 32cm (€/m²)", "unit": "€/m²", "value": 380 },
+            { "key": "wandaufbau_innen_clt_30", "label": "CLT 30cm (€/m²)", "unit": "€/m²", "value": 360 },
+            { "key": "wandaufbau_innen_holzriegel_35", "label": "Holzriegel 35cm (€/m²)", "unit": "€/m²", "value": 300 },
+            { "key": "wandaufbau_innen_holzriegel_32", "label": "Holzriegel 32cm (€/m²)", "unit": "€/m²", "value": 280 },
+            { "key": "wandaufbau_innen_holzriegel_30", "label": "Holzriegel 30cm (€/m²)", "unit": "€/m²", "value": 260 },
+            { "key": "wandaufbau_innen_beton_35", "label": "Beton 35cm (€/m²)", "unit": "€/m²", "value": 200 },
+            { "key": "wandaufbau_innen_beton_32", "label": "Beton 32cm (€/m²)", "unit": "€/m²", "value": 180 },
+            { "key": "wandaufbau_innen_beton_30", "label": "Beton 30cm (€/m²)", "unit": "€/m²", "value": 160 }
           ]
         }
       ]
@@ -241,6 +298,46 @@
             { "key": "exterior_lemn", "label": "Holz (€/m²)", "unit": "€/m²", "value": 95 },
             { "key": "exterior_fibrociment", "label": "Faserzement (€/m²)", "unit": "€/m²", "value": 78 },
             { "key": "exterior_mix", "label": "Mix (€/m²)", "unit": "€/m²", "value": 88 }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "bodenDeckeBelag",
+      "label": "Geschossdecken und Bodenaufbauten",
+      "fields": [],
+      "priceSections": [
+        {
+          "title": "Bodenaufbau",
+          "subtitle": "Geschossdecke / tragende Ebene (€/m²)",
+          "fieldTag": "bodenaufbau",
+          "variables": [
+            { "key": "bodenaufbau_holz_standard_price", "label": "Geschossdecke Holz Standard (€/m²)", "unit": "€/m²", "value": 560 },
+            { "key": "bodenaufbau_holz_balken_price", "label": "Holzbalkendecke (€/m²)", "unit": "€/m²", "value": 280 },
+            { "key": "bodenaufbau_beton_price", "label": "Massivdecke Stahlbeton (€/m²)", "unit": "€/m²", "value": 320 },
+            { "key": "bodenaufbau_bodenplatte_price", "label": "Bodenplatte Beton (€/m²)", "unit": "€/m²", "value": 150 }
+          ]
+        },
+        {
+          "title": "Deckenaufbau",
+          "subtitle": "Unterdecke (€/m²)",
+          "fieldTag": "deckenaufbau",
+          "variables": [
+            { "key": "deckenaufbau_gipskarton_price", "label": "Gipskarton Standard (€/m²)", "unit": "€/m²", "value": 45 },
+            { "key": "deckenaufbau_gipskarton_akustik_price", "label": "Gipskarton Akustik (€/m²)", "unit": "€/m²", "value": 55 },
+            { "key": "deckenaufbau_sichtschalung_price", "label": "Sichtschalung Holz (€/m²)", "unit": "€/m²", "value": 65 },
+            { "key": "deckenaufbau_abgehaengt_price", "label": "Unterdecke abgehängt (€/m²)", "unit": "€/m²", "value": 75 }
+          ]
+        },
+        {
+          "title": "Bodenbelag",
+          "subtitle": "Fußbodenbelag (€/m²)",
+          "fieldTag": "bodenbelag",
+          "variables": [
+            { "key": "bodenbelag_estrich_fliesen_price", "label": "Estrich + Fliesen (€/m²)", "unit": "€/m²", "value": 35 },
+            { "key": "bodenbelag_parkett_price", "label": "Parkett Eiche (€/m²)", "unit": "€/m²", "value": 42 },
+            { "key": "bodenbelag_laminat_price", "label": "Laminat (€/m²)", "unit": "€/m²", "value": 38 },
+            { "key": "bodenbelag_teppich_price", "label": "Teppichboden (€/m²)", "unit": "€/m²", "value": 28 }
           ]
         }
       ]
@@ -321,19 +418,6 @@
         "title": "Allgemeine Projektinformationen",
         "subsections": [
           {
-            "title": "Systemtyp",
-            "subtitle": "Preise je nach Feld „Systemtyp“",
-            "fieldTag": "system_type",
-            "variables": [
-              { "key": "clt_interior_price", "label": "Blockbau Innen (€/m²)", "unit": "€/m²", "value": 160 },
-              { "key": "clt_exterior_price", "label": "Blockbau Außen (€/m²)", "unit": "€/m²", "value": 275 },
-              { "key": "holzrahmen_interior_price", "label": "Holzrahmen Innen (€/m²)", "unit": "€/m²", "value": 140 },
-              { "key": "holzrahmen_exterior_price", "label": "Holzrahmen Außen (€/m²)", "unit": "€/m²", "value": 230 },
-              { "key": "massivholz_interior_price", "label": "Massivholz Innen (€/m²)", "unit": "€/m²", "value": 200 },
-              { "key": "massivholz_exterior_price", "label": "Massivholz Außen (€/m²)", "unit": "€/m²", "value": 320 }
-            ]
-          },
-          {
             "title": "Baustellenzufahrt",
             "subtitle": "Preise je nach Feld „Baustellenzufahrt“",
             "fieldTag": "site_access",
@@ -404,6 +488,31 @@
               { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m) – Höhe (m)", "unit": "m", "value": 2.5 },
               { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m) – Höhe (m)", "unit": "m", "value": 2.7 },
               { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m) – Höhe (m)", "unit": "m", "value": 2.85 }
+            ]
+          }
+        ]
+      },
+      {
+        "stepKey": "wintergaertenBalkone",
+        "title": "Wintergärten & Balkone",
+        "subsections": [
+          {
+            "title": "Wintergärten",
+            "subtitle": "Preise je nach Option",
+            "fieldTag": "wintergarten_type",
+            "variables": [
+              { "key": "wintergarten_glaswand_price", "label": "Glaswand (€)", "unit": "€", "value": 560 },
+              { "key": "wintergarten_plexiglaswand_price", "label": "Plexiglaswand (€)", "unit": "€", "value": 150 }
+            ]
+          },
+          {
+            "title": "Balkone",
+            "subtitle": "Preise je nach Option",
+            "fieldTag": "balkon_type",
+            "variables": [
+              { "key": "balkon_holzgelander_price", "label": "Holzgeländer (€)", "unit": "€", "value": 560 },
+              { "key": "balkon_stahlgelander_price", "label": "Stahlgeländer (€)", "unit": "€", "value": 150 },
+              { "key": "balkon_glasgelander_price", "label": "Glasgeländer (€)", "unit": "€", "value": 700 }
             ]
           }
         ]
@@ -500,6 +609,44 @@
         ]
       },
       {
+        "stepKey": "wandaufbau",
+        "title": "Wandaufbau",
+        "subsections": [
+          {
+            "title": "Außenwände",
+            "subtitle": "Preise je nach Option (pro m²)",
+            "fieldTag": "wandaufbau_aussen",
+            "variables": [
+              { "key": "wandaufbau_aussen_clt_35", "label": "CLT 35cm (€/m²)", "unit": "€/m²", "value": 400 },
+              { "key": "wandaufbau_aussen_clt_32", "label": "CLT 32cm (€/m²)", "unit": "€/m²", "value": 380 },
+              { "key": "wandaufbau_aussen_clt_30", "label": "CLT 30cm (€/m²)", "unit": "€/m²", "value": 360 },
+              { "key": "wandaufbau_aussen_holzriegel_35", "label": "Holzriegel 35cm (€/m²)", "unit": "€/m²", "value": 300 },
+              { "key": "wandaufbau_aussen_holzriegel_32", "label": "Holzriegel 32cm (€/m²)", "unit": "€/m²", "value": 280 },
+              { "key": "wandaufbau_aussen_holzriegel_30", "label": "Holzriegel 30cm (€/m²)", "unit": "€/m²", "value": 260 },
+              { "key": "wandaufbau_aussen_beton_35", "label": "Beton 35cm (€/m²)", "unit": "€/m²", "value": 200 },
+              { "key": "wandaufbau_aussen_beton_32", "label": "Beton 32cm (€/m²)", "unit": "€/m²", "value": 180 },
+              { "key": "wandaufbau_aussen_beton_30", "label": "Beton 30cm (€/m²)", "unit": "€/m²", "value": 160 }
+            ]
+          },
+          {
+            "title": "Innenwände",
+            "subtitle": "Preise je nach Option (pro m²)",
+            "fieldTag": "wandaufbau_innen",
+            "variables": [
+              { "key": "wandaufbau_innen_clt_35", "label": "CLT 35cm (€/m²)", "unit": "€/m²", "value": 400 },
+              { "key": "wandaufbau_innen_clt_32", "label": "CLT 32cm (€/m²)", "unit": "€/m²", "value": 380 },
+              { "key": "wandaufbau_innen_clt_30", "label": "CLT 30cm (€/m²)", "unit": "€/m²", "value": 360 },
+              { "key": "wandaufbau_innen_holzriegel_35", "label": "Holzriegel 35cm (€/m²)", "unit": "€/m²", "value": 300 },
+              { "key": "wandaufbau_innen_holzriegel_32", "label": "Holzriegel 32cm (€/m²)", "unit": "€/m²", "value": 280 },
+              { "key": "wandaufbau_innen_holzriegel_30", "label": "Holzriegel 30cm (€/m²)", "unit": "€/m²", "value": 260 },
+              { "key": "wandaufbau_innen_beton_35", "label": "Beton 35cm (€/m²)", "unit": "€/m²", "value": 200 },
+              { "key": "wandaufbau_innen_beton_32", "label": "Beton 32cm (€/m²)", "unit": "€/m²", "value": 180 },
+              { "key": "wandaufbau_innen_beton_30", "label": "Beton 30cm (€/m²)", "unit": "€/m²", "value": 160 }
+            ]
+          }
+        ]
+      },
+      {
         "stepKey": "materialeFinisaj",
         "title": "Materialien & Ausbaustufe",
         "subsections": [
@@ -523,6 +670,39 @@
               { "key": "exterior_lemn", "label": "Holz (€/m²)", "unit": "€/m²", "value": 95 },
               { "key": "exterior_fibrociment", "label": "Faserzement (€/m²)", "unit": "€/m²", "value": 78 },
               { "key": "exterior_mix", "label": "Mix (€/m²)", "unit": "€/m²", "value": 88 }
+            ]
+          }
+        ]
+      },
+      {
+        "stepKey": "bodenDeckeBelag",
+        "title": "Geschossdecken und Bodenaufbauten",
+        "subsections": [
+          {
+            "title": "Bodenaufbau",
+            "subtitle": "Geschossdecke / tragende Ebene (€/m²)",
+            "fieldTag": "bodenaufbau",
+            "variables": [
+              { "key": "bodenaufbau_holz_standard_price", "label": "Geschossdecke Holz Standard (€/m²)", "unit": "€/m²", "value": 560 },
+              { "key": "bodenaufbau_2_price", "label": "Boden 2 (€/m²)", "unit": "€/m²", "value": 150 }
+            ]
+          },
+          {
+            "title": "Deckenaufbau",
+            "subtitle": "Unterdecke (€/m²)",
+            "fieldTag": "deckenaufbau",
+            "variables": [
+              { "key": "deckenaufbau_1_price", "label": "Decke 1 (€/m²)", "unit": "€/m²", "value": 45 },
+              { "key": "deckenaufbau_2_price", "label": "Decke 2 (€/m²)", "unit": "€/m²", "value": 55 }
+            ]
+          },
+          {
+            "title": "Bodenbelag",
+            "subtitle": "Fußbodenbelag (€/m²)",
+            "fieldTag": "bodenbelag",
+            "variables": [
+              { "key": "bodenbelag_1_price", "label": "Bodenbelag 1 (€/m²)", "unit": "€/m²", "value": 35 },
+              { "key": "bodenbelag_2_price", "label": "Bodenbelag 2 (€/m²)", "unit": "€/m²", "value": 42 }
             ]
           }
         ]

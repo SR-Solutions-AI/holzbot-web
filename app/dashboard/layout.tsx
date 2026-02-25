@@ -1,5 +1,6 @@
 import DashboardHeader from './DashboardHeader'
 import DashboardFooter from './DashboardFooter'
+import DashboardContentTransition from './DashboardContentTransition'
 
 /* ================= DASHBOARD LAYOUT ================= */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -9,11 +10,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* === HEADER === */}
       <DashboardHeader />
 
-      {/* === MAIN CONTENT (GRID) === */}
+      {/* === MAIN CONTENT (GRID) — page-enter on route change === */}
       <div className="flex-1 min-h-0 p-4 w-full">
-        <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr_440px] gap-4 h-full min-h-0">
-            {children}
-        </div>
+        <DashboardContentTransition>{children}</DashboardContentTransition>
       </div>
 
       {/* === FOOTER === */}

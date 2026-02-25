@@ -15,7 +15,43 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <html lang="ro"> 
             {/* body: Full width, Full height */}
             <body className="min-h-screen">
-                
+                <style
+                  dangerouslySetInnerHTML={{
+                    __html: `
+/* Dropdown-uri formular: scrollbar hardcodat (incl. Safari, conținut portalat) */
+.sun-menu {
+  overflow-y: scroll !important;
+  overflow-x: auto !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: #c9944a transparent !important;
+}
+.sun-menu::-webkit-scrollbar {
+  width: 10px !important;
+  height: 10px !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+.sun-menu::-webkit-scrollbar-track {
+  background: transparent !important;
+  -webkit-appearance: none !important;
+}
+.sun-menu::-webkit-scrollbar-thumb {
+  background: #c9944a !important;
+  border-radius: 9999px !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+  -webkit-appearance: none !important;
+  min-height: 40px !important;
+}
+.sun-menu::-webkit-scrollbar-thumb:hover {
+  background: #d8a25e !important;
+}
+.sun-menu::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+`,
+                  }}
+                />
                 {/* NOU: Nu există Header aici. */}
                 
                 {/* Canvas: wrapper Full Width / Full Height */}

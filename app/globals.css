@@ -199,8 +199,8 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover,
 
 /* Pașii */
 .wizard-step.v-start{ display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 90px; max-width: 180px; }
-.wizard-label{ margin-top: 6px; font-size: 15px; font-weight: 600; line-height: 1.15; color: rgba(255,255,255,.84); text-align: center; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.wizard-dot{ height: 12px; width: 12px; border-radius: 9999px; background: rgba(255,255,255,.16); outline: 2px solid rgba(0,0,0,.28); box-shadow: 0 0 0 1px rgba(255,255,255,.05) inset; }
+.wizard-label{ margin-top: 6px; font-size: 15px; font-weight: 600; line-height: 1.15; color: rgba(255,255,255,.84); text-align: center; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; transition: opacity .25s ease, color .25s ease; }
+.wizard-dot{ height: 12px; width: 12px; border-radius: 9999px; background: rgba(255,255,255,.16); outline: 2px solid rgba(0,0,0,.28); box-shadow: 0 0 0 1px rgba(255,255,255,.05) inset; transition: transform .2s ease, opacity .2s ease, background .2s ease, box-shadow .2s ease; }
 .wizard-dot.active{ background: var(--color-sun); box-shadow: 0 0 0 2px rgba(0,0,0,.32), 0 0 16px rgba(255,182,122,.42); }
 .wizard-dot.done{ background: linear-gradient(180deg, var(--color-sun), var(--color-sun-600)); box-shadow: 0 0 0 2px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.22); }
 .wizard-dot.skipped{ background: rgba(255,255,255,.08); opacity: .6; }
@@ -270,7 +270,35 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover,
 .sun-menu{
   background: rgba(60,42,32,.98); border: 1px solid rgba(255,166,99,.32);
   border-radius: 12px; box-shadow: 0 14px 28px rgba(0,0,0,.35), 0 0 0 1px rgba(255,166,99,.10) inset;
-  padding: 6px; max-height: 260px; overflow: auto;
+  padding: 6px; max-height: 260px;
+  overflow-y: scroll !important;
+  overflow-x: auto !important;
+  scrollbar-width: thin !important;
+  scrollbar-color: #c9944a transparent !important;
+}
+.sun-menu::-webkit-scrollbar {
+  width: 10px !important;
+  height: 10px !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+.sun-menu::-webkit-scrollbar-track {
+  background: transparent !important;
+  -webkit-appearance: none !important;
+}
+.sun-menu::-webkit-scrollbar-thumb {
+  background: #c9944a !important;
+  border-radius: 9999px !important;
+  border: 2px solid transparent !important;
+  background-clip: padding-box !important;
+  -webkit-appearance: none !important;
+  min-height: 40px !important;
+}
+.sun-menu::-webkit-scrollbar-thumb:hover {
+  background: #d8a25e !important;
+}
+.sun-menu::-webkit-scrollbar-corner {
+  background: transparent !important;
 }
 .sun-menu-item{
   width: 100%; display:flex; align-items:center; justify-content:space-between; gap:10px;
@@ -289,11 +317,17 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover,
 .saving-dot{ width:10px; height:10px; border-radius:9999px; border:2px solid var(--color-sun); border-top-color: transparent; animation: spin 1s linear infinite; }
 @keyframes spin{ to { transform: rotate(360deg); } }
 
-/* ===== Animații card ===== */
-@keyframes cardEnterNext { 0% { opacity:0; transform: translate3d(28px,0,0) scale(.985);} 100% {opacity:1; transform:none;} }
-@keyframes cardEnterBack { 0% { opacity:0; transform: translate3d(-28px,0,0) scale(.985);} 100% {opacity:1; transform:none;} }
-.card-in-next{ animation: cardEnterNext .35s cubic-bezier(.2,.8,.2,1); }
-.card-in-back{ animation: cardEnterBack .35s cubic-bezier(.2,.8,.2,1); }
+/* ===== Animații card (discrete, cu gust) ===== */
+@keyframes cardEnterNext { 0% { opacity:0; transform: translate3d(14px,0,0) scale(.995);} 100% {opacity:1; transform:none;} }
+@keyframes cardEnterBack { 0% { opacity:0; transform: translate3d(-14px,0,0) scale(.995);} 100% {opacity:1; transform:none;} }
+@keyframes cardEnterInitial { 0% { opacity:0; transform: translateY(6px);} 100% {opacity:1; transform:none;} }
+.card-in-next{ animation: cardEnterNext .4s cubic-bezier(.25,.46,.45,.94) forwards; }
+.card-in-back{ animation: cardEnterBack .4s cubic-bezier(.25,.46,.45,.94) forwards; }
+.card-initial{ animation: cardEnterInitial .35s cubic-bezier(.25,.46,.45,.94) forwards; }
+
+/* ===== Page / view transition (dashboard, schimbare pagini) ===== */
+@keyframes pageEnter { 0% { opacity:0; transform: translateY(4px);} 100% { opacity:1; transform:none;} }
+.page-enter{ animation: pageEnter .3s cubic-bezier(.25,.46,.45,.94) forwards; }
 
 /* ===== File input ===== */
 .sun-file-input { font-size: 14px; color: #fff; background: transparent; border: 1px dashed rgba(255,166,99,.25); border-radius: 12px; padding: 6px 8px; }
@@ -428,9 +462,8 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover,
   display: inline-flex;            /* important: rând unic */
 }
 
-/* feedback subtil pe dot-uri */
-.wizard-dot{ transition: transform .18s ease; }
-.wizard-dot.active{ transform: scale(1.06); }
+/* feedback subtil pe dot-uri (scale la active/done) */
+.wizard-dot.active{ transform: scale(1.08); }
 .wizard-dot.done{ transform: scale(1.02); }
 
 /* ===== Progress bar „caramel” ===== */

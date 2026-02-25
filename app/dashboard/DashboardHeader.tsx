@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { LogOut, User, Database } from 'lucide-react' 
 import { supabase } from '../lib/supabaseClient' 
 import { apiFetch } from '../lib/supabaseClient'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 // --- CONFIG ---
 const LOGO_IMAGE_URL = '/logo.png' 
@@ -14,6 +14,7 @@ export default function DashboardHeader() {
   const pathname = usePathname()
   const isPreisdatenbank = pathname?.includes('/preisdatenbank')
   const [me, setMe] = useState<{ user?: { email?: string | null }, tenant?: { config?: any } | null } | null>(null)
+  const mountedRef = useRef(true)
 
   // --- FUNCTIA DE LOGOUT (FIXED) ---
   const handleLogout = async () => {
@@ -29,24 +30,33 @@ export default function DashboardHeader() {
     }
   }
 
+  const fetchMe = async () => {
+    try {
+      const data = await apiFetch('/me')
+      if (mountedRef.current) setMe(data)
+    } catch {
+      if (mountedRef.current) setMe(null)
+    }
+  }
+
   useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      try {
-        const data = await apiFetch('/me')
-        if (mounted) setMe(data)
-      } catch {
-        if (mounted) setMe(null)
-      }
-    })()
-    return () => { mounted = false }
+    mountedRef.current = true
+    fetchMe()
+    const onTenantConfigSaved = () => fetchMe()
+    window.addEventListener('tenant-config:saved', onTenantConfigSaved)
+    return () => {
+      mountedRef.current = false
+      window.removeEventListener('tenant-config:saved', onTenantConfigSaved)
+    }
   }, [])
 
   const email = me?.user?.email || null
   const role = (me as any)?.user?.role as string | undefined
-  // Admins should not show a client/tenant logo in the header (Chris requested this).
+  const tenantConfig = (me?.tenant as any)?.config
+  const tenantLogoUrlRaw =
+    (tenantConfig?.logo_url ?? tenantConfig?.logoUrl) as string | undefined
   const tenantLogoUrl =
-    role === 'admin' ? undefined : ((me?.tenant as any)?.config?.logo_url as string | undefined)
+    role === 'admin' ? undefined : (tenantLogoUrlRaw && tenantLogoUrlRaw.startsWith('http') ? tenantLogoUrlRaw : undefined)
 
   return (
     <header className="h-[4.5rem] flex items-center bg-coffee-850 border-b border-black/50 shadow-soft relative shrink-0 z-40">
@@ -58,14 +68,16 @@ export default function DashboardHeader() {
         {/* Full-width header content: left + center + right pushed to edges */}
         <div className="relative z-10 w-full grid grid-cols-3 items-center px-2 sm:px-6">
           {/* Left: tenant logo */}
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 h-12 sm:h-14">
             {tenantLogoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={tenantLogoUrl}
-                alt="tenant logo"
-                className="h-12 sm:h-14 w-auto max-w-[160px] object-contain"
-                onError={(e) => (e.currentTarget.style.display = 'none')}
+                alt="Logo"
+                className="h-10 sm:h-12 w-auto max-w-[160px] object-contain object-left"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none'
+                }}
               />
             ) : null}
           </div>

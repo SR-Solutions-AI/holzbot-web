@@ -33,8 +33,9 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
     // MODIFICARE CRITICĂ: Adăugăm fallback la http://localhost:4000
     const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'
 
+    const isFormData = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
     const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(fetchOptions.headers as Record<string, string> || {})
     }
@@ -71,8 +72,12 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
         }
         throw new Error(message)
       }
-      
-      return res.json()
+
+      const contentType = res.headers.get('content-type')
+      if (contentType && contentType.includes('application/json')) return res.json()
+      return res.text().then((t) => {
+        try { return JSON.parse(t) } catch { return { raw: t } }
+      })
     } catch (error: any) {
       clearTimeout(timeoutId)
       if (error.name === 'AbortError') {

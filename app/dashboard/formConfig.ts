@@ -54,12 +54,11 @@ export const formSteps: Step[] = [
     ],
   },
 
-  // 3) Allgemeine Projektinformationen
+  // 3) Allgemeine Projektinformationen (Systemtyp removed)
   {
     key: 'sistemConstructiv',
     label: 'Allgemeine Projektinformationen',
     fields: [
-      { type: 'select', name: 'tipSistem',   label: 'Systemtyp', options: ['Blockbau', 'Holzrahmen', 'Massivholz'] },
       { type: 'select', name: 'nivelOferta', label: 'Angebotsumfang', options: ['Structură', 'Structură + ferestre', 'Casă completă'] },
       { type: 'select', name: 'accesSantier', label: 'Baustellenzufahrt', options: ['Ușor (camion 40t)', 'Mediu', 'Dificil'] },
       { type: 'select', name: 'teren',       label: 'Gelände: eben oder Hang?', options: ['Plan', 'Pantă ușoară', 'Pantă mare'] },
@@ -67,7 +66,7 @@ export const formSteps: Step[] = [
     ],
   },
 
-  // 3.5) Gebäudestruktur (vizual)
+  // 3.5) Gebäudestruktur (vizual) – includes hasWintergarden / hasBalkone for optional step Wintergärten & Balkone
   {
     key: 'structuraCladirii',
     label: 'Gebäudestruktur',
@@ -75,6 +74,18 @@ export const formSteps: Step[] = [
       { type: 'select', name: 'tipFundatieBeci', label: 'Untergeschoss / Fundament', options: ['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt / Nutzkeller)', 'Keller (mit einfachem Ausbau)'] },
       { type: 'bool', name: 'pilons', label: 'Pfahlgründung erforderlich' },
       { type: 'select', name: 'inaltimeEtaje', label: 'Geschosshöhe', options: ['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)'] },
+      { type: 'bool', name: 'hasWintergarden', label: 'Wintergarten vorhanden' },
+      { type: 'bool', name: 'hasBalkone', label: 'Balkone vorhanden' },
+    ],
+  },
+
+  // 3.55) Wintergärten & Balkone (shown only if hasWintergarden or hasBalkone in Gebäudestruktur)
+  {
+    key: 'wintergaertenBalkone',
+    label: 'Wintergärten & Balkone',
+    fields: [
+      { type: 'select', name: 'wintergartenTyp', label: 'Wintergärten', options: ['Glaswand', 'Plexiglaswand'] },
+      { type: 'select', name: 'balkonTyp', label: 'Balkone', options: ['Holzgeländer', 'Stahlgeländer', 'Glasgeländer'] },
     ],
   },
 
@@ -103,6 +114,15 @@ export const formSteps: Step[] = [
     ],
   },
 
+  // 3.9) Wandaufbau (per-floor Außenwände / Innenwände, before Materialien)
+  {
+    key: 'wandaufbau',
+    label: 'Wandaufbau',
+    fields: [
+      // Câmpurile dinamice per etaj sunt generate în WandaufbauStep (außenwande_ground, innenwande_ground, etc.)
+    ],
+  },
+
   // 4) Materialien & Ausbaustufe
   {
     key: 'materialeFinisaj',
@@ -111,6 +131,13 @@ export const formSteps: Step[] = [
       // Câmpurile dinamice vor fi generate în componenta specială MaterialeFinisajStep
       // Dachmaterial a fost mutat în Dämmung & Dachdeckung (dachdeckung)
     ],
+  },
+
+  // 4.5) Geschossdecken und Bodenaufbauten
+  {
+    key: 'bodenDeckeBelag',
+    label: 'Geschossdecken und Bodenaufbauten',
+    fields: [],
   },
 
   // 5) Energieeffizienz & Heizung

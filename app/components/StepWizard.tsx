@@ -54,12 +54,15 @@ const DE = {
     dateGenerale: 'Allgemeine Projektdaten (Bezeichnung)',
     client: 'Kundendaten',
     sistemConstructiv: 'Allgemeine Projektinformationen',
+    wintergaertenBalkone: 'Wintergärten & Balkone',
     structuraCladirii: 'Gebäudestruktur',
     projektdaten: 'Projektdaten',
     daemmungDachdeckung: 'Dämmung & Dachdeckung',
     tipAcoperis: 'Dachart',
     ferestreUsi: 'Fenster & Türen',
+    wandaufbau: 'Wandaufbau',
     materialeFinisaj: 'Materialien & Ausbaustufe',
+    bodenDeckeBelag: 'Geschossdecken und Bodenaufbauten',
     performantaEnergetica: 'Energieeffizienz & Heizung',
     performanta: 'Energieeffizienz & Heizung',
     conditiiSantier: 'Baustellenbedingungen & Logistik',
@@ -270,6 +273,10 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
   const nivelOferta = sistemConstructivData.nivelOferta || ''
 
   const shouldHideField = (fieldName: string): boolean => {
+    if (stepKey === 'wintergaertenBalkone') {
+      if (fieldName === 'wintergartenTyp' && !form.hasWintergarden) return true
+      if (fieldName === 'balkonTyp' && !form.hasBalkone) return true
+    }
     if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'materialeFinisaj') && fieldName === 'tipAcoperis') return true
     if (stepKey === 'structuraCladirii' && fieldName === 'floorsNumber') return true
     if (!nivelOferta) return false
@@ -405,7 +412,7 @@ function SelectSun({
 
       {open && typeof window !== 'undefined' && createPortal(
         <div
-          className="sun-menu"
+          className="sun-menu themed-scroll"
           role="listbox"
           style={{ position: 'fixed', left: pos.left, top: pos.top, width: pos.width, zIndex: 9999 }}
           onMouseDown={(e) => e.stopPropagation()}
@@ -544,11 +551,24 @@ export default function StepWizard() {
   const lastProcessedCreationId = useRef<number>(0)
   const activeCreationPromise = useRef<Promise<string> | null>(null)
   const pendingOfferTypeIdRef = useRef<string | null>(null)
+  /** Ultima stare a checkbox-urilor Wintergarten/Balkone pe pasul Gebäudestruktur – ca debifarea să nu fie suprascrisă de effect. */
+  const structuraWinterBalkoneRef = useRef<{ hasWintergarden?: boolean; hasBalkone?: boolean }>({})
+  /** Pasul pentru care am rulat ultima încărcare – evită re-rularea effect-ului la fiecare re-render (Maximum update depth). */
+  const lastLoadedStepKeyRef = useRef<string | null>(null)
+  /** Sursă de adevăr pentru vizibilitatea pasului Wintergärten & Balkone – actualizat la toggle pe Gebäudestruktur. */
+  const [winterBalkoneFlags, setWinterBalkoneFlags] = useState<{ hasWintergarden: boolean; hasBalkone: boolean }>({ hasWintergarden: false, hasBalkone: false })
 
   useEffect(() => { offerIdRef.current = offerId }, [offerId])
 
-  // Toți pașii sunt mereu vizibili și accesibili — nu mai ascundem pași după nivelOferta
-  const visibleSteps = useMemo(() => dynamicSteps, [dynamicSteps])
+  // Ascundem pasul Wintergärten & Balkone dacă nici Wintergarten nici Balkone nu sunt bifate (folosim winterBalkoneFlags ca sursă de adevăr)
+  const visibleSteps = useMemo(() => {
+    const hasWG = winterBalkoneFlags.hasWintergarden === true
+    const hasB = winterBalkoneFlags.hasBalkone === true
+    if (!hasWG && !hasB) {
+      return dynamicSteps.filter((s: { key?: string }) => (s as any).key !== 'wintergaertenBalkone')
+    }
+    return dynamicSteps
+  }, [dynamicSteps, winterBalkoneFlags.hasWintergarden, winterBalkoneFlags.hasBalkone])
 
   // -- UseMemo hooks (safe to run even if visibleSteps is empty)
   const step = visibleSteps[idx]
@@ -567,16 +587,14 @@ export default function StepWizard() {
 
   // Bara de progres: afișăm întotdeauna TOȚI pașii (dynamicSteps), cei ascunși de nivelOferta sunt marcați ca „săriți” — structura nu se schimbă când ajungi la Gebäudestruktur
   const progressBarSteps = useMemo(() => {
-    return dynamicSteps.map((s: { key: string; label?: string }) => {
+    return visibleSteps.map((s: { key: string; label?: string }, i: number) => {
       const key = (s as any).key
       const label = tStepLabel(key, (s as any).label)
-      const visibleIndex = visibleSteps.findIndex((vs: { key?: string }) => (vs as any).key === key)
-      const isSkipped = visibleIndex === -1
-      const isDone = visibleIndex >= 0 && visibleIndex < idx
-      const isActive = (visibleSteps[idx] as any)?.key === key
-      return { key, label, isSkipped, isDone, isActive }
+      const isDone = i < idx
+      const isActive = i === idx
+      return { key, label, isSkipped: false, isDone, isActive }
     })
-  }, [dynamicSteps, visibleSteps, idx])
+  }, [visibleSteps, idx])
 
   const visibleErrors = showErrors ? errors : {}
 
@@ -721,10 +739,10 @@ export default function StepWizard() {
     return () => window.removeEventListener('offer:new', handleNewProject)
   }, [])
 
-  // 3. Clear Validation Error
+  // 3. Clear Validation Error la schimbarea pasului (nu și la form – obiect nou la fiecare setForm → buclă infinită)
   useEffect(() => {
     setValidationError(null)
-  }, [idx, form])
+  }, [idx])
 
   // Ajustare idx când visibleSteps se scurtează (ex. ascundem performantaEnergetica)
   useEffect(() => {
@@ -869,34 +887,70 @@ export default function StepWizard() {
   }, [])
 
   // 6. Update Form State on Step Change (ca pe VPS)
+  // structuraCladirii + wintergaertenBalkone: folosim ref / prev pentru hasWintergarden/hasBalkone ca debifarea să persiste
+  // și ca pe pasul Wintergärten & Balkone să apară doar secțiunile pentru opțiunile încă bifate.
+  function mergeStepForm(key: string, loaded: Record<string, any>, prev: Record<string, any>): Record<string, any> {
+    if (!loaded || typeof loaded !== 'object') return loaded
+    const r = structuraWinterBalkoneRef.current
+    const keepFlagsFromUser = (key === 'structuraCladirii' || key === 'wintergaertenBalkone')
+    if (keepFlagsFromUser) {
+      return {
+        ...loaded,
+        hasWintergarden: r.hasWintergarden ?? prev.hasWintergarden ?? loaded.hasWintergarden,
+        hasBalkone: r.hasBalkone ?? prev.hasBalkone ?? loaded.hasBalkone,
+      }
+    }
+    return { ...loaded, hasWintergarden: loaded.hasWintergarden ?? prev.hasWintergarden, hasBalkone: loaded.hasBalkone ?? prev.hasBalkone }
+  }
+
+  // Încărcare date pas: doar când idx sau offerId se schimbă (fără currentStepKey/form ca să nu retrigărăm la fiecare setForm → Maximum update depth).
   useEffect(() => {
-    if (visibleSteps.length === 0) return
     const key = visibleSteps[idx]?.key
-    if (!key) return
+    if (visibleSteps.length === 0 || !key) return
+    if (lastLoadedStepKeyRef.current === key) return
+    lastLoadedStepKeyRef.current = key
 
     const draftData = drafts[key]
+    const applyMerge = (prev: Record<string, any>, loaded: Record<string, any>) => {
+      const merged = mergeStepForm(key, loaded, prev)
+      if (key === 'structuraCladirii') {
+        structuraWinterBalkoneRef.current = {
+          hasWintergarden: merged.hasWintergarden ?? structuraWinterBalkoneRef.current.hasWintergarden,
+          hasBalkone: merged.hasBalkone ?? structuraWinterBalkoneRef.current.hasBalkone,
+        }
+        setWinterBalkoneFlags({
+          hasWintergarden: merged.hasWintergarden === true,
+          hasBalkone: merged.hasBalkone === true,
+        })
+      }
+      return merged
+    }
     if (draftData && Object.keys(draftData).length > 0) {
-      setForm(draftData)
+      setForm(prev => applyMerge(prev, draftData))
     } else if (offerId) {
       apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent(key)}`)
         .then((data: any) => {
           const stepData = data?.data
           if (stepData && Object.keys(stepData).length > 0) {
             setDrafts(prev => ({ ...prev, [key]: stepData }))
-            setForm(stepData)
+            setForm(prev => applyMerge(prev, stepData))
           } else {
-            setForm(key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {})
+            const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
+            setForm(prev => applyMerge(prev, defaultForStep))
           }
         })
         .catch(() => {
-          setForm(key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {})
+          const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
+          setForm(prev => applyMerge(prev, defaultForStep))
         })
     } else {
-      setForm(key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {})
+      const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
+      setForm(prev => applyMerge(prev, defaultForStep))
     }
     setErrors({})
     setShowErrors(false)
-  }, [idx, visibleSteps, offerId])
+    // intenționat fără visibleSteps/currentStepKey în deps – altfel setForm(merged) → re-render → effect din nou → buclă
+  }, [idx, offerId])
 
 
   // -- Helper Functions
@@ -1066,7 +1120,9 @@ export default function StepWizard() {
       }
 
       if (!isLast) {
-        setDir('next'); setIdx(i => i + 1); setAnimKey(k => k + 1)
+        setDir('next')
+        setIdx(i => Math.min(i + 1, visibleSteps.length - 1))
+        setAnimKey(k => k + 1)
         setSaving(false)
         return
       }
@@ -1243,7 +1299,7 @@ export default function StepWizard() {
   return (
     <div className="wizard-wrap" style={{ height: '100%', minHeight: 0, maxHeight: '100%' }}>
       {!computing && !pdfUrl && !showPackagePicker && showForm && (
-      <div className="px-2 mt-1">
+      <div className="px-2 mt-1 page-enter">
         <div className="wizard-steps wizard-steps--inline relative pr-[1px] flex items-start justify-center gap-5 text-center hide-scroll">
           {progressBarSteps.map((step) => {
             const dotClass = step.isSkipped ? 'skipped' : step.isDone ? 'done' : step.isActive ? 'active' : ''
@@ -1290,7 +1346,7 @@ export default function StepWizard() {
             </div>
           </div>
         ) : computing && !pdfUrl ? (
-          <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6" style={{ minHeight: '68vh' }}>
+          <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6 page-enter" style={{ minHeight: '68vh' }}>
             <img 
               src="/houseblueprint.gif" 
               alt={DE.common.processingAlt} 
@@ -1305,11 +1361,11 @@ export default function StepWizard() {
             </button>
           </div>
         ) : pdfUrl ? (
-          <div className="flex-1 w-full h-full p-[6px] box-border overflow-hidden">
+          <div className="flex-1 w-full h-full p-[6px] box-border overflow-hidden page-enter">
             <SimplePdfViewer src={pdfUrl} className="w-full h-full rounded-xl" />
           </div>
         ) : showPackagePicker ? (
-          <div className="w-full flex justify-center px-2">
+          <div className="w-full flex justify-center px-2 page-enter">
           <div className="w-full max-w-5xl mx-auto pt-6 px-1" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 justify-items-center items-stretch">
                 {/* 1) Mengenermittlung */}
@@ -1369,7 +1425,7 @@ export default function StepWizard() {
           </div>
           </div>
         ) : (
-          <div key={`${step.key}-${animKey}`} className={`wizard-card wizard-sunny ${dir === 'back' ? 'card-in-back' : 'card-in-next'}`}>
+          <div key={`${step.key}-${animKey}`} className={`wizard-card wizard-sunny ${dir === null ? 'card-initial' : dir === 'back' ? 'card-in-back' : 'card-in-next'}`}>
             <div className="wizard-header">
               <div className="wizard-title text-sun">
                 {tStepLabel(step.key, step.label)}
@@ -1420,11 +1476,57 @@ export default function StepWizard() {
               ) : step.key === 'structuraCladirii' ? (
                 <BuildingStructureStep
                   form={form}
-                  setForm={(v, shouldAutosave = false) => { ensureOffer().catch(() => {}); setForm(v); if (shouldAutosave) scheduleAutosave('structuraCladirii', v) }}
+                  setForm={(v, shouldAutosave = false) => {
+                    ensureOffer().catch(() => {})
+                    const syncWinterBalkone = (next: Record<string, any>) => {
+                      if (typeof next.hasWintergarden !== 'undefined' || typeof next.hasBalkone !== 'undefined') {
+                        structuraWinterBalkoneRef.current = {
+                          ...structuraWinterBalkoneRef.current,
+                          ...(typeof next.hasWintergarden !== 'undefined' && { hasWintergarden: next.hasWintergarden }),
+                          ...(typeof next.hasBalkone !== 'undefined' && { hasBalkone: next.hasBalkone }),
+                        }
+                        setWinterBalkoneFlags(prev => ({
+                          hasWintergarden: typeof next.hasWintergarden !== 'undefined' ? next.hasWintergarden === true : prev.hasWintergarden,
+                          hasBalkone: typeof next.hasBalkone !== 'undefined' ? next.hasBalkone === true : prev.hasBalkone,
+                        }))
+                      }
+                    }
+                    if (typeof v === 'function') {
+                      setForm(prev => {
+                        const next = v(prev)
+                        syncWinterBalkone(next)
+                        return next
+                      })
+                    } else {
+                      syncWinterBalkone(v)
+                      setForm(v)
+                    }
+                    if (shouldAutosave) scheduleAutosave('structuraCladirii', typeof v === 'function' ? form : v)
+                  }}
                   errors={visibleErrors}
                   onBlur={() => scheduleAutosave('structuraCladirii', form)}
                   hiddenKeysForm={hiddenKeysForm}
                   optionValueToPriceKey={optionValueToPriceKey}
+                />
+              ) : step.key === 'wandaufbau' ? (
+                <WandaufbauStep
+                  form={form}
+                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  errors={visibleErrors}
+                  drafts={drafts}
+                  optionValueToPriceKey={optionValueToPriceKey}
+                  tOption={tOption}
+                />
+              ) : step.key === 'wintergaertenBalkone' ? (
+                <WintergaertenBalkoneStep
+                  form={form}
+                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  errors={visibleErrors}
+                  optionValueToPriceKey={optionValueToPriceKey}
+                  customOptionsForm={customOptionsForm}
+                  hiddenKeysForm={hiddenKeysForm}
+                  paramLabelOverrides={paramLabelOverrides}
+                  tOption={tOption}
                 />
               ) : step.key === 'materialeFinisaj' ? (
                 <MaterialeFinisajStep
@@ -1432,6 +1534,14 @@ export default function StepWizard() {
                   setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
                   errors={visibleErrors}
                   drafts={drafts}
+                />
+              ) : step.key === 'bodenDeckeBelag' ? (
+                <BodenDeckeBelagStep
+                  form={form}
+                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  errors={visibleErrors}
+                  drafts={drafts}
+                  tOption={tOption}
                 />
               ) : step.key === 'projektdaten' ? (
                 <ProjektdatenStepContent
@@ -1681,6 +1791,342 @@ function ProjektdatenStepContent({
   )
 }
 
+const WANDAUFBAU_OPTIONS = [
+  'CLT 35cm', 'CLT 32cm', 'CLT 30cm',
+  'Holzriegel 35cm', 'Holzriegel 32cm', 'Holzriegel 30cm',
+  'Beton 35cm', 'Beton 32cm', 'Beton 30cm',
+] as const
+
+function WandaufbauStep({
+  form,
+  setForm,
+  errors,
+  drafts,
+  optionValueToPriceKey = {},
+  tOption,
+}: {
+  form: Record<string, any>
+  setForm: (v: Record<string, any>) => void
+  errors: Errors
+  drafts: Drafts
+  optionValueToPriceKey?: Record<string, Record<string, string>>
+  tOption: (stepKey: string, fieldName: string, opt: string) => string
+}) {
+  const structuraData = drafts?.structuraCladirii || {}
+  const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
+  const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
+  const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
+  const basementLivable = tipFundatieBeci.includes('mit einfachem Ausbau')
+  const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
+  const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
+  const totalFloors = 1 + etajeIntermediare
+
+  return (
+    <div className="space-y-4">
+      {hasBasement && basementLivable && (
+        <div className="flex gap-4 items-start">
+          <label className="flex flex-col gap-1 flex-1" data-field="außenwandeBeci">
+            <span className="wiz-label text-sun/90">Außenwände (Keller)</span>
+            <SelectSun
+              value={form.außenwandeBeci || ''}
+              onChange={(v) => setForm({ ...form, außenwandeBeci: v })}
+              options={[...WANDAUFBAU_OPTIONS]}
+              displayFor={(opt) => tOption('wandaufbau', 'außenwandeBeci', opt)}
+            />
+          </label>
+          <label className="flex flex-col gap-1 flex-1" data-field="innenwandeBeci">
+            <span className="wiz-label text-sun/90">Innenwände (Keller)</span>
+            <SelectSun
+              value={form.innenwandeBeci || ''}
+              onChange={(v) => setForm({ ...form, innenwandeBeci: v })}
+              options={[...WANDAUFBAU_OPTIONS]}
+              displayFor={(opt) => tOption('wandaufbau', 'innenwandeBeci', opt)}
+            />
+          </label>
+        </div>
+      )}
+      {Array.from({ length: totalFloors }, (_, idx) => {
+        const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
+        const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+        return (
+          <div key={floorKey} className="flex gap-4 items-start">
+            <label className="flex flex-col gap-1 flex-1">
+              <span className="wiz-label text-sun/90">Außenwände – {floorLabel}</span>
+              <SelectSun
+                value={form[`außenwande_${floorKey}`] || ''}
+                onChange={(v) => setForm({ ...form, [`außenwande_${floorKey}`]: v })}
+                options={[...WANDAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('wandaufbau', `außenwande_${floorKey}`, opt)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 flex-1">
+              <span className="wiz-label text-sun/90">Innenwände – {floorLabel}</span>
+              <SelectSun
+                value={form[`innenwande_${floorKey}`] || ''}
+                onChange={(v) => setForm({ ...form, [`innenwande_${floorKey}`]: v })}
+                options={[...WANDAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('wandaufbau', `innenwande_${floorKey}`, opt)}
+              />
+            </label>
+          </div>
+        )
+      })}
+      {hasMansarda && (
+        <div className="flex gap-4 items-start">
+          <label className="flex flex-col gap-1 flex-1">
+            <span className="wiz-label text-sun/90">Außenwände – Dachgeschoss</span>
+            <SelectSun
+              value={form.außenwandeMansarda || ''}
+              onChange={(v) => setForm({ ...form, außenwandeMansarda: v })}
+              options={[...WANDAUFBAU_OPTIONS]}
+              displayFor={(opt) => tOption('wandaufbau', 'außenwandeMansarda', opt)}
+            />
+          </label>
+          <label className="flex flex-col gap-1 flex-1">
+            <span className="wiz-label text-sun/90">Innenwände – Dachgeschoss</span>
+            <SelectSun
+              value={form.innenwandeMansarda || ''}
+              onChange={(v) => setForm({ ...form, innenwandeMansarda: v })}
+              options={[...WANDAUFBAU_OPTIONS]}
+              displayFor={(opt) => tOption('wandaufbau', 'innenwandeMansarda', opt)}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const WINTERGARTEN_BASE_OPTIONS = ['Glaswand', 'Plexiglaswand']
+const BALKON_BASE_OPTIONS = ['Holzgeländer', 'Stahlgeländer', 'Glasgeländer']
+
+function WintergaertenBalkoneStep({
+  form,
+  setForm,
+  errors,
+  optionValueToPriceKey = {},
+  customOptionsForm = {},
+  hiddenKeysForm = new Set<string>(),
+  paramLabelOverrides = {},
+  tOption,
+}: {
+  form: Record<string, any>
+  setForm: (v: Record<string, any>) => void
+  errors: Errors
+  optionValueToPriceKey?: Record<string, Record<string, string>>
+  customOptionsForm?: Record<string, Array<{ label: string; value: string }>>
+  hiddenKeysForm?: Set<string>
+  paramLabelOverrides?: Record<string, string>
+  tOption: (stepKey: string, fieldName: string, opt: string) => string
+}) {
+  const hasWintergarden = form.hasWintergarden === true
+  const hasBalkone = form.hasBalkone === true
+
+  const wintergartenOptions = [
+    ...WINTERGARTEN_BASE_OPTIONS.filter((opt) => {
+      const priceKey = optionValueToPriceKey['wintergarten_type']?.[opt]
+      return !priceKey || !hiddenKeysForm.has(priceKey)
+    }),
+    ...(customOptionsForm['wintergarten_type'] || []).map((o) => o.label),
+  ]
+  const balkonOptions = [
+    ...BALKON_BASE_OPTIONS.filter((opt) => {
+      const priceKey = optionValueToPriceKey['balkon_type']?.[opt]
+      return !priceKey || !hiddenKeysForm.has(priceKey)
+    }),
+    ...(customOptionsForm['balkon_type'] || []).map((o) => o.label),
+  ]
+
+  return (
+    <div className="space-y-4">
+      {hasWintergarden && (
+        <label className="flex flex-col gap-1" data-field="wintergartenTyp">
+          <span className="wiz-label text-sun/90 font-medium">Wintergärten</span>
+          <SelectSun
+            value={form.wintergartenTyp || ''}
+            onChange={(v) => setForm({ ...form, wintergartenTyp: v })}
+            options={wintergartenOptions}
+            displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['wintergarten_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'wintergartenTyp', opt)}
+          />
+        </label>
+      )}
+      {hasBalkone && (
+        <label className="flex flex-col gap-1" data-field="balkonTyp">
+          <span className="wiz-label text-sun/90 font-medium">Balkone</span>
+          <SelectSun
+            value={form.balkonTyp || ''}
+            onChange={(v) => setForm({ ...form, balkonTyp: v })}
+            options={balkonOptions}
+            displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['balkon_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'balkonTyp', opt)}
+          />
+        </label>
+      )}
+      {!hasWintergarden && !hasBalkone && (
+        <p className="text-sun/70 text-sm">Bitte in „Gebäudestruktur“ mindestens „Wintergarten vorhanden“ oder „Balkone vorhanden“ aktivieren.</p>
+      )}
+    </div>
+  )
+}
+
+const BODENAUFBAU_OPTIONS = ['Geschossdecke Holz Standard', 'Holzbalkendecke', 'Massivdecke Stahlbeton', 'Bodenplatte Beton'] as const
+const DECKENAUFBAU_OPTIONS = ['Gipskarton Standard', 'Gipskarton Akustik', 'Sichtschalung Holz', 'Unterdecke abgehängt'] as const
+const BODENBELAG_OPTIONS = ['Estrich + Fliesen', 'Parkett Eiche', 'Laminat', 'Teppichboden'] as const
+
+function BodenDeckeBelagStep({
+  form,
+  setForm,
+  errors,
+  drafts,
+  tOption,
+}: {
+  form: Record<string, any>
+  setForm: (v: Record<string, any>) => void
+  errors: Errors
+  drafts: Drafts
+  tOption: (stepKey: string, fieldName: string, opt: string) => string
+}) {
+  const structuraData = drafts?.structuraCladirii || {}
+  const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
+  const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
+  const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
+  const basementLivable = tipFundatieBeci.includes('mit einfachem Ausbau')
+  const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
+  const hasPod = listaEtaje.some((e: string) => e === 'pod')
+  const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
+  const totalFloors = 1 + etajeIntermediare
+  return (
+    <div className="space-y-4">
+      <p className="text-sun/70 text-sm">Wählen Sie für jede Etage die passende Konstruktion und den entsprechenden Bodenaufbau entsprechend Ihrer Gebäudeplanung.</p>
+      {hasBasement && basementLivable && (
+        <div className="rounded-lg border border-white/10 p-3 space-y-3 bg-panel/30">
+          <span className="wiz-label text-sun/90 font-medium">Keller</span>
+          <div className="flex flex-wrap gap-4 items-start">
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Bodenbelag</span>
+              <SelectSun
+                value={form.bodenbelagBeci || ''}
+                onChange={(v) => setForm({ ...form, bodenbelagBeci: v })}
+                options={[...BODENBELAG_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenbelagBeci', opt)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Deckenaufbau</span>
+              <SelectSun
+                value={form.deckenaufbauBeci || ''}
+                onChange={(v) => setForm({ ...form, deckenaufbauBeci: v })}
+                options={[...DECKENAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'deckenaufbauBeci', opt)}
+              />
+            </label>
+          </div>
+        </div>
+      )}
+      {Array.from({ length: totalFloors }, (_, idx) => {
+        const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
+        const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+        const isParter = idx === 0
+        const showBodenaufbauParter = hasBasement || !isParter
+        return (
+          <div key={floorKey} className="rounded-lg border border-white/10 p-3 space-y-3 bg-panel/30">
+            <span className="wiz-label text-sun/90 font-medium">{floorLabel}</span>
+            <div className="flex flex-wrap gap-4 items-start">
+              {showBodenaufbauParter && (
+                <label className="flex flex-col gap-1 min-w-[180px]">
+                  <span className="text-xs text-sun/70">Bodenaufbau</span>
+                  <SelectSun
+                    value={form[`bodenaufbau_${floorKey}`] || ''}
+                    onChange={(v) => setForm({ ...form, [`bodenaufbau_${floorKey}`]: v })}
+                    options={[...BODENAUFBAU_OPTIONS]}
+                    displayFor={(opt) => tOption('bodenDeckeBelag', `bodenaufbau_${floorKey}`, opt)}
+                  />
+                </label>
+              )}
+              <label className="flex flex-col gap-1 min-w-[180px]">
+                <span className="text-xs text-sun/70">Bodenbelag</span>
+                <SelectSun
+                  value={form[`bodenbelag_${floorKey}`] || ''}
+                  onChange={(v) => setForm({ ...form, [`bodenbelag_${floorKey}`]: v })}
+                  options={[...BODENBELAG_OPTIONS]}
+                  displayFor={(opt) => tOption('bodenDeckeBelag', `bodenbelag_${floorKey}`, opt)}
+                />
+              </label>
+              <label className="flex flex-col gap-1 min-w-[180px]">
+                <span className="text-xs text-sun/70">Deckenaufbau</span>
+                <SelectSun
+                  value={form[`deckenaufbau_${floorKey}`] || ''}
+                  onChange={(v) => setForm({ ...form, [`deckenaufbau_${floorKey}`]: v })}
+                  options={[...DECKENAUFBAU_OPTIONS]}
+                  displayFor={(opt) => tOption('bodenDeckeBelag', `deckenaufbau_${floorKey}`, opt)}
+                />
+              </label>
+            </div>
+          </div>
+        )
+      })}
+      {hasMansarda && (
+        <div className="rounded-lg border border-white/10 p-3 space-y-3 bg-panel/30">
+          <span className="wiz-label text-sun/90 font-medium">Dachgeschoss</span>
+          <div className="flex flex-wrap gap-4 items-start">
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Bodenaufbau</span>
+              <SelectSun
+                value={form.bodenaufbauMansarda || ''}
+                onChange={(v) => setForm({ ...form, bodenaufbauMansarda: v })}
+                options={[...BODENAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenaufbauMansarda', opt)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Bodenbelag</span>
+              <SelectSun
+                value={form.bodenbelagMansarda || ''}
+                onChange={(v) => setForm({ ...form, bodenbelagMansarda: v })}
+                options={[...BODENBELAG_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenbelagMansarda', opt)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Deckenaufbau</span>
+              <SelectSun
+                value={form.deckenaufbauMansarda || ''}
+                onChange={(v) => setForm({ ...form, deckenaufbauMansarda: v })}
+                options={[...DECKENAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'deckenaufbauMansarda', opt)}
+              />
+            </label>
+          </div>
+        </div>
+      )}
+      {hasPod && (
+        <div className="rounded-lg border border-white/10 p-3 space-y-3 bg-panel/30">
+          <span className="wiz-label text-sun/90 font-medium">Dachboden</span>
+          <div className="flex flex-wrap gap-4 items-start">
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Bodenaufbau</span>
+              <SelectSun
+                value={form.bodenaufbauPod || ''}
+                onChange={(v) => setForm({ ...form, bodenaufbauPod: v })}
+                options={[...BODENAUFBAU_OPTIONS]}
+                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenaufbauPod', opt)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 min-w-[180px]">
+              <span className="text-xs text-sun/70">Bodenbelag (wenn ausgebaut)</span>
+              <SelectSun
+                value={form.bodenbelagPod || ''}
+                onChange={(v) => setForm({ ...form, bodenbelagPod: v })}
+                options={['', ...BODENBELAG_OPTIONS]}
+                displayFor={(opt) => opt === '' ? '—' : tOption('bodenDeckeBelag', 'bodenbelagPod', opt)}
+              />
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; drafts: Drafts }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -1915,7 +2361,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
           </div>
         </div>
 
-      <div className="flex-1 space-y-4 !pb-0 !mb-0">
+      <div className="flex-1 min-w-0 relative z-10 space-y-4 !pb-0 !mb-0">
         <label className="flex flex-col gap-1" data-field="inaltimeEtaje">
           <span className="wiz-label text-sun/90">Geschosshöhe</span>
           <div className={errors.inaltimeEtaje ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
@@ -2020,7 +2466,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               </button>
               {showAddFloorDropdown && typeof window !== 'undefined' && createPortal(
                 <div
-                  className="sun-menu"
+                  className="sun-menu themed-scroll"
                   role="listbox"
                   style={{ position: 'fixed', left: addFloorPos.left, top: addFloorPos.top, width: Math.max(addFloorPos.width, 350), zIndex: 9999 }}
                   onMouseDown={(e) => e.stopPropagation()}
@@ -2040,6 +2486,30 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               )}
             </>
           )}
+        </div>
+
+        <div className="space-y-2 pt-3 mt-3 border-t border-[#e3c7ab22]">
+          <p className="text-xs text-sun/70 font-medium">Optional: Schritt „Wintergärten & Balkone“ erscheint, wenn mindestens eine Option aktiv ist.</p>
+          <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-wintergarden" data-field="hasWintergarden">
+            <input
+              id="struct-has-wintergarden"
+              type="checkbox"
+              className="sun-checkbox cursor-pointer"
+              checked={form.hasWintergarden === true}
+              onChange={(e) => setForm(prev => ({ ...prev, hasWintergarden: e.target.checked }))}
+            />
+            <span className="text-sm font-medium text-sun/90">Wintergarten vorhanden</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-balkone" data-field="hasBalkone">
+            <input
+              id="struct-has-balkone"
+              type="checkbox"
+              className="sun-checkbox cursor-pointer"
+              checked={form.hasBalkone === true}
+              onChange={(e) => setForm(prev => ({ ...prev, hasBalkone: e.target.checked }))}
+            />
+            <span className="text-sm font-medium text-sun/90">Balkone vorhanden</span>
+          </label>
         </div>
         </div>
       </div>
