@@ -99,7 +99,6 @@ export const formSteps: Step[] = [
       { type: 'select', name: 'dachstuhlTyp', label: 'Dachstuhl-Typ', options: ['Sparrendach', 'Pfettendach', 'Kehlbalkendach', 'Sonderkonstruktion'] },
       { type: 'bool',   name: 'sichtdachstuhl', label: 'Sichtdachstuhl' },
       { type: 'select', name: 'dachdeckung', label: 'Dachdeckung', options: ['Ziegel', 'Betonstein', 'Blech', 'Schindel', 'Sonstiges'] },
-      { type: 'number', name: 'pantaAcoperis', label: 'Dachneigung (Grad)', min: 15, max: 60 },
     ],
   },
 
@@ -213,7 +212,6 @@ export const formStepsDachstuhl: Step[] = [
       { type: 'select', name: 'dachstuhlTyp', label: 'Dachstuhl-Typ', options: ['Sparrendach', 'Pfettendach', 'Kehlbalkendach', 'Sonderkonstruktion'] },
       { type: 'bool',   name: 'sichtdachstuhl', label: 'Sichtdachstuhl' },
       { type: 'select', name: 'dachdeckung', label: 'Dachdeckung', options: ['Ziegel', 'Betonstein', 'Blech', 'Schindel', 'Sonstiges'] },
-      { type: 'number', name: 'pantaAcoperis', label: 'Dachneigung (Grad)', min: 15, max: 60 },
     ],
   },
   {

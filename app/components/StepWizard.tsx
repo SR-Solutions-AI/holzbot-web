@@ -1816,17 +1816,16 @@ function WandaufbauStep({
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
   const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
-  const basementLivable = tipFundatieBeci.includes('mit einfachem Ausbau')
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const totalFloors = 1 + etajeIntermediare
 
   return (
     <div className="space-y-4">
-      {hasBasement && basementLivable && (
+      {hasBasement && (
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1" data-field="außenwandeBeci">
-            <span className="wiz-label text-sun/90">Außenwände (Keller)</span>
+            <span className="wiz-label text-sun/90">Außenwände – Keller</span>
             <SelectSun
               value={form.außenwandeBeci || ''}
               onChange={(v) => setForm({ ...form, außenwandeBeci: v })}
@@ -1835,7 +1834,7 @@ function WandaufbauStep({
             />
           </label>
           <label className="flex flex-col gap-1 flex-1" data-field="innenwandeBeci">
-            <span className="wiz-label text-sun/90">Innenwände (Keller)</span>
+            <span className="wiz-label text-sun/90">Innenwände – Keller</span>
             <SelectSun
               value={form.innenwandeBeci || ''}
               onChange={(v) => setForm({ ...form, innenwandeBeci: v })}
@@ -2489,7 +2488,6 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
         </div>
 
         <div className="space-y-2 pt-3 mt-3 border-t border-[#e3c7ab22]">
-          <p className="text-xs text-sun/70 font-medium">Optional: Schritt „Wintergärten & Balkone“ erscheint, wenn mindestens eine Option aktiv ist.</p>
           <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-wintergarden" data-field="hasWintergarden">
             <input
               id="struct-has-wintergarden"

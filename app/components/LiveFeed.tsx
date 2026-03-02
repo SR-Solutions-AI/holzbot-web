@@ -1248,22 +1248,31 @@ export default function LiveFeed() {
                                          >
                                            <Download className="h-4 w-4" /> Angebot herunterladen (PDF)
                                          </button>
-                                         {it.canDownloadAdminPdf && it.adminPdfUrl && (
-                                           <button
-                                             onClick={() => downloadPdfWithRefresh(it.offerId, it.adminPdfUrl!)}
-                                             className="btn-sun-secondary"
-                                           >
-                                             <Download className="h-4 w-4" /> Detailliertes Angebot herunterladen (PDF)
-                                           </button>
-                                         )}
-                                         {it.roofMeasurementsPdfUrl && (
-                                           <button
-                                             onClick={() => downloadPdfWithRefresh(it.offerId, it.roofMeasurementsPdfUrl!)}
-                                             className="btn-sun-secondary"
-                                           >
-                                             <Download className="h-4 w-4" /> Dämmung & Dachdeckung herunterladen (PDF)
-                                           </button>
-                                         )}
+                                        {it.canDownloadAdminPdf && it.adminPdfUrl && (
+                                          <button
+                                            onClick={() => downloadPdfWithRefresh(it.offerId, it.adminPdfUrl!)}
+                                            className="btn-sun-secondary"
+                                          >
+                                            <Download className="h-4 w-4" /> Detailliertes Angebot herunterladen (PDF)
+                                          </button>
+                                        )}
+                                        <button
+                                          onClick={async () => {
+                                            let url: string | null = it.roofMeasurementsPdfUrl || null
+                                            if (!url) {
+                                              try {
+                                                const res = await apiFetch(`/offers/${it.offerId}/export-url`) as { roofMeasurementsPdf?: { download_url?: string; url?: string } }
+                                                url = res?.roofMeasurementsPdf?.download_url || res?.roofMeasurementsPdf?.url || null
+                                              } catch {
+                                                url = null
+                                              }
+                                            }
+                                            if (url) downloadPdfWithRefresh(it.offerId, url)
+                                          }}
+                                          className="btn-sun-secondary"
+                                        >
+                                          <Download className="h-4 w-4" /> Dämmung & Dachdeckung herunterladen (PDF)
+                                        </button>
                                        </div>
                                      </div>
                                    </div>

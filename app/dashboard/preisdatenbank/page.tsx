@@ -13,7 +13,9 @@ type CompanyInfo = {
   companyAddress: string
   email: string
   phone: string
+  fax: string
   logoUrl: string
+  handlerName: string
 }
 
 /** Sursă unică: data/form-schema/holzbau-form-steps.json – secțiunile și variabilele vin doar din acest fișier. */
@@ -135,7 +137,9 @@ export default function PreisdatenbankPage() {
     companyAddress: '',
     email: '',
     phone: '',
+    fax: '',
     logoUrl: '',
+    handlerName: '',
   })
   const [companyInfoSaving, setCompanyInfoSaving] = useState(false)
   const [companyInfoMessage, setCompanyInfoMessage] = useState<'success' | 'error' | null>(null)
@@ -244,7 +248,9 @@ export default function PreisdatenbankPage() {
             companyAddress: (companyRes as CompanyInfo).companyAddress ?? '',
             email: (companyRes as CompanyInfo).email ?? '',
             phone: (companyRes as CompanyInfo).phone ?? '',
+            fax: (companyRes as CompanyInfo).fax ?? '',
             logoUrl: (companyRes as CompanyInfo).logoUrl ?? '',
+            handlerName: (companyRes as CompanyInfo).handlerName ?? '',
           })
         }
       } catch (e) {
@@ -529,6 +535,8 @@ export default function PreisdatenbankPage() {
           companyAddress: companyInfo.companyAddress.trim(),
           email: companyInfo.email.trim(),
           phone: companyInfo.phone.trim(),
+          fax: companyInfo.fax.trim(),
+          handlerName: companyInfo.handlerName.trim(),
         }),
       })
       setCompanyInfoMessage('success')
@@ -732,7 +740,7 @@ export default function PreisdatenbankPage() {
                   rows={3}
                 />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="flex flex-col gap-2">
                   <label htmlFor="company-email" className="text-sm font-medium text-sun/90">Email Adresse:</label>
                   <input
@@ -755,6 +763,28 @@ export default function PreisdatenbankPage() {
                     placeholder="+49 123 456789"
                   />
                 </div>
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="company-fax" className="text-sm font-medium text-sun/90">Fax:</label>
+                  <input
+                    id="company-fax"
+                    type="tel"
+                    value={companyInfo.fax}
+                    onChange={(e) => setCompanyInfo((p) => ({ ...p, fax: e.target.value }))}
+                    className="sun-input w-full"
+                    placeholder="+49 123 456789-11"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label htmlFor="company-handler" className="text-sm font-medium text-sun/90">Name Reprezentant / Bearbeiter:</label>
+                <input
+                  id="company-handler"
+                  type="text"
+                  value={companyInfo.handlerName}
+                  onChange={(e) => setCompanyInfo((p) => ({ ...p, handlerName: e.target.value }))}
+                  className="sun-input w-full"
+                  placeholder="z. B. Max Mustermann (wird im PDF als Bearbeiter angezeigt)"
+                />
               </div>
               <div className="flex items-center gap-3 pt-2">
                 <button

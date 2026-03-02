@@ -147,8 +147,7 @@
         { "type": "select", "name": "unterdach", "label": "Unterdach", "options": ["Folie", "Schalung + Folie"], "tag": "under_roof" },
         { "type": "select", "name": "dachstuhlTyp", "label": "Dachstuhl-Typ", "options": ["Sparrendach", "Pfettendach", "Kehlbalkendach", "Sonderkonstruktion"], "tag": "roof_structure_type" },
         { "type": "bool", "name": "sichtdachstuhl", "label": "Sichtdachstuhl", "tag": "visible_roof_structure" },
-        { "type": "select", "name": "dachdeckung", "label": "Dachdeckung", "options": ["Ziegel", "Betonstein", "Blech", "Schindel", "Sonstiges"], "tag": "roof_covering" },
-        { "type": "number", "name": "pantaAcoperis", "label": "Dachneigung (Grad)", "min": 15, "max": 60, "tag": "roof_pitch" }
+        { "type": "select", "name": "dachdeckung", "label": "Dachdeckung", "options": ["Ziegel", "Betonstein", "Blech", "Schindel", "Sonstiges"], "tag": "roof_covering" }
       ],
       "priceSections": [
         {
