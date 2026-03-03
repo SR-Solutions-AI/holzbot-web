@@ -1265,23 +1265,15 @@ export default function LiveFeed() {
                                          Angebot erfolgreich erstellt!
                                        </div>
                                        <div className="text-sm text-white/70 mt-1">
-                                         Das PDF ist bereit. Sie können das Dokument über den Button unten herunterladen.
+                                         Das PDF ist bereit. Sie können die Dokumente über die Buttons unten herunterladen.
                                        </div>
                                        <div className="mt-3 flex flex-col gap-2">
-                                         <button
-                                           onClick={() => downloadPdfWithRefresh(it.offerId, it.pdfUrl)}
-                                           className="btn-sun"
-                                         >
-                                           <Download className="h-4 w-4" /> Angebot herunterladen (PDF)
-                                         </button>
-                                        {it.canDownloadAdminPdf && it.adminPdfUrl && (
-                                          <button
-                                            onClick={() => downloadPdfWithRefresh(it.offerId, it.adminPdfUrl!)}
-                                            className="btn-sun-secondary"
-                                          >
-                                            <Download className="h-4 w-4" /> Detailliertes Angebot herunterladen (PDF)
-                                          </button>
-                                        )}
+                                        <button
+                                          onClick={() => downloadPdfWithRefresh(it.offerId, it.pdfUrl)}
+                                          className="btn-sun"
+                                        >
+                                          <Download className="h-4 w-4" /> Angebot herunterladen (PDF)
+                                        </button>
                                         <button
                                           onClick={async () => {
                                             let url: string | null = it.roofMeasurementsPdfUrl || null
@@ -1297,7 +1289,7 @@ export default function LiveFeed() {
                                           }}
                                           className="btn-sun-secondary"
                                         >
-                                          <Download className="h-4 w-4" /> Dämmung & Dachdeckung herunterladen (PDF)
+                                          <Download className="h-4 w-4" /> Mengenermittlung herunterladen (PDF)
                                         </button>
                                        </div>
                                      </div>

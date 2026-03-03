@@ -1165,32 +1165,23 @@ export default function StepWizard() {
       const toValidate = uploadedFiles.filter((f) => f.storagePath && planLikeMimes.test(f.mime || ''))
       if (toValidate.length > 0) {
         setProcessStatus((DE.common as any).validatingPlan || 'Plan wird überprüft...')
-        for (let i = 0; i < toValidate.length; i++) {
-          const file = toValidate[i]
-          setProcessStatus(
-            toValidate.length > 1
-              ? `Plan wird überprüft... (${i + 1}/${toValidate.length})`
-              : ((DE.common as any).validatingPlan || 'Plan wird überprüft...')
-          )
-          const aiRes = await apiFetch('/validate-plan', {
-            method: 'POST',
-            body: JSON.stringify({ storagePath: file.storagePath, mimeType: file.mime }),
-          })
-          const aiJson = aiRes?.valid !== undefined ? aiRes : await (aiRes as any)?.json?.().catch(() => ({ valid: true }))
-          if (aiJson?.valid === false) {
-            const reason = aiJson.reason || DE.common.planInvalidMsg
-            const noSideView =
-              typeof reason === 'string' &&
-              (reason.toLowerCase().includes('side view') ||
-                reason.toLowerCase().includes('ansicht') ||
-                reason.toLowerCase().includes('schnitt') ||
-                reason.toLowerCase().includes('elevation'))
-            setValidationError(
-              toValidate.length > 1 ? `${reason} (Datei ${i + 1}/${toValidate.length})` : noSideView ? (DE.common as any).planInvalidNoSideView || reason : reason
-            )
-            setSaving(false)
-            return
-          }
+        const body =
+          toValidate.length > 1
+            ? { storagePaths: toValidate.map((f) => f.storagePath) }
+            : { storagePath: toValidate[0].storagePath, mimeType: toValidate[0].mime }
+        const aiRes = await apiFetch('/validate-plan', { method: 'POST', body: JSON.stringify(body) })
+        const aiJson = aiRes?.valid !== undefined ? aiRes : await (aiRes as any)?.json?.().catch(() => ({ valid: true }))
+        if (aiJson?.valid === false) {
+          const reason = aiJson.reason || DE.common.planInvalidMsg
+          const noSideView =
+            typeof reason === 'string' &&
+            (reason.toLowerCase().includes('side view') ||
+              reason.toLowerCase().includes('ansicht') ||
+              reason.toLowerCase().includes('schnitt') ||
+              reason.toLowerCase().includes('elevation'))
+          setValidationError(noSideView ? (DE.common as any).planInvalidNoSideView || reason : reason)
+          setSaving(false)
+          return
         }
       }
 
