@@ -14,6 +14,7 @@ type CompanyInfo = {
   email: string
   phone: string
   fax: string
+  website: string
   logoUrl: string
   handlerName: string
 }
@@ -138,6 +139,7 @@ export default function PreisdatenbankPage() {
     email: '',
     phone: '',
     fax: '',
+    website: '',
     logoUrl: '',
     handlerName: '',
   })
@@ -249,6 +251,7 @@ export default function PreisdatenbankPage() {
             email: (companyRes as CompanyInfo).email ?? '',
             phone: (companyRes as CompanyInfo).phone ?? '',
             fax: (companyRes as CompanyInfo).fax ?? '',
+            website: (companyRes as CompanyInfo).website ?? '',
             logoUrl: (companyRes as CompanyInfo).logoUrl ?? '',
             handlerName: (companyRes as CompanyInfo).handlerName ?? '',
           })
@@ -536,6 +539,7 @@ export default function PreisdatenbankPage() {
           email: companyInfo.email.trim(),
           phone: companyInfo.phone.trim(),
           fax: companyInfo.fax.trim(),
+          website: companyInfo.website.trim(),
           handlerName: companyInfo.handlerName.trim(),
         }),
       })
@@ -774,6 +778,17 @@ export default function PreisdatenbankPage() {
                     placeholder="+49 123 456789-11"
                   />
                 </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label htmlFor="company-website" className="text-sm font-medium text-sun/90">Website:</label>
+                <input
+                  id="company-website"
+                  type="url"
+                  value={companyInfo.website}
+                  onChange={(e) => setCompanyInfo((p) => ({ ...p, website: e.target.value }))}
+                  className="sun-input w-full"
+                  placeholder="https://www.firma.de"
+                />
               </div>
               <div className="flex flex-col gap-2">
                 <label htmlFor="company-handler" className="text-sm font-medium text-sun/90">Name Reprezentant / Bearbeiter:</label>

@@ -842,9 +842,11 @@ export default function StepWizard() {
   }, [computing, computeRunId, computeFailed])
 
   // 4d. Fallback: poll offer status (failed or ready without PDF)
+  // La restaurare după refresh nu rulăm check() imediat, ca să nu afișăm PDF-ul unei rulări anterioare dacă offer.status e încă 'ready'.
   useEffect(() => {
     if (!computing || !offerId || pdfUrl || computeFailed) return
     const POLL_MS = 2500
+    const FIRST_CHECK_DELAY_MS = 4000
     let iv: ReturnType<typeof setInterval> | null = null
     const check = async () => {
       try {
@@ -872,9 +874,15 @@ export default function StepWizard() {
         }
       } catch (_) {}
     }
-    check()
-    iv = setInterval(check, POLL_MS)
-    return () => { if (iv) clearInterval(iv) }
+    const startPolling = () => {
+      check()
+      iv = setInterval(check, POLL_MS)
+    }
+    const timeout = window.setTimeout(startPolling, FIRST_CHECK_DELAY_MS)
+    return () => {
+      clearTimeout(timeout)
+      if (iv) clearInterval(iv)
+    }
   }, [computing, offerId, pdfUrl, computeFailed])
 
   // 5. Offer Selected Listener — doar setăm offerId; NU suprascriem selectedPackage (altfel flow Dachstuhl s-ar transforma în Neubau după primul pas)

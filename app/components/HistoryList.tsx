@@ -21,6 +21,9 @@ const DE = {
   },
 } as const
 
+const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
+const STORAGE_KEY_RUNNING = 'holzbot_dashboard_running'
+
 /** Funcție mică de traducere pentru afișare */
 function translateText(text?: string | null): string {
   if (!text) return ''
@@ -155,6 +158,17 @@ export default function HistoryList({ variant='wood' }: { variant?: 'wood' | 'de
               onClick={() => {
                 if (isCreating) return
                 setSelected(it.id)
+                // Dacă utilizatorul revine la oferta care e în curs de rulare, restabilim starea de computing (GIF + progress)
+                try {
+                  const rawRunning = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY_RUNNING) : null
+                  if (rawRunning) {
+                    const running = JSON.parse(rawRunning) as { offerId?: string; runId?: string }
+                    if (running?.offerId === it.id && running?.runId) {
+                      window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: it.id, runId: running.runId } }))
+                      return
+                    }
+                  }
+                } catch (_) {}
                 window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: it.id } }))
               }}
               className={`list-btn ${selected===it.id ? 'list-btn--active' : ''} ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}

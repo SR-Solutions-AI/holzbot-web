@@ -538,14 +538,28 @@ export default function LiveFeed() {
   const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null } | null>(null)
 
   const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
+  const STORAGE_KEY_RUNNING = 'holzbot_dashboard_running'
   const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean) => {
     try {
       if (typeof window === 'undefined') return
       if (!offerId) {
         sessionStorage.removeItem(STORAGE_KEY_OFFER)
+        sessionStorage.removeItem(STORAGE_KEY_RUNNING)
         return
       }
       sessionStorage.setItem(STORAGE_KEY_OFFER, JSON.stringify({ offerId, runId: runId || null, isComputing }))
+      if (isComputing && runId) {
+        sessionStorage.setItem(STORAGE_KEY_RUNNING, JSON.stringify({ offerId, runId }))
+      } else {
+        // Ștergem RUNNING doar dacă oferta pe care o persistăm este cea care rula (s-a terminat acum)
+        const raw = sessionStorage.getItem(STORAGE_KEY_RUNNING)
+        if (raw) {
+          try {
+            const running = JSON.parse(raw) as { offerId?: string }
+            if (running?.offerId === offerId) sessionStorage.removeItem(STORAGE_KEY_RUNNING)
+          } catch (_) {}
+        }
+      }
     } catch (_) {}
   }
 
