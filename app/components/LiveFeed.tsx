@@ -537,6 +537,18 @@ export default function LiveFeed() {
   const queuedStages = useRef<Set<string>>(new Set())
   const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null } | null>(null)
 
+  const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
+  const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean) => {
+    try {
+      if (typeof window === 'undefined') return
+      if (!offerId) {
+        sessionStorage.removeItem(STORAGE_KEY_OFFER)
+        return
+      }
+      sessionStorage.setItem(STORAGE_KEY_OFFER, JSON.stringify({ offerId, runId: runId || null, isComputing }))
+    } catch (_) {}
+  }
+
   // ✅ [FIX CRITIC] Session ID pentru a invalida procesele vechi la reset
   const sessionRef = useRef<number>(0)
   const activeRunIdRef = useRef<string|null>(null)
@@ -598,6 +610,11 @@ export default function LiveFeed() {
     activeRunIdRef.current = runId
   }, [runId])
 
+  // Persistăm starea „nu mai e computing” ca să nu restaurem GIF la refresh după ce run-ul s-a terminat
+  useEffect(() => {
+    if (!computing && offerId) persistOfferState(offerId, null, false)
+  }, [computing, offerId])
+
   useEffect(() => {
     const reset = () => { 
       // ✅ INCREMENTEAZĂ SESIUNEA LA RESET (Oprește orice proces async vechi)
@@ -631,19 +648,24 @@ export default function LiveFeed() {
       reset() 
       
       // 2. Apoi setăm noile valori
-      setOfferId(e.detail.offerId); 
+      const offerId = e.detail.offerId
+      const runId = e.detail.runId
+      setOfferId(offerId); 
       setComputing(true) // Activează progress bar-ul
+      persistOfferState(offerId, runId, true)
       // Folosim setTimeout pentru a ne asigura că React procesează reset-ul înainte de setarea noilor valori
-      // Deși reset() e sincron, separarea ajută la claritate și batching
       setTimeout(() => {
-          setRunId(e.detail.runId);
-          activeRunIdRef.current = e.detail.runId; // Actualizăm și ref-ul manual pentru siguranță
+          setRunId(runId);
+          activeRunIdRef.current = runId; // Actualizăm și ref-ul manual pentru siguranță
           isHistoryMode.current = false;
           allStagesCompleted.current = false;
       }, 0);
     })
 
-    window.addEventListener('offer:new', reset)
+    window.addEventListener('offer:new', () => {
+      persistOfferState(null, null, false)
+      reset()
+    })
     
     return () => {
         window.removeEventListener('offer:new', reset)
@@ -664,6 +686,7 @@ export default function LiveFeed() {
       
       const id = e.detail.offerId as string
       setOfferId(id)
+      persistOfferState(id, null, false)
       isHistoryMode.current = true
       allStagesCompleted.current = false
       

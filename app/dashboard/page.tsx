@@ -44,6 +44,28 @@ export default function Home() {
     return () => { mounted = false }
   }, [ready])
 
+  // Restore step wizard + live feed state after refresh or when returning to dashboard (persisted in sessionStorage)
+  useEffect(() => {
+    if (!ready || isAdmin) return
+    try {
+      const raw = typeof window !== 'undefined' ? sessionStorage.getItem('holzbot_dashboard_offer') : null
+      if (!raw) return
+      const data = JSON.parse(raw) as { offerId?: string; runId?: string | null; isComputing?: boolean }
+      const offerId = data?.offerId
+      if (!offerId) return
+      const runId = data?.runId ?? null
+      const isComputing = data?.isComputing === true
+      const timer = window.setTimeout(() => {
+        if (isComputing && runId) {
+          window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId, runId } }))
+        } else {
+          window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId } }))
+        }
+      }, 150)
+      return () => clearTimeout(timer)
+    } catch (_) {}
+  }, [ready, isAdmin])
+
   if (!ready) return null
 
   return (

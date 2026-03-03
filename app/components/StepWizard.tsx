@@ -749,6 +749,23 @@ export default function StepWizard() {
     return () => window.removeEventListener('offer:new', handleNewProject)
   }, [])
 
+  // 2b. Compute Started Listener — pentru restaurare după refresh (dashboard dispatch)
+  useEffect(() => {
+    const onComputeStarted = (e: any) => {
+      const detail = e?.detail as { offerId?: string; runId?: string }
+      if (!detail?.offerId || !detail?.runId) return
+      setOfferId(detail.offerId)
+      offerIdRef.current = detail.offerId
+      setComputing(true)
+      setComputeRunId(detail.runId)
+      setComputeStartTime(Date.now())
+      setPdfUrl(null)
+      setComputeFailed(false)
+    }
+    window.addEventListener('offer:compute-started', onComputeStarted as EventListener)
+    return () => window.removeEventListener('offer:compute-started', onComputeStarted as EventListener)
+  }, [])
+
   // 3. Clear Validation Error la schimbarea pasului (nu și la form – obiect nou la fiecare setForm → buclă infinită)
   useEffect(() => {
     setValidationError(null)
