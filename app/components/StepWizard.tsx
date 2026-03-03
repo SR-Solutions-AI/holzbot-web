@@ -230,6 +230,7 @@ const DE = {
     uploadingFiles: 'Dateien werden hochgeladen...',
     planInvalidTitle: 'Plan ungültig',
     planInvalidMsg: 'Die KI konnte keine Raumbezeichnungen oder Maßstäbe erkennen. Bitte laden Sie einen lesbaren Grundriss hoch.',
+    planInvalidNoSideView: 'Es wird mindestens eine Ansicht oder ein Schnitt (Seitenansicht) für die Dachklassifizierung benötigt. Bitte laden Sie einen Plan mit Grundriss und mindestens einer Ansicht/Schnitt hoch.',
     computeErrorTitle: 'Ein Problem ist aufgetreten',
     computeErrorMessage: 'Die Berechnung konnte nicht abgeschlossen werden. Bitte starten Sie ein neues Projekt und versuchen Sie es erneut.',
     computeErrorRetry: 'Erneut versuchen',
@@ -553,6 +554,7 @@ export default function StepWizard() {
   const pendingOfferTypeIdRef = useRef<string | null>(null)
   /** Ultima stare a checkbox-urilor Wintergarten/Balkone pe pasul Gebäudestruktur – ca debifarea să nu fie suprascrisă de effect. */
   const structuraWinterBalkoneRef = useRef<{ hasWintergarden?: boolean; hasBalkone?: boolean }>({})
+  const stepsScrollContainerRef = useRef<HTMLDivElement>(null)
   /** Pasul pentru care am rulat ultima încărcare – evită re-rularea effect-ului la fiecare re-render (Maximum update depth). */
   const lastLoadedStepKeyRef = useRef<string | null>(null)
   /** Sursă de adevăr pentru vizibilitatea pasului Wintergärten & Balkone – actualizat la toggle pe Gebäudestruktur. */
@@ -595,6 +597,14 @@ export default function StepWizard() {
       return { key, label, isSkipped: false, isDone, isActive }
     })
   }, [visibleSteps, idx])
+
+  // Scroll pașii orizontal ca pasul curent să fie vizibil (doar pașii „din jur” se văd, restul prin scroll)
+  useEffect(() => {
+    const container = stepsScrollContainerRef.current
+    if (!container) return
+    const activeEl = container.querySelector(`[data-step-index="${idx}"]`) as HTMLElement | null
+    if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }, [idx])
 
   const visibleErrors = showErrors ? errors : {}
 
@@ -1144,26 +1154,43 @@ export default function StepWizard() {
       }
 
       setProcessStatus(DE.common.uploadingFiles || 'Dateien werden hochgeladen...')
-      let architecturalPlanData: { storagePath: string, mime: string } | null = null
+      const uploadedFiles: { storagePath: string; mime: string; key: string }[] = []
 
       for (const item of filesToUpload) {
         const res = await uploadSingleFile(id, item.key, item.file)
-        if (item.key.includes('planArhitectural') || item.key.includes('planArhitectura')) {
-          if (!architecturalPlanData) architecturalPlanData = res
-        }
+        uploadedFiles.push({ storagePath: res.storagePath, mime: res.mime || '', key: item.key })
       }
 
-      if (architecturalPlanData?.storagePath) {
+      const planLikeMimes = /pdf|jpeg|jpg|png|webp/i
+      const toValidate = uploadedFiles.filter((f) => f.storagePath && planLikeMimes.test(f.mime || ''))
+      if (toValidate.length > 0) {
         setProcessStatus((DE.common as any).validatingPlan || 'Plan wird überprüft...')
-        const aiRes = await apiFetch('/validate-plan', {
-          method: 'POST',
-          body: JSON.stringify({ storagePath: architecturalPlanData.storagePath, mimeType: architecturalPlanData.mime })
-        })
-        const aiJson = aiRes?.valid !== undefined ? aiRes : await (aiRes as any)?.json?.().catch(() => ({ valid: true }))
-        if (aiJson?.valid === false) {
-          setValidationError(aiJson.reason || DE.common.planInvalidMsg)
-          setSaving(false)
-          return
+        for (let i = 0; i < toValidate.length; i++) {
+          const file = toValidate[i]
+          setProcessStatus(
+            toValidate.length > 1
+              ? `Plan wird überprüft... (${i + 1}/${toValidate.length})`
+              : ((DE.common as any).validatingPlan || 'Plan wird überprüft...')
+          )
+          const aiRes = await apiFetch('/validate-plan', {
+            method: 'POST',
+            body: JSON.stringify({ storagePath: file.storagePath, mimeType: file.mime }),
+          })
+          const aiJson = aiRes?.valid !== undefined ? aiRes : await (aiRes as any)?.json?.().catch(() => ({ valid: true }))
+          if (aiJson?.valid === false) {
+            const reason = aiJson.reason || DE.common.planInvalidMsg
+            const noSideView =
+              typeof reason === 'string' &&
+              (reason.toLowerCase().includes('side view') ||
+                reason.toLowerCase().includes('ansicht') ||
+                reason.toLowerCase().includes('schnitt') ||
+                reason.toLowerCase().includes('elevation'))
+            setValidationError(
+              toValidate.length > 1 ? `${reason} (Datei ${i + 1}/${toValidate.length})` : noSideView ? (DE.common as any).planInvalidNoSideView || reason : reason
+            )
+            setSaving(false)
+            return
+          }
         }
       }
 
@@ -1300,12 +1327,15 @@ export default function StepWizard() {
     <div className="wizard-wrap" style={{ height: '100%', minHeight: 0, maxHeight: '100%' }}>
       {!computing && !pdfUrl && !showPackagePicker && showForm && (
       <div className="px-2 mt-1 page-enter">
-        <div className="wizard-steps wizard-steps--inline relative pr-[1px] flex items-start justify-center gap-5 text-center hide-scroll">
-          {progressBarSteps.map((step) => {
+        <div
+          ref={stepsScrollContainerRef}
+          className="wizard-steps wizard-steps--inline wizard-steps--spread relative flex items-start justify-start text-center hide-scroll w-full max-w-[96vw] mx-auto px-5"
+        >
+          {progressBarSteps.map((step, i) => {
             const dotClass = step.isSkipped ? 'skipped' : step.isDone ? 'done' : step.isActive ? 'active' : ''
             const stepClass = `wizard-step v-start${step.isSkipped ? ' skipped' : ''}`
             return (
-              <div key={step.key} className={stepClass}>
+              <div key={step.key} data-step-index={i} className={stepClass}>
                 <div className={`wizard-dot ${dotClass}`} />
                 <div className="wizard-label">{step.label}</div>
               </div>
@@ -1328,9 +1358,9 @@ export default function StepWizard() {
         style={{ gridRow: 2, minHeight: 0 }}
       >
         {computeFailed && !pdfUrl ? (
-          <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6 px-4" style={{ minHeight: '68vh' }}>
-            <div className="wizard-card wizard-sunny max-w-lg w-full p-6 flex flex-col items-center gap-5 animate-fade-in">
-              <div className="p-4 bg-orange-900/30 border border-orange-500/50 rounded-xl flex items-start gap-3 w-full">
+          <div className="relative w-full flex flex-col items-center justify-center mt-24 gap-4 px-4" style={{ minHeight: '68vh' }}>
+            <div className="wizard-card wizard-sunny max-w-lg w-full flex flex-col items-center gap-4 animate-fade-in">
+              <div className="p-3 bg-orange-900/30 border border-orange-500/50 rounded-xl flex items-start gap-2 w-full">
                 <AlertTriangle className="shrink-0 text-orange-400 h-6 w-6 mt-0.5" />
                 <div>
                   <div className="font-bold text-orange-200 text-lg">{DE.common.computeErrorTitle}</div>
@@ -1346,7 +1376,7 @@ export default function StepWizard() {
             </div>
           </div>
         ) : computing && !pdfUrl ? (
-          <div className="relative w-full flex flex-col items-center justify-center mt-32 gap-6 page-enter" style={{ minHeight: '68vh' }}>
+          <div className="relative w-full flex flex-col items-center justify-center mt-24 gap-4 page-enter" style={{ minHeight: '68vh' }}>
             <img 
               src="/houseblueprint.gif" 
               alt={DE.common.processingAlt} 
@@ -1367,7 +1397,7 @@ export default function StepWizard() {
         ) : showPackagePicker ? (
           <div className="w-full flex justify-center px-2 page-enter">
           <div className="w-full max-w-5xl mx-auto pt-6 px-1" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 justify-items-center items-stretch">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 justify-items-center items-stretch">
                 {/* 1) Mengenermittlung */}
                 <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                   <div className="flex items-center justify-center mb-3">
@@ -1431,7 +1461,7 @@ export default function StepWizard() {
                 {tStepLabel(step.key, step.label)}
               </div>
             </div>
-            <div className="wizard-body relative">
+            <div className="wizard-body preisdatenbank-scroll relative">
                {saving && (
                   <div className="absolute inset-0 z-50 bg-black/20 backdrop-blur-[1px] flex flex-col items-center justify-center rounded-xl">
                       <Loader2 className="animate-spin text-sun h-10 w-10 mb-2"/>
@@ -1440,7 +1470,7 @@ export default function StepWizard() {
               )}
 
               {validationError && (
-                <div className="mb-4 p-4 bg-orange-900/30 border border-orange-500/50 rounded-lg flex items-start gap-3 animate-fade-in">
+                <div className="mb-3 p-3 bg-orange-900/30 border border-orange-500/50 rounded-lg flex items-start gap-2 animate-fade-in">
                   <AlertTriangle className="shrink-0 text-orange-400 h-5 w-5 mt-0.5" />
                   <div>
                     <div className="font-semibold text-orange-200">{DE.common.planInvalidTitle}</div>
@@ -2243,17 +2273,23 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
   const [originalSizes, setOriginalSizes] = useState<Record<string, { width: number; height: number }>>({})
   const [scaleFactor, setScaleFactor] = useState(1)
   const [heights, setHeights] = useState<Record<string, number>>({})
+  const [viewportWidth, setViewportWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1024)
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
   const updateOriginalSize = useCallback((key: string, w: number, h: number) => {
     setOriginalSizes(prev => (prev[key]?.width === w && prev[key]?.height === h ? prev : { ...prev, [key]: { width: w, height: h } }))
   }, [])
 
   useEffect(() => {
-    const targetWidth = 300
+    const targetWidth = viewportWidth < 480 ? 140 : viewportWidth < 640 ? 180 : viewportWidth < 1024 ? 220 : 300
     const sizes = Object.values(originalSizes)
     if (sizes.length === 0) return
     const maxW = Math.max(...sizes.map(s => s.width))
     if (maxW > 0) setScaleFactor(targetWidth / maxW)
-  }, [originalSizes])
+  }, [originalSizes, viewportWidth])
   // Înălțimi implicite pentru straturi (beci, base, pilons) până când imaginile se încarcă – astfel pozițiile sunt corecte de la început
   const DEFAULT_LAYER_HEIGHT = 80
   const DEFAULT_BASEMENT_HEIGHT = 100
@@ -2303,8 +2339,9 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
   // Înălțimea frame-ului NU depinde de piloni / beci / fundație – doar de parter + etaje + acoperiș
   const paddingTopValue = topMargin
   const frameHeight = Math.max(topElementTop - groundBottom + topMargin, 320)
-  const getScaledWidth = (key: string) => (originalSizes[key] ? originalSizes[key].width * scaleFactor : 300)
-  const containerWidth = Math.max(...Object.keys(originalSizes).length ? Object.keys(originalSizes).map(getScaledWidth) : [300], 300)
+  const effectiveTargetWidth = viewportWidth < 480 ? 140 : viewportWidth < 640 ? 180 : viewportWidth < 1024 ? 220 : 300
+  const getScaledWidth = (key: string) => (originalSizes[key] ? originalSizes[key].width * scaleFactor : effectiveTargetWidth)
+  const containerWidth = Math.max(...Object.keys(originalSizes).length ? Object.keys(originalSizes).map(getScaledWidth) : [effectiveTargetWidth], effectiveTargetWidth)
   const contentWidth = containerWidth + 40 + 420 + 40 + 40
 
   const placeAddFloorDropdown = useCallback(() => {

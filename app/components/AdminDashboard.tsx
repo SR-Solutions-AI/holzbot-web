@@ -433,6 +433,7 @@ export default function AdminDashboard() {
                             alt="Plan" 
                             className="w-full h-full object-contain bg-white/5" 
                             loading="lazy"
+                            decoding="async"
                             onError={(e) => {
                               const target = e.currentTarget
                               target.style.display = 'none'
@@ -749,6 +750,11 @@ export default function AdminDashboard() {
                           description: 'Visualizări 3D și overlay-uri',
                           order: 102,
                         },
+                        roof: {
+                          title: 'Acoperiș',
+                          description: 'Vizualizare 3D a acoperișului casei',
+                          order: 103,
+                        },
                       };
 
                       const config = kindLabels[kind] || {
@@ -805,6 +811,7 @@ export default function AdminDashboard() {
                               alt={img.filename}
                               className="w-full h-auto object-contain bg-white/5 group-hover:opacity-90 transition"
                               loading="lazy"
+                              decoding="async"
                             />
                             {img.plan_id ? (
                               <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded text-[9px] bg-black/60 text-white/80">

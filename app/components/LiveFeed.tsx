@@ -491,8 +491,10 @@ function MessageRow({ role, text, instant = false }: { role: string, text: strin
 function SmartImage({ file, instant = false }: { file: FeedFile, instant?: boolean }) {
   const [isPortrait, setIsPortrait] = useState(false)
   return (
-    <img 
+    <img
       src={file.url}
+      loading="lazy"
+      decoding="async"
       onLoad={(e) => {
         const img = e.currentTarget
         setIsPortrait(img.naturalHeight > img.naturalWidth)
@@ -500,7 +502,7 @@ function SmartImage({ file, instant = false }: { file: FeedFile, instant?: boole
       className={`rounded-lg border border-white/10 shadow-lg hover:shadow-xl transition-shadow ${
         isPortrait ? 'w-[60%] ml-0' : 'w-full'
       } ${instant ? '' : 'animate-fade-in'}`}
-      alt="result" 
+      alt="result"
     />
   )
 }
@@ -523,6 +525,8 @@ export default function LiveFeed() {
   const processing = useRef(false)
   const sinceRef = useRef<number|undefined>(undefined)
   const currentStageRef = useRef<string|null>(null)
+  /** Progres de la server (UI:PROGRESS) – are prioritate față de calculateProgress când e setat */
+  const serverProgressRef = useRef<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const titleIndexRef = useRef<Record<string, number>>({})
   
@@ -541,30 +545,39 @@ export default function LiveFeed() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) 
   }, [rows])
 
-  // Actualizează progresul periodic când se procesează etape
+  // Actualizează progresul periodic: preferă serverProgressRef (din UI:PROGRESS), altfel calculateProgress din etape
   useEffect(() => {
     if (!computing && !runId) {
       setProgress(0)
       setCurrentStageName(null)
+      serverProgressRef.current = null
       return
     }
-    
+
     const interval = setInterval(() => {
       if (!computing && !runId) {
         setProgress(0)
         setCurrentStageName(null)
+        serverProgressRef.current = null
         return
       }
-      
+
+      const serverP = serverProgressRef.current
+      if (serverP != null) {
+        setProgress(serverP)
+        if (!currentStageName) setCurrentStageName('Verarbeitung...')
+        return
+      }
+
       const { progress: newProgress, currentStageName: newStageName } = calculateProgress(
         processedStages.current,
         currentStageRef.current
       )
-      
+
       setProgress(newProgress)
       setCurrentStageName(newStageName)
-    }, 500) // Actualizează la fiecare 500ms
-    
+    }, 500) // la fiecare 500ms
+
     return () => clearInterval(interval)
   }, [computing, runId])
 
@@ -604,7 +617,8 @@ export default function LiveFeed() {
       allStagesCompleted.current = false;
       queuedStages.current.clear();
       pendingCompletionRef.current = null;
-      
+      serverProgressRef.current = null;
+
       setRunId(null)
       activeRunIdRef.current = null
       setComputing(false)
@@ -664,7 +678,8 @@ export default function LiveFeed() {
           stageQueue.current = []
           processing.current = false
           currentStageRef.current = null
-          
+          serverProgressRef.current = null
+
           setRunId(historyData.run_id)
           activeRunIdRef.current = historyData.run_id
           
@@ -712,6 +727,7 @@ export default function LiveFeed() {
           stageQueue.current = []
           processing.current = false
           currentStageRef.current = null
+          serverProgressRef.current = null
           allStagesCompleted.current = true
           
           try {
@@ -743,6 +759,7 @@ export default function LiveFeed() {
         stageQueue.current = []
         processing.current = false
         currentStageRef.current = null
+        serverProgressRef.current = null
         setPdfUrl(null)
         setComputing(false)
         allStagesCompleted.current = true
@@ -780,6 +797,15 @@ export default function LiveFeed() {
             const match = ev.message.match(/^\s*\[([^\]]+)\]/)
             if(!match) continue
             const stage = match[1].trim()
+
+            // ✅ Progres de la server (UI:PROGRESS) – actualizează bara direct
+            if (stage === 'progress' && ev.payload?.progress != null) {
+              const p = Math.min(100, Math.max(0, Number(ev.payload.progress)))
+              serverProgressRef.current = p
+              setProgress(p)
+              setCurrentStageName('Verarbeitung...')
+              continue
+            }
             
             if(ev.payload?.files?.length) {
               const newImages = ev.payload.files.filter(isDisplayable)
