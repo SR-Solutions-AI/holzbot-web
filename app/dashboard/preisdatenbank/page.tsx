@@ -63,18 +63,18 @@ function labelWithoutUnit(label: string): string {
  */
 const CARD_SUBTITLES: Record<string, string> = {
   'Systemtyp': 'Blockbau, Holzrahmen, Massivholz – €/m² Innen und Außen',
-  'Baustellenzufahrt': 'Leicht, Mittel, Schwierig – Faktoren für die Angebotsberechnung',
-  'Gelände': 'Eben, Leichte oder Starke Hanglage – Faktoren',
+  'Baustellenzufahrt': 'Leicht, Mittel, Schwierig',
+  'Gelände': 'Eben, Leichte oder Starke Hanglage',
   'Strom-/Wasseranschluss': 'Pauschalpreis für Anschlusskosten',
   'Untergeschoss / Fundament': 'Bodenplatte, Keller Nutzkeller oder Ausbau – €/m²',
   'Pfahlgründung': 'Preis €/m² bei Pfahlgründung',
-  'Fläche & Treppe': 'Boden, Decke, Treppe, Geländer – €/m² bzw. €/Stufe',
-  'Geschosshöhe': 'Höhe (m) je nach Option – wird in der Berechnung verwendet (kein Preiszuschlag)',
+  'Fläche & Treppe': 'Treppe, Geländer – €/m² bzw. €/Stufe',
+  'Treppe': 'Treppe, Geländer – €/m² bzw. €/Stufe',
+  'Geschosshöhe': 'Höhe (m) je nach Option',
   'Dämmung': 'Keine, Zwischensparren, Aufsparren, Kombination – €/m²',
   'Unterdach': 'Folie oder Schalung + Folie – €/m²',
   'Dachstuhl-Typ': 'Sparrendach, Pfettendach, Kehlbalkendach, Sonderkonstruktion – €/m²',
   'Sichtdachstuhl': 'Aufschlag €/m² bei Sichtdachstuhl',
-  'Dachneigung': 'Zuschlag €/m² pro Grad über Referenzneigung',
   'Dachdeckung': 'Ziegel, Betonstein, Blech, Schindel, Sonstiges – €/m² bzw. €/m',
   'Bodentiefe Fenster / Glasflächen': 'Nein, Einzelne oder Mehrere – Aufschlag €/m²',
   'Fensterart': '3-fach verglast oder Passiv – €/m² Glasfläche',
@@ -94,8 +94,8 @@ function cardSubtitle(cardTitle: string, _rawSubtitle?: string | null): string {
 
 /** Subtitlu alb pentru fiecare pas de formular (stepKey). */
 const STEP_SUBTITLES: Record<string, string> = {
-  sistemConstructiv: 'Systemtyp, Baustellenzufahrt, Gelände und Anschlüsse',
-  structuraCladirii: 'Fundament, Geschosshöhe (Höhen in m), Flächen und Treppen',
+  sistemConstructiv: 'Baustellenzufahrt, Gelände und Anschlüsse',
+  structuraCladirii: 'Fundament, Geschosshöhe, Flächen und Treppen',
   daemmungDachdeckung: 'Dämmung, Unterdach, Dachstuhl und Dachdeckung',
   ferestreUsi: 'Fenster, Türen und Glasflächen',
   materialeFinisaj: 'Innenausbau und Fassade',
@@ -686,7 +686,7 @@ export default function PreisdatenbankPage() {
           <header className="text-center">
             <h2 className="text-xl md:text-2xl font-bold text-[#FF9F0F]">Allgemeine Informationen</h2>
             <p className="text-white text-sm md:text-base mt-1">
-              Diese Angaben erscheinen im PDF-Angebot und Ihr Logo in der Navbar.
+              Diese Angaben erscheinen im PDF-Angebot.
             </p>
           </header>
           <div className="max-w-2xl mx-auto w-full">
@@ -791,7 +791,7 @@ export default function PreisdatenbankPage() {
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <label htmlFor="company-handler" className="text-sm font-medium text-sun/90">Name Reprezentant / Bearbeiter:</label>
+                <label htmlFor="company-handler" className="text-sm font-medium text-sun/90">Name Bearbeiter:</label>
                 <input
                   id="company-handler"
                   type="text"

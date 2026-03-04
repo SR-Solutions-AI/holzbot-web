@@ -89,8 +89,8 @@
           ]
         },
         {
-          "title": "Fläche & Treppe",
-          "subtitle": "Boden, Decke, Treppe",
+          "title": "Treppe",
+          "subtitle": "Treppe, Geländer",
           "variables": [
             { "key": "floor_coeff_per_m2", "label": "Boden (€/m²)", "unit": "€/m²", "value": 45 },
             { "key": "ceiling_coeff_per_m2", "label": "Decke (€/m²)", "unit": "€/m²", "value": 55 },
@@ -100,12 +100,12 @@
         },
         {
           "title": "Geschosshöhe",
-          "subtitle": "Höhe (m) je nach Option – wird in der Berechnung verwendet (kein Preiszuschlag)",
+          "subtitle": "Höhe (m) je nach Option",
           "fieldTag": "floor_height",
           "variables": [
-            { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m) – Höhe (m)", "unit": "m", "value": 2.5 },
-            { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m) – Höhe (m)", "unit": "m", "value": 2.7 },
-            { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m) – Höhe (m)", "unit": "m", "value": 2.85 }
+            { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m)", "unit": "m", "value": 2.5 },
+            { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m)", "unit": "m", "value": 2.7 },
+            { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m)", "unit": "m", "value": 2.85 }
           ]
         }
       ]
@@ -183,13 +183,6 @@
           "subtitle": "Feld „Sichtdachstuhl“",
           "variables": [
             { "key": "sichtdachstuhl_zuschlag_price", "label": "Sichtdachstuhl Aufschlag (€/m²)", "unit": "€/m²", "value": 25 }
-          ]
-        },
-        {
-          "title": "Dachneigung",
-          "subtitle": "Feld „Dachneigung (Grad)“ – optionaler Zuschlag",
-          "variables": [
-            { "key": "panta_acoperis_zuschlag_per_grad", "label": "Zuschlag pro Grad über Referenz (€/m²)", "unit": "€/m²", "value": 0.5 }
           ]
         },
         {
@@ -469,8 +462,8 @@
             ]
           },
           {
-            "title": "Fläche & Treppe",
-            "subtitle": "Boden, Decke, Treppe",
+            "title": "Treppe",
+            "subtitle": "Treppe, Geländer",
             "fieldTag": "flache_treppe",
             "variables": [
               { "key": "floor_coeff_per_m2", "label": "Boden (€/m²)", "unit": "€/m²", "value": 45 },
@@ -481,12 +474,12 @@
           },
           {
             "title": "Geschosshöhe",
-            "subtitle": "Höhe (m) je nach Option – wird in der Berechnung verwendet (kein Preiszuschlag)",
+            "subtitle": "Höhe (m) je nach Option",
             "fieldTag": "floor_height",
             "variables": [
-              { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m) – Höhe (m)", "unit": "m", "value": 2.5 },
-              { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m) – Höhe (m)", "unit": "m", "value": 2.7 },
-              { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m) – Höhe (m)", "unit": "m", "value": 2.85 }
+              { "key": "inaltime_etaje_standard_m", "label": "Standard (2,50 m)", "unit": "m", "value": 2.5 },
+              { "key": "inaltime_etaje_komfort_m", "label": "Komfort (2,70 m)", "unit": "m", "value": 2.7 },
+              { "key": "inaltime_etaje_hoch_m", "label": "Hoch (2,85+ m)", "unit": "m", "value": 2.85 }
             ]
           }
         ]
@@ -557,14 +550,6 @@
             "fieldTag": "sichtdachstuhl",
             "variables": [
               { "key": "sichtdachstuhl_zuschlag_price", "label": "Sichtdachstuhl Aufschlag (€/m²)", "unit": "€/m²", "value": 25 }
-            ]
-          },
-          {
-            "title": "Dachneigung",
-            "subtitle": "Feld „Dachneigung (Grad)“ – optionaler Zuschlag",
-            "fieldTag": "dachneigung",
-            "variables": [
-              { "key": "panta_acoperis_zuschlag_per_grad", "label": "Zuschlag pro Grad über Referenz (€/m²)", "unit": "€/m²", "value": 0.5 }
             ]
           },
           {
