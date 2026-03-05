@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import { apiFetch } from '../lib/supabaseClient'
-import { buildFormStepsFromJson } from '../../lib/buildFormFromJson'
+import { buildFormStepsFromJson, buildPriceSectionsFromFormStepsJson } from '../../lib/buildFormFromJson'
 import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
 import { type Field, formStepsDachstuhl } from '../dashboard/formConfig'
 import { CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, Loader2, AlertTriangle, X } from 'lucide-react'
@@ -424,7 +424,7 @@ function SelectSun({
             const label = displayFor ? displayFor(val) : (typeof opt === 'object' && opt !== null && 'label' in opt ? String((opt as any).label ?? val) : val)
             return (
               <button
-                key={val ? `${val}` : `opt-${i}`}
+                key={val != null && val !== '' ? `opt-${String(val)}-${i}` : `opt-${i}`}
                 type="button"
                 className={`sun-menu-item ${active ? 'is-active' : ''}`}
                 onClick={() => { onChange(val); setOpen(false) }}
@@ -542,8 +542,8 @@ export default function StepWizard() {
 
   const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'neubau' | null>(null)
 
-  /** Opțiuni custom per tag (din Preisdatenbank) – se îmbină cu opțiunile din schema la select-uri. */
-  const [customOptionsForm, setCustomOptionsForm] = useState<Record<string, Array<{ label: string; value: string }>>>({})
+  /** Opțiuni custom per tag (din Preisdatenbank) – cu price_key pentru mapare etichete. */
+  const [customOptionsForm, setCustomOptionsForm] = useState<Record<string, Array<{ label: string; value: string; price_key: string }>>>({})
   /** Override-uri de etichete pentru variabile (Preisdatenbank) – folosite la afișarea opțiunilor în formular. */
   const [paramLabelOverrides, setParamLabelOverrides] = useState<Record<string, string>>({})
   /** Chei ascunse în Preisdatenbank – nu le afișăm în formular (select-uri / opțiuni). */
@@ -563,14 +563,30 @@ export default function StepWizard() {
   useEffect(() => { offerIdRef.current = offerId }, [offerId])
 
   // Ascundem pasul Wintergärten & Balkone dacă nici Wintergarten nici Balkone nu sunt bifate (folosim winterBalkoneFlags ca sursă de adevăr)
+  // Ascundem pașii Finisaje și Performanță energetică când utilizatorul a ales doar structură sau structură + ferestre
   const visibleSteps = useMemo(() => {
     const hasWG = winterBalkoneFlags.hasWintergarden === true
     const hasB = winterBalkoneFlags.hasBalkone === true
+    let steps = dynamicSteps
     if (!hasWG && !hasB) {
-      return dynamicSteps.filter((s: { key?: string }) => (s as any).key !== 'wintergaertenBalkone')
+      steps = steps.filter((s: { key?: string }) => (s as any).key !== 'wintergaertenBalkone')
     }
-    return dynamicSteps
-  }, [dynamicSteps, winterBalkoneFlags.hasWintergarden, winterBalkoneFlags.hasBalkone])
+    const nivelRaw = (form.nivelOferta || form.sistemConstructiv?.nivelOferta || '').toString().trim().toLowerCase()
+    const isOnlyStructure = (nivelRaw.includes('rohbau') || nivelRaw.includes('tragwerk') || nivelRaw.includes('structură') || nivelRaw.includes('structura')) &&
+      !nivelRaw.includes('fenster') && !nivelRaw.includes('ferestre') && !nivelRaw.includes('completă') && !nivelRaw.includes('completa') && !nivelRaw.includes('schlüsselfertig')
+    const isStructurePlusWindows = (nivelRaw.includes('tragwerk') || nivelRaw.includes('structură') || nivelRaw.includes('structura')) &&
+      (nivelRaw.includes('fenster') || nivelRaw.includes('ferestre'))
+    if (isOnlyStructure || isStructurePlusWindows) {
+      steps = steps.filter((s: { key?: string }) => {
+        const key = (s as any).key
+        return key !== 'materialeFinisaj' && key !== 'performantaEnergetica'
+      })
+      if (isOnlyStructure) {
+        steps = steps.filter((s: { key?: string }) => (s as any).key !== 'ferestreUsi')
+      }
+    }
+    return steps
+  }, [dynamicSteps, winterBalkoneFlags.hasWintergarden, winterBalkoneFlags.hasBalkone, form.nivelOferta, form.sistemConstructiv])
 
   // -- UseMemo hooks (safe to run even if visibleSteps is empty)
   const step = visibleSteps[idx]
@@ -614,40 +630,91 @@ export default function StepWizard() {
     []
   )
 
-  // Mapare option value (din formular) -> price_key pentru override etichete (variabile prestabilite din Preisdatenbank)
-  const optionValueToPriceKey = useMemo(() => {
-    const out: Record<string, Record<string, string>> = {}
-    const schema = holzbauFormStepsJson as {
-      steps?: Array<{
-        fields?: Array<{ tag?: string; options?: string[] }>
-        priceSections?: Array<{ fieldTag?: string; variables?: Array<{ key: string; label: string }> }>
-      }>
+  // Aceeași sursă ca Preisdatenbank: secțiunile din holzbau-form-steps.json (preisdatenbank.sections)
+  const baseSectionsPreisdatenbank = useMemo(() => {
+    try {
+      const out = buildPriceSectionsFromFormStepsJson(holzbauFormStepsJson as unknown)
+      return Array.isArray(out) ? out : []
+    } catch {
+      return []
     }
-    const steps = Array.isArray(schema?.steps) ? schema.steps : []
-    for (const step of steps) {
-      const priceSections = step.priceSections ?? []
-      const fields = step.fields ?? []
-      for (const ps of priceSections) {
-        const tag = ps.fieldTag
-        if (!tag) continue
-        const field = fields.find((f: any) => f.tag === tag)
-        const options = (field as any)?.options ?? []
-        if (!out[tag]) out[tag] = {}
-        const vars = ps.variables || []
-        for (const opt of options) {
-          if (!opt || out[tag][opt]) continue
-          const v = vars.find((v: any) => (v.label || '').startsWith(opt))
-          if (v) out[tag][opt] = v.key
-        }
-        // fallback: first word of variable label (pentru câmpuri fără options sau compatibilitate)
-        for (const v of vars) {
-          const firstWord = (v.label || '').trim().split(/\s+/)[0]
-          if (firstWord && !out[tag][firstWord]) out[tag][firstWord] = v.key
+  }, [])
+
+  // Elimină sufixul de unitate din label (ex: " (€/m²)", " (Faktor)") pentru a obține stringul folosit ca opțiune în formular
+  const stripLabelForOption = useCallback((label: string) => {
+    if (!label || typeof label !== 'string') return ''
+    return label
+      .replace(/\s*\(\s*€\/m²\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*€\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*Faktor\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*€\/m\s*\)\s*$/i, '')
+      .trim() || label
+  }, [])
+
+  // Opțiuni per tag = exact ce e în Preisdatenbank: variabile din secțiuni (neascunse) + opțiuni custom, în aceeași ordine
+  const preisdatenbankOptionsByTag = useMemo(() => {
+    const out: Record<string, string[]> = {}
+    try {
+      const sections = Array.isArray(baseSectionsPreisdatenbank) ? baseSectionsPreisdatenbank : []
+      for (const sec of sections) {
+        const subs = Array.isArray(sec?.subsections) ? sec.subsections : []
+        for (const sub of subs) {
+          const tag = sub?.fieldTag
+          if (!tag) continue
+          const options: string[] = []
+          const vars = Array.isArray(sub?.variables) ? sub.variables : []
+          for (const v of vars) {
+            if (hiddenKeysForm?.has?.(v?.id)) continue
+            const optStr = stripLabelForOption(v?.label ?? '')
+            if (optStr && !options.includes(optStr)) options.push(optStr)
+          }
+          const custom = Array.isArray(customOptionsForm?.[tag]) ? customOptionsForm[tag] : []
+          for (const o of custom) {
+            const l = (o?.label || o?.value || '').trim()
+            if (l && !options.includes(l)) options.push(l)
+          }
+          out[tag] = options
         }
       }
+    } catch (_) {
+      // fallback: obiect gol ca formularul să se încarce
     }
     return out
-  }, [])
+  }, [baseSectionsPreisdatenbank, hiddenKeysForm, customOptionsForm, stripLabelForOption])
+
+  // Mapare option string -> price_key (pentru override etichete): din secțiuni Preisdatenbank + custom options
+  const optionValueToPriceKey = useMemo(() => {
+    const out: Record<string, Record<string, string>> = {}
+    try {
+      const sections = Array.isArray(baseSectionsPreisdatenbank) ? baseSectionsPreisdatenbank : []
+      for (const sec of sections) {
+        const subs = Array.isArray(sec?.subsections) ? sec.subsections : []
+        for (const sub of subs) {
+          const tag = sub?.fieldTag
+          if (!tag) continue
+          if (!out[tag]) out[tag] = {}
+          const vars = Array.isArray(sub?.variables) ? sub.variables : []
+          for (const v of vars) {
+            const optStr = stripLabelForOption(v?.label ?? '')
+            if (optStr && v?.id) out[tag][optStr] = v.id
+          }
+        }
+      }
+      if (customOptionsForm && typeof customOptionsForm === 'object') {
+        for (const [tag, arr] of Object.entries(customOptionsForm)) {
+          if (!Array.isArray(arr)) continue
+          if (!out[tag]) out[tag] = {}
+          for (const o of arr) {
+            const l = (o?.label || o?.value || '').trim()
+            if (l && o?.price_key) out[tag][l] = o.price_key
+          }
+        }
+      }
+    } catch (_) {
+      // fallback
+    }
+    return out
+  }, [baseSectionsPreisdatenbank, customOptionsForm, stripLabelForOption])
 
   useEffect(() => {
     setDynamicSteps(formStepsFromJson as any[])
@@ -666,8 +733,7 @@ export default function StepWizard() {
   }, [selectedPackage, formStepsFromJson])
 
   const fetchPricingParameters = useCallback(() => {
-    if (selectedPackage !== 'neubau' && selectedPackage !== 'mengen') return
-    // Cache bust ca formularul să primească etichete actualizate după salvare în Preisdatenbank
+    // Întotdeauna reîmprospătăm datele din Preisdatenbank (indiferent de pachet), ca formularul să reflecte starea actuală
     const url = '/pricing-parameters?t=' + Date.now()
     apiFetch(url)
       .then((res: any) => {
@@ -676,12 +742,16 @@ export default function StepWizard() {
         setHiddenKeysForm(hiddenSet)
         const co = res?.customOptions
         if (co && typeof co === 'object') {
-          const filtered: Record<string, Array<{ label: string; value: string }>> = {}
+          const filtered: Record<string, Array<{ label: string; value: string; price_key: string }>> = {}
           for (const [tag, arr] of Object.entries(co)) {
             const list = Array.isArray(arr) ? arr : []
             filtered[tag] = list
               .filter((o: { label?: string; value?: string; price_key?: string }) => !hiddenSet.has(String(o?.price_key ?? '')))
-              .map((o: { label?: string; value?: string }) => ({ label: String(o?.label ?? ''), value: String(o?.value ?? '') }))
+              .map((o: { label?: string; value?: string; price_key?: string }) => ({
+                label: String(o?.label ?? ''),
+                value: String(o?.value ?? ''),
+                price_key: String(o?.price_key ?? ''),
+              }))
           }
           setCustomOptionsForm(filtered)
         }
@@ -689,13 +759,12 @@ export default function StepWizard() {
         if (overrides && typeof overrides === 'object') setParamLabelOverrides(overrides)
       })
       .catch(() => {})
-  }, [selectedPackage])
+  }, [])
 
   useEffect(() => { fetchPricingParameters() }, [fetchPricingParameters])
 
-  // Re-fetch la revenirea pe tab/fereastră sau după salvare în Preisdatenbank
+  // Re-fetch la revenirea pe tab/fereastră sau după salvare în Preisdatenbank (mereu, ca datele să fie actualizate)
   useEffect(() => {
-    if (selectedPackage !== 'neubau' && selectedPackage !== 'mengen') return
     const refetch = () => { fetchPricingParameters() }
     const onVisibility = () => { if (document.visibilityState === 'visible') refetch() }
     const onPricingSaved = () => { refetch() }
@@ -707,7 +776,7 @@ export default function StepWizard() {
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('pricing-parameters:saved', onPricingSaved)
     }
-  }, [selectedPackage, fetchPricingParameters])
+  }, [fetchPricingParameters])
 
   // 2. New Project Listener
   useEffect(() => {
@@ -1517,6 +1586,7 @@ export default function StepWizard() {
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
                     hiddenKeysForm={hiddenKeysForm}
+                    preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                   />
                 </div>
               ) : step.key === 'structuraCladirii' ? (
@@ -1553,6 +1623,9 @@ export default function StepWizard() {
                   onBlur={() => scheduleAutosave('structuraCladirii', form)}
                   hiddenKeysForm={hiddenKeysForm}
                   optionValueToPriceKey={optionValueToPriceKey}
+                  customOptionsForm={customOptionsForm}
+                  paramLabelOverrides={paramLabelOverrides}
+                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                 />
               ) : step.key === 'wandaufbau' ? (
                 <WandaufbauStep
@@ -1561,7 +1634,11 @@ export default function StepWizard() {
                   errors={visibleErrors}
                   drafts={drafts}
                   optionValueToPriceKey={optionValueToPriceKey}
+                  customOptionsForm={customOptionsForm}
+                  paramLabelOverrides={paramLabelOverrides}
+                  hiddenKeysForm={hiddenKeysForm}
                   tOption={tOption}
+                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                 />
               ) : step.key === 'wintergaertenBalkone' ? (
                 <WintergaertenBalkoneStep
@@ -1573,6 +1650,7 @@ export default function StepWizard() {
                   hiddenKeysForm={hiddenKeysForm}
                   paramLabelOverrides={paramLabelOverrides}
                   tOption={tOption}
+                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                 />
               ) : step.key === 'materialeFinisaj' ? (
                 <MaterialeFinisajStep
@@ -1580,6 +1658,12 @@ export default function StepWizard() {
                   setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
                   errors={visibleErrors}
                   drafts={drafts}
+                  customOptionsForm={customOptionsForm}
+                  paramLabelOverrides={paramLabelOverrides}
+                  optionValueToPriceKey={optionValueToPriceKey}
+                  hiddenKeysForm={hiddenKeysForm}
+                  tOption={tOption}
+                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                 />
               ) : step.key === 'bodenDeckeBelag' ? (
                 <BodenDeckeBelagStep
@@ -1588,6 +1672,11 @@ export default function StepWizard() {
                   errors={visibleErrors}
                   drafts={drafts}
                   tOption={tOption}
+                  customOptionsForm={customOptionsForm}
+                  paramLabelOverrides={paramLabelOverrides}
+                  optionValueToPriceKey={optionValueToPriceKey}
+                  hiddenKeysForm={hiddenKeysForm}
+                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                 />
               ) : step.key === 'projektdaten' ? (
                 <ProjektdatenStepContent
@@ -1611,6 +1700,7 @@ export default function StepWizard() {
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
                     hiddenKeysForm={hiddenKeysForm}
+                    preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                   />
                 </div>
               ) : (
@@ -1626,8 +1716,9 @@ export default function StepWizard() {
                     paramLabelOverrides={paramLabelOverrides}
                     optionValueToPriceKey={optionValueToPriceKey}
                     hiddenKeysForm={hiddenKeysForm}
-                    errors={{}} 
+                    errors={{}}
                     onEnter={onContinue}
+                    preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
                   />
                 </div>
               )}
@@ -1849,14 +1940,22 @@ function WandaufbauStep({
   errors,
   drafts,
   optionValueToPriceKey = {},
+  customOptionsForm = {},
+  paramLabelOverrides = {},
+  hiddenKeysForm = new Set<string>(),
   tOption,
+  preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any>) => void
   errors: Errors
   drafts: Drafts
   optionValueToPriceKey?: Record<string, Record<string, string>>
+  customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>
+  paramLabelOverrides?: Record<string, string>
+  hiddenKeysForm?: Set<string>
   tOption: (stepKey: string, fieldName: string, opt: string) => string
+  preisdatenbankOptionsByTag?: Record<string, string[]>
 }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -1865,6 +1964,11 @@ function WandaufbauStep({
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const totalFloors = 1 + etajeIntermediare
+
+  const außenOptions = preisdatenbankOptionsByTag['wandaufbau_aussen'] ?? []
+  const innenOptions = preisdatenbankOptionsByTag['wandaufbau_innen'] ?? []
+  const displayAußen = (opt: string) => paramLabelOverrides[optionValueToPriceKey['wandaufbau_aussen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'außenwandeBeci', opt)
+  const displayInnen = (opt: string) => paramLabelOverrides[optionValueToPriceKey['wandaufbau_innen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'innenwandeBeci', opt)
 
   return (
     <div className="space-y-4">
@@ -1875,8 +1979,8 @@ function WandaufbauStep({
             <SelectSun
               value={form.außenwandeBeci || ''}
               onChange={(v) => setForm({ ...form, außenwandeBeci: v })}
-              options={[...WANDAUFBAU_OPTIONS]}
-              displayFor={(opt) => tOption('wandaufbau', 'außenwandeBeci', opt)}
+              options={außenOptions}
+              displayFor={displayAußen}
             />
           </label>
           <label className="flex flex-col gap-1 flex-1" data-field="innenwandeBeci">
@@ -1884,8 +1988,8 @@ function WandaufbauStep({
             <SelectSun
               value={form.innenwandeBeci || ''}
               onChange={(v) => setForm({ ...form, innenwandeBeci: v })}
-              options={[...WANDAUFBAU_OPTIONS]}
-              displayFor={(opt) => tOption('wandaufbau', 'innenwandeBeci', opt)}
+              options={innenOptions}
+              displayFor={displayInnen}
             />
           </label>
         </div>
@@ -1900,8 +2004,8 @@ function WandaufbauStep({
               <SelectSun
                 value={form[`außenwande_${floorKey}`] || ''}
                 onChange={(v) => setForm({ ...form, [`außenwande_${floorKey}`]: v })}
-                options={[...WANDAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('wandaufbau', `außenwande_${floorKey}`, opt)}
+                options={außenOptions}
+                displayFor={displayAußen}
               />
             </label>
             <label className="flex flex-col gap-1 flex-1">
@@ -1909,8 +2013,8 @@ function WandaufbauStep({
               <SelectSun
                 value={form[`innenwande_${floorKey}`] || ''}
                 onChange={(v) => setForm({ ...form, [`innenwande_${floorKey}`]: v })}
-                options={[...WANDAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('wandaufbau', `innenwande_${floorKey}`, opt)}
+                options={innenOptions}
+                displayFor={displayInnen}
               />
             </label>
           </div>
@@ -1923,8 +2027,8 @@ function WandaufbauStep({
             <SelectSun
               value={form.außenwandeMansarda || ''}
               onChange={(v) => setForm({ ...form, außenwandeMansarda: v })}
-              options={[...WANDAUFBAU_OPTIONS]}
-              displayFor={(opt) => tOption('wandaufbau', 'außenwandeMansarda', opt)}
+              options={außenOptions}
+              displayFor={displayAußen}
             />
           </label>
           <label className="flex flex-col gap-1 flex-1">
@@ -1932,8 +2036,8 @@ function WandaufbauStep({
             <SelectSun
               value={form.innenwandeMansarda || ''}
               onChange={(v) => setForm({ ...form, innenwandeMansarda: v })}
-              options={[...WANDAUFBAU_OPTIONS]}
-              displayFor={(opt) => tOption('wandaufbau', 'innenwandeMansarda', opt)}
+              options={innenOptions}
+              displayFor={displayInnen}
             />
           </label>
         </div>
@@ -1954,33 +2058,23 @@ function WintergaertenBalkoneStep({
   hiddenKeysForm = new Set<string>(),
   paramLabelOverrides = {},
   tOption,
+  preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any>) => void
   errors: Errors
   optionValueToPriceKey?: Record<string, Record<string, string>>
-  customOptionsForm?: Record<string, Array<{ label: string; value: string }>>
+  customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>
   hiddenKeysForm?: Set<string>
   paramLabelOverrides?: Record<string, string>
   tOption: (stepKey: string, fieldName: string, opt: string) => string
+  preisdatenbankOptionsByTag?: Record<string, string[]>
 }) {
   const hasWintergarden = form.hasWintergarden === true
   const hasBalkone = form.hasBalkone === true
 
-  const wintergartenOptions = [
-    ...WINTERGARTEN_BASE_OPTIONS.filter((opt) => {
-      const priceKey = optionValueToPriceKey['wintergarten_type']?.[opt]
-      return !priceKey || !hiddenKeysForm.has(priceKey)
-    }),
-    ...(customOptionsForm['wintergarten_type'] || []).map((o) => o.label),
-  ]
-  const balkonOptions = [
-    ...BALKON_BASE_OPTIONS.filter((opt) => {
-      const priceKey = optionValueToPriceKey['balkon_type']?.[opt]
-      return !priceKey || !hiddenKeysForm.has(priceKey)
-    }),
-    ...(customOptionsForm['balkon_type'] || []).map((o) => o.label),
-  ]
+  const wintergartenOptions = preisdatenbankOptionsByTag['wintergarten_type'] ?? []
+  const balkonOptions = preisdatenbankOptionsByTag['balkon_type'] ?? []
 
   return (
     <div className="space-y-4">
@@ -2023,12 +2117,22 @@ function BodenDeckeBelagStep({
   errors,
   drafts,
   tOption,
+  customOptionsForm = {},
+  paramLabelOverrides = {},
+  optionValueToPriceKey = {},
+  hiddenKeysForm = new Set<string>(),
+  preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any>) => void
   errors: Errors
   drafts: Drafts
   tOption: (stepKey: string, fieldName: string, opt: string) => string
+  customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>
+  paramLabelOverrides?: Record<string, string>
+  optionValueToPriceKey?: Record<string, Record<string, string>>
+  hiddenKeysForm?: Set<string>
+  preisdatenbankOptionsByTag?: Record<string, string[]>
 }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -2039,6 +2143,12 @@ function BodenDeckeBelagStep({
   const hasPod = listaEtaje.some((e: string) => e === 'pod')
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const totalFloors = 1 + etajeIntermediare
+  const bodenaufbauOptions = preisdatenbankOptionsByTag['bodenaufbau'] ?? []
+  const deckenaufbauOptions = preisdatenbankOptionsByTag['deckenaufbau'] ?? []
+  const bodenbelagOptions = preisdatenbankOptionsByTag['bodenbelag'] ?? []
+  const displayBodenaufbau = (opt: string) => paramLabelOverrides[optionValueToPriceKey['bodenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenaufbau', opt)
+  const displayDeckenaufbau = (opt: string) => paramLabelOverrides[optionValueToPriceKey['deckenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'deckenaufbau', opt)
+  const displayBodenbelag = (opt: string) => paramLabelOverrides[optionValueToPriceKey['bodenbelag']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenbelag', opt)
   return (
     <div className="space-y-4">
       <p className="text-sun/70 text-sm">Wählen Sie für jede Etage die passende Konstruktion und den entsprechenden Bodenaufbau entsprechend Ihrer Gebäudeplanung.</p>
@@ -2051,8 +2161,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.bodenbelagBeci || ''}
                 onChange={(v) => setForm({ ...form, bodenbelagBeci: v })}
-                options={[...BODENBELAG_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenbelagBeci', opt)}
+                options={bodenbelagOptions}
+                displayFor={displayBodenbelag}
               />
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
@@ -2060,8 +2170,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.deckenaufbauBeci || ''}
                 onChange={(v) => setForm({ ...form, deckenaufbauBeci: v })}
-                options={[...DECKENAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'deckenaufbauBeci', opt)}
+                options={deckenaufbauOptions}
+                displayFor={displayDeckenaufbau}
               />
             </label>
           </div>
@@ -2082,8 +2192,8 @@ function BodenDeckeBelagStep({
                   <SelectSun
                     value={form[`bodenaufbau_${floorKey}`] || ''}
                     onChange={(v) => setForm({ ...form, [`bodenaufbau_${floorKey}`]: v })}
-                    options={[...BODENAUFBAU_OPTIONS]}
-                    displayFor={(opt) => tOption('bodenDeckeBelag', `bodenaufbau_${floorKey}`, opt)}
+                    options={bodenaufbauOptions}
+                    displayFor={displayBodenaufbau}
                   />
                 </label>
               )}
@@ -2092,8 +2202,8 @@ function BodenDeckeBelagStep({
                 <SelectSun
                   value={form[`bodenbelag_${floorKey}`] || ''}
                   onChange={(v) => setForm({ ...form, [`bodenbelag_${floorKey}`]: v })}
-                  options={[...BODENBELAG_OPTIONS]}
-                  displayFor={(opt) => tOption('bodenDeckeBelag', `bodenbelag_${floorKey}`, opt)}
+                  options={bodenbelagOptions}
+                  displayFor={displayBodenbelag}
                 />
               </label>
               <label className="flex flex-col gap-1 min-w-[180px]">
@@ -2101,8 +2211,8 @@ function BodenDeckeBelagStep({
                 <SelectSun
                   value={form[`deckenaufbau_${floorKey}`] || ''}
                   onChange={(v) => setForm({ ...form, [`deckenaufbau_${floorKey}`]: v })}
-                  options={[...DECKENAUFBAU_OPTIONS]}
-                  displayFor={(opt) => tOption('bodenDeckeBelag', `deckenaufbau_${floorKey}`, opt)}
+                  options={deckenaufbauOptions}
+                  displayFor={displayDeckenaufbau}
                 />
               </label>
             </div>
@@ -2118,8 +2228,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.bodenaufbauMansarda || ''}
                 onChange={(v) => setForm({ ...form, bodenaufbauMansarda: v })}
-                options={[...BODENAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenaufbauMansarda', opt)}
+                options={bodenaufbauOptions}
+                displayFor={displayBodenaufbau}
               />
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
@@ -2127,8 +2237,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.bodenbelagMansarda || ''}
                 onChange={(v) => setForm({ ...form, bodenbelagMansarda: v })}
-                options={[...BODENBELAG_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenbelagMansarda', opt)}
+                options={bodenbelagOptions}
+                displayFor={displayBodenbelag}
               />
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
@@ -2136,8 +2246,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.deckenaufbauMansarda || ''}
                 onChange={(v) => setForm({ ...form, deckenaufbauMansarda: v })}
-                options={[...DECKENAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'deckenaufbauMansarda', opt)}
+                options={deckenaufbauOptions}
+                displayFor={displayDeckenaufbau}
               />
             </label>
           </div>
@@ -2152,8 +2262,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.bodenaufbauPod || ''}
                 onChange={(v) => setForm({ ...form, bodenaufbauPod: v })}
-                options={[...BODENAUFBAU_OPTIONS]}
-                displayFor={(opt) => tOption('bodenDeckeBelag', 'bodenaufbauPod', opt)}
+                options={bodenaufbauOptions}
+                displayFor={displayBodenaufbau}
               />
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
@@ -2161,8 +2271,8 @@ function BodenDeckeBelagStep({
               <SelectSun
                 value={form.bodenbelagPod || ''}
                 onChange={(v) => setForm({ ...form, bodenbelagPod: v })}
-                options={['', ...BODENBELAG_OPTIONS]}
-                displayFor={(opt) => opt === '' ? '—' : tOption('bodenDeckeBelag', 'bodenbelagPod', opt)}
+                options={['', ...bodenbelagOptions]}
+                displayFor={(opt) => opt === '' ? '—' : displayBodenbelag(opt)}
               />
             </label>
           </div>
@@ -2172,7 +2282,7 @@ function BodenDeckeBelagStep({
   )
 }
 
-function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; drafts: Drafts }) {
+function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; drafts: Drafts; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
   const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
@@ -2181,7 +2291,17 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const totalFloors = 1 + etajeIntermediare
-  const finishOptions = ['Tencuială', 'Lemn', 'Fibrociment', 'Mix']
+  const INTERIOR_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_tencuiala', 'Lemn': 'interior_lemn', 'Fibrociment': 'interior_fibrociment', 'Mix': 'interior_mix' }
+  const EXTERIOR_FACADE_KEY: Record<string, string> = { 'Tencuială': 'exterior_tencuiala', 'Lemn': 'exterior_lemn', 'Fibrociment': 'exterior_fibrociment', 'Mix': 'exterior_mix' }
+  const finishOptionsDedup = useMemo(() => Array.from(new Set([...(preisdatenbankOptionsByTag['interior_finish'] ?? []), ...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])])), [preisdatenbankOptionsByTag['interior_finish'], preisdatenbankOptionsByTag['exterior_facade']])
+  const displayFinish = (fieldName: string, opt: string) => {
+    const isExterior = fieldName.startsWith('fatada')
+    const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : INTERIOR_FINISH_KEY[opt]
+    if (key && paramLabelOverrides[key]) return paramLabelOverrides[key]
+    const pk = optionValueToPriceKey[isExterior ? 'exterior_facade' : 'interior_finish']?.[opt]
+    if (pk && paramLabelOverrides[pk]) return paramLabelOverrides[pk]
+    return tOption('materialeFinisaj', fieldName, opt) || opt
+  }
 
   return (
     <div className="space-y-4">
@@ -2189,7 +2309,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<
         <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
           <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
           <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })} options={finishOptions} displayFor={(opt) => tOption('materialeFinisaj', 'finisajInteriorBeci', opt)} />
+            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
           </div>
         </label>
       )}
@@ -2200,11 +2320,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<
           <div key={floorKey} className="flex gap-4 items-start">
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Innenausbau - {floorLabel}</span>
-              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })} options={finishOptions} displayFor={(opt) => tOption('materialeFinisaj', `finisajInterior_${floorKey}`, opt)} />
+              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
             </label>
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
-              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })} options={finishOptions} displayFor={(opt) => tOption('materialeFinisaj', `fatada_${floorKey}`, opt)} />
+              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
             </label>
           </div>
         )
@@ -2213,11 +2333,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts }: { form: Record<
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Innenausbau - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })} options={finishOptions} displayFor={(opt) => tOption('materialeFinisaj', 'finisajInteriorMansarda', opt)} />
+            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
           </label>
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
-            <SelectSun value={form.fatadaMansarda || 'Tencuială'} onChange={(v) => setForm({ ...form, fatadaMansarda: v })} options={finishOptions} displayFor={(opt) => tOption('materialeFinisaj', 'fatadaMansarda', opt)} />
+            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm({ ...form, fatadaMansarda: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
           </label>
         </div>
       )}
@@ -2236,7 +2356,7 @@ const FLOOR_TYPE_OPTIONS = [
 const FOUNDATION_OPTIONS = ['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt / Nutzkeller)', 'Keller (mit einfachem Ausbau)'] as const
 const FLOOR_HEIGHT_OPTIONS = ['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)'] as const
 
-function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>, shouldAutosave?: boolean) => void; errors: Errors; onBlur?: () => void; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>> }) {
+function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>, shouldAutosave?: boolean) => void; errors: Errors; onBlur?: () => void; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
   const addFloorBtnRef = useRef<HTMLButtonElement>(null)
   const [addFloorPos, setAddFloorPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 })
@@ -2245,14 +2365,8 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
   const pilons = form.pilons === true
   const inaltimeEtaje = form.inaltimeEtaje || 'Standard (2,50 m)'
   const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
-  const foundationOptions = FOUNDATION_OPTIONS.filter((opt) => {
-    const key = optionValueToPriceKey['foundation_type']?.[opt]
-    return !key || !hiddenKeysForm.has(key)
-  })
-  const floorHeightOptions = FLOOR_HEIGHT_OPTIONS.filter((opt) => {
-    const key = optionValueToPriceKey['floor_height']?.[opt]
-    return !key || !hiddenKeysForm.has(key)
-  })
+  const foundationOptions = preisdatenbankOptionsByTag['foundation_type'] ?? []
+  const floorHeightOptions = preisdatenbankOptionsByTag['floor_height'] ?? []
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const hasBase = true
   const basementUse = tipFundatieBeci.includes('mit einfachem Ausbau')
@@ -2422,6 +2536,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               onChange={(v) => setForm({ ...form, inaltimeEtaje: v })}
               options={floorHeightOptions}
               placeholder="Wählen Sie eine Option"
+              displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['floor_height']?.[opt] ?? ''] ?? opt}
             />
           </div>
           {errors.inaltimeEtaje && <span className="text-xs text-orange-400">{errors.inaltimeEtaje}</span>}
@@ -2435,6 +2550,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
               onChange={(v) => setForm({ ...form, tipFundatieBeci: v })}
               options={foundationOptions}
               placeholder="Wählen Sie eine Option"
+              displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['foundation_type']?.[opt] ?? ''] ?? opt}
             />
           </div>
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
@@ -2571,7 +2687,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
 
 function DynamicFields({
   stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter, customOptionsForm = {},
-  paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>()
+  paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), preisdatenbankOptionsByTag = {}
 }: {
   stepKey: string
   fields: Field[]
@@ -2581,10 +2697,11 @@ function DynamicFields({
   ensureOffer: () => Promise<string>
   errors: Errors
   onEnter: () => void
-  customOptionsForm?: Record<string, Array<{ label: string; value: string }>>
+  customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>
   paramLabelOverrides?: Record<string, string>
   optionValueToPriceKey?: Record<string, Record<string, string>>
   hiddenKeysForm?: Set<string>
+  preisdatenbankOptionsByTag?: Record<string, string[]>
 }) {
   
   let currentFields = fields;
@@ -2641,14 +2758,20 @@ function DynamicFields({
                     await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
                     window.dispatchEvent(new Event('offers:refresh'))
                   }}
-                  options={[
-                    ...((f as any).options ?? []).filter((opt: string) => {
-                    const tag = (f as any).tag
-                    const priceKey = tag && optionValueToPriceKey[tag]?.[opt]
-                    return !priceKey || !hiddenKeysForm.has(priceKey)
-                  }),
-                    ...((customOptionsForm[(f as any).tag] || []).map((o: { label: string; value: string }) => o.label)),
-                  ]}
+                  options={
+                    (() => {
+                      const tag = (f as any).tag
+                      const fromPreisdatenbank = tag && preisdatenbankOptionsByTag[tag]
+                      if (fromPreisdatenbank && fromPreisdatenbank.length > 0) return fromPreisdatenbank
+                      return [
+                        ...((f as any).options ?? []).filter((opt: string) => {
+                          const priceKey = tag && optionValueToPriceKey[tag]?.[opt]
+                          return !priceKey || !hiddenKeysForm.has(priceKey)
+                        }),
+                        ...((customOptionsForm[tag] || []).map((o: { label: string; value: string }) => o.label)),
+                      ]
+                    })()
+                  }
                   placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}
                   displayFor={(opt) => {
                     const val = typeof opt === 'string' ? opt : optValue(opt)
