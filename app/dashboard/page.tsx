@@ -9,7 +9,8 @@ import AdminDashboard from '../components/AdminDashboard'
 
 export default function Home() {
   const [ready, setReady] = useState(false)
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [isOrgAdmin, setIsOrgAdmin] = useState(false)
+  const [isSiteAdmin, setIsSiteAdmin] = useState(false)
   useEffect(() => {
     supabase.auth.getSession().then(({ data, error }) => {
       if (error) {
@@ -36,9 +37,16 @@ export default function Home() {
       try {
         const me = await apiFetch('/me')
         const role = (me?.user?.role ?? null) as string | null
-        if (mounted) setIsAdmin(role === 'admin')
+        const canDownloadAdminPdf = me?.tenant?.can_download_admin_pdf === true
+        if (mounted) {
+          setIsOrgAdmin(role === 'admin')
+          setIsSiteAdmin(role === 'admin' && canDownloadAdminPdf)
+        }
       } catch {
-        if (mounted) setIsAdmin(false)
+        if (mounted) {
+          setIsOrgAdmin(false)
+          setIsSiteAdmin(false)
+        }
       }
     })()
     return () => { mounted = false }
@@ -46,7 +54,7 @@ export default function Home() {
 
   // Restore step wizard + live feed state after refresh or when returning to dashboard (persisted in sessionStorage)
   useEffect(() => {
-    if (!ready || isAdmin) return
+    if (!ready || isSiteAdmin) return
     try {
       const raw = typeof window !== 'undefined' ? sessionStorage.getItem('holzbot_dashboard_offer') : null
       if (!raw) return
@@ -64,35 +72,31 @@ export default function Home() {
       }, 150)
       return () => clearTimeout(timer)
     } catch (_) {}
-  }, [ready, isAdmin])
+  }, [ready, isSiteAdmin])
 
   if (!ready) return null
 
   return (
     <>
-      {isAdmin ? (
+      {isSiteAdmin ? (
         <AdminDashboard />
       ) : (
-        <>
+        <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr_440px] gap-4 h-full min-h-0">
           {/* Stânga: proiecte */}
           <aside className="bg-panel/80 border border-black/40 rounded-xl2 p-3 shadow-soft flex flex-col min-w-0 h-full min-h-0">
-            <div className="text-sand font-semibold mb-3 shrink-0">Projekt</div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <HistoryList variant="wood" />
-            </div>
+            <HistoryList variant="wood" />
           </aside>
 
           {/* Mijloc: StepWizard */}
           <main className="bg-panel/80 border border-black/40 rounded-xl2 p-3 shadow-soft min-w-0 h-full min-h-0 overflow-hidden">
             <StepWizard />
           </main>
-        </>
+          {/* Dreapta: LiveFeed */}
+          <div className="min-w-0 h-full min-h-0 overflow-hidden">
+            <LiveFeed />
+          </div>
+        </div>
       )}
-
-      {/* Dreapta: LiveFeed */}
-      <div className="min-w-0 h-full min-h-0 overflow-hidden">
-        <LiveFeed />
-      </div>
     </>
   )
 }

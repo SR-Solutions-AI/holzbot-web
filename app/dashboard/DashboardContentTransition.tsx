@@ -8,7 +8,7 @@ export default function DashboardContentTransition({ children }: { children: Rea
   return (
     <div
       key={pathname}
-      className="page-enter grid grid-cols-1 lg:grid-cols-[400px_1fr_440px] gap-4 h-full min-h-0"
+      className="page-enter h-full min-h-0"
     >
       {children}
     </div>

@@ -185,7 +185,7 @@ type ImageItem = { kind: 'image'; stage: string; files: FeedFile[]; __id: string
 type BreakItem = { kind: 'break'; stage: string; __id: string }
 type CongratsItem = { kind: 'congrats'; stage: 'final'; pdfUrl: string; offerId: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null; __id: string }
 type SyntheticItem = TextItem | SpinnerItem | ImageItem | BreakItem | CongratsItem
-type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[] }
+type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[]; instant?: boolean }
 type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: string }
 
 const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(f.url)
@@ -524,6 +524,7 @@ export default function LiveFeed() {
   const stageQueue = useRef<string[]>([])
   const processing = useRef(false)
   const sinceRef = useRef<number|undefined>(undefined)
+  const seenEventIdsRef = useRef<Set<number>>(new Set())
   const currentStageRef = useRef<string|null>(null)
   /** Progres de la server (UI:PROGRESS) – are prioritate față de calculateProgress când e setat */
   const serverProgressRef = useRef<number | null>(null)
@@ -641,6 +642,7 @@ export default function LiveFeed() {
       stageQueue.current=[]; 
       processing.current=false; 
       sinceRef.current=undefined; 
+      seenEventIdsRef.current.clear();
       currentStageRef.current = null;
       titleIndexRef.current = {};
       finalPdfUrlRef.current = null;
@@ -649,6 +651,7 @@ export default function LiveFeed() {
       queuedStages.current.clear();
       pendingCompletionRef.current = null;
       serverProgressRef.current = null;
+      setPdfUrl(null)
 
       setRunId(null)
       activeRunIdRef.current = null
@@ -657,7 +660,7 @@ export default function LiveFeed() {
       setCurrentStageName(null)
     }
     
-    window.addEventListener('offer:compute-started', (e:any) => { 
+    const onComputeStarted = (e: any) => { 
       // 1. Întâi resetăm totul (inclusiv incrementarea sessionRef pentru filtrare)
       reset() 
       
@@ -667,22 +670,70 @@ export default function LiveFeed() {
       setOfferId(offerId); 
       setComputing(true) // Activează progress bar-ul
       persistOfferState(offerId, runId, true)
-      // Folosim setTimeout pentru a ne asigura că React procesează reset-ul înainte de setarea noilor valori
-      setTimeout(() => {
+      // Hydrate instant from history so spectators see everything immediately, then continue live.
+      ;(async () => {
+        try {
+          const historyData = await apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(offerId)}`)
+          if (historyData?.items?.length && historyData?.run_id === runId) {
+            setRows([])
+            setGroups([])
+            filesByStage.current = {}
+            processedStages.current.clear()
+            stageQueue.current = []
+            processing.current = false
+            currentStageRef.current = null
+            serverProgressRef.current = null
+            seenEventIdsRef.current.clear()
+
+            // collect files per stage
+            for (const ev of historyData.items) {
+              if (typeof ev?.id === 'number') seenEventIdsRef.current.add(ev.id)
+              const match = ev.message.match(/^\s*\[([^\]]+)\]/)
+              if (match && ev.payload?.files) {
+                const stage = match[1].trim()
+                const newFiles = ev.payload.files.filter((f: any) => isDisplayable(f))
+                const existing = filesByStage.current[stage] || []
+                const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
+                if (uniqueNew.length > 0) {
+                  filesByStage.current[stage] = [...existing, ...uniqueNew]
+                }
+              }
+            }
+
+            const uniqueStages = [...new Set(
+              historyData.items
+                .map((ev: any) => ev.message.match(/^\s*\[([^\]]+)\]/)?.[1])
+                .filter(Boolean)
+            )] as string[]
+
+            stageQueue.current = uniqueStages.filter(s => STAGE_TO_SEQUENCE[s])
+            await processQueueInstant()
+
+            // set cursor for live polling
+            sinceRef.current = historyData.last_event_id ?? (historyData.items[historyData.items.length - 1]?.id)
+          }
+        } catch (_) {
+          // ignore hydrate errors; live polling will still populate
+        } finally {
           setRunId(runId);
           activeRunIdRef.current = runId; // Actualizăm și ref-ul manual pentru siguranță
           isHistoryMode.current = false;
           allStagesCompleted.current = false;
-      }, 0);
-    })
+        }
+      })()
+    }
 
-    window.addEventListener('offer:new', () => {
+    const onOfferNew = () => {
       persistOfferState(null, null, false)
       reset()
-    })
+    }
+
+    window.addEventListener('offer:compute-started', onComputeStarted)
+    window.addEventListener('offer:new', onOfferNew)
     
     return () => {
-        window.removeEventListener('offer:new', reset)
+      window.removeEventListener('offer:compute-started', onComputeStarted)
+      window.removeEventListener('offer:new', onOfferNew)
     }
   }, [])
 
@@ -699,6 +750,15 @@ export default function LiveFeed() {
       sessionRef.current = sessionRef.current + 1
       
       const id = e.detail.offerId as string
+      // Când selectăm o ofertă din History (inclusiv draft),
+      // resetăm explicit starea de rulare ca să nu mai rămână GIF-ul vechi.
+      setComputing(false)
+      setRunId(null)
+      activeRunIdRef.current = null
+      serverProgressRef.current = null
+      setProgress(0)
+      setCurrentStageName(null)
+
       setOfferId(id)
       persistOfferState(id, null, false)
       isHistoryMode.current = true
@@ -831,6 +891,10 @@ export default function LiveFeed() {
           sinceRef.current = last.id
           
           for(const ev of res.items) {
+            if (typeof ev?.id === 'number') {
+              if (seenEventIdsRef.current.has(ev.id)) continue
+              seenEventIdsRef.current.add(ev.id)
+            }
             const match = ev.message.match(/^\s*\[([^\]]+)\]/)
             if(!match) continue
             const stage = match[1].trim()
@@ -999,7 +1063,7 @@ export default function LiveFeed() {
     const title = nextTitle(stage)
     
     setGroups(prev => {
-      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items: [] }
+      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items: [], instant }
       const next = [...prev, g]
       setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
       return next
@@ -1149,7 +1213,7 @@ export default function LiveFeed() {
     }
 
     setGroups(prev => {
-      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items }
+      const g: Group = { id: gid, stage, startedAt: new Date().toISOString(), title, items, instant: true }
       const next = [...prev, g]
       setRows(next.map(x => ({ kind: 'group', id: x.id, group: x })))
       return next
@@ -1241,7 +1305,7 @@ export default function LiveFeed() {
              }
              
              const g = r.group
-             const instant = isHistoryMode.current
+             const instant = isHistoryMode.current || g.instant === true
              
              return (
                  <div key={g.id} className={`border-b border-white/10 pb-6 ${instant ? '' : 'animate-slide-up'}`}>

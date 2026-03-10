@@ -560,7 +560,35 @@ export default function StepWizard() {
   /** Sursă de adevăr pentru vizibilitatea pasului Wintergärten & Balkone – actualizat la toggle pe Gebäudestruktur. */
   const [winterBalkoneFlags, setWinterBalkoneFlags] = useState<{ hasWintergarden: boolean; hasBalkone: boolean }>({ hasWintergarden: false, hasBalkone: false })
 
+  const updateRunUrl = useCallback((offer: string | null, run: string | null) => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    if (offer) url.searchParams.set('offerId', offer)
+    else url.searchParams.delete('offerId')
+    if (run) url.searchParams.set('runId', run)
+    else url.searchParams.delete('runId')
+    window.history.replaceState(null, '', url.toString())
+  }, [])
+
   useEffect(() => { offerIdRef.current = offerId }, [offerId])
+
+  // Dacă URL-ul conține offerId/runId, pornește automat aceeași ofertă/rulare (sharing între utilizatori)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const url = new URL(window.location.href)
+      const offerFromUrl = url.searchParams.get('offerId')
+      const runFromUrl = url.searchParams.get('runId')
+      if (!offerFromUrl) return
+      if (runFromUrl) {
+        window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: offerFromUrl, runId: runFromUrl } }))
+      } else {
+        window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: offerFromUrl } }))
+      }
+    } catch {
+      // ignore malformed URLs
+    }
+  }, [])
 
   // Ascundem pasul Wintergärten & Balkone dacă nici Wintergarten nici Balkone nu sunt bifate (folosim winterBalkoneFlags ca sursă de adevăr)
   // Ascundem pașii Finisaje și Performanță energetică când utilizatorul a ales doar structură sau structură + ferestre
@@ -958,14 +986,30 @@ export default function StepWizard() {
   useEffect(() => {
     const onSel = async (e: any) => {
       const id = e.detail.offerId as string
-      setOfferId(id)
-      offerIdRef.current = id
       if (!id) {
         setSelectedPackage(null)
         setDrafts({})
         setForm({})
         return
       }
+      // Clean current wizard state before loading the newly selected offer
+      setSelectedPackage(null)
+      setDrafts({})
+      setForm({})
+      setErrors({})
+      setShowErrors(false)
+      setValidationError(null)
+      setComputeFailed(false)
+      setComputeRunId(null)
+      setPdfUrl(null)
+      setComputing(false)
+      setComputeStartTime(null)
+      setProcessStatus('')
+      setSaveStatus('idle')
+      setIdx(0)
+
+      setOfferId(id)
+      offerIdRef.current = id
       try {
         const fresh = await fetchFreshPdfUrl(id)
         if (fresh) {
@@ -1285,6 +1329,7 @@ export default function StepWizard() {
       setComputing(true)
       setComputeStartTime(Date.now())
       setComputeRunId(run_id)
+      updateRunUrl(id, run_id)
       window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: run_id } }))
       window.dispatchEvent(new Event('offers:refresh'))
     } catch (err: any) {
@@ -1333,6 +1378,7 @@ export default function StepWizard() {
     setSelectedPackage(null)
     creatingRef.current = false
     activeCreationPromise.current = null
+    updateRunUrl(null, null)
     window.dispatchEvent(new CustomEvent('offer:new', { detail: { creationId: Date.now() } }))
     window.dispatchEvent(new Event('offers:refresh'))
   }

@@ -2,19 +2,24 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, User, Database } from 'lucide-react' 
-import { supabase } from '../lib/supabaseClient' 
+import { LogOut, User, Database, Settings, ChevronDown, Building2 } from 'lucide-react'
+import { supabase } from '../lib/supabaseClient'
 import { apiFetch } from '../lib/supabaseClient'
 import { useEffect, useState, useRef } from 'react'
 
 // --- CONFIG ---
-const LOGO_IMAGE_URL = '/logo.png' 
+const LOGO_IMAGE_URL = '/logo.png'
 
 export default function DashboardHeader() {
   const pathname = usePathname()
   const isPreisdatenbank = pathname?.includes('/preisdatenbank')
-  const [me, setMe] = useState<{ user?: { email?: string | null }, tenant?: { config?: any } | null } | null>(null)
+  const isSettingsArea = pathname?.includes('/settings') || isPreisdatenbank
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [me, setMe] = useState<{ user?: { email?: string | null; role?: string | null }, tenant?: { config?: any } | null } | null>(null)
   const mountedRef = useRef(true)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const isAdmin = (me?.user as any)?.role === 'admin'
 
   // --- FUNCTIA DE LOGOUT (FIXED) ---
   const handleLogout = async () => {
@@ -50,13 +55,23 @@ export default function DashboardHeader() {
     }
   }, [])
 
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false)
+      }
+    }
+    document.addEventListener('click', handleClickOutside)
+    return () => document.removeEventListener('click', handleClickOutside)
+  }, [])
+
   const email = me?.user?.email || null
   const role = (me as any)?.user?.role as string | undefined
   const tenantConfig = (me?.tenant as any)?.config
   const tenantLogoUrlRaw =
     (tenantConfig?.logo_url ?? tenantConfig?.logoUrl) as string | undefined
   const tenantLogoUrl =
-    role === 'admin' ? undefined : (tenantLogoUrlRaw && tenantLogoUrlRaw.startsWith('http') ? tenantLogoUrlRaw : undefined)
+    (tenantLogoUrlRaw && tenantLogoUrlRaw.startsWith('http') ? tenantLogoUrlRaw : undefined)
 
   return (
     <header className="h-[4.5rem] flex items-center bg-coffee-850 border-b border-black/50 shadow-soft relative shrink-0 z-40">
@@ -93,30 +108,58 @@ export default function DashboardHeader() {
             />
           </div>
 
-          {/* Right: email + Preisdatenbank/Angebote + logout */}
+          {/* Right: email + Settings (Organisation / Preisdatenbank) + logout */}
           <div className="flex justify-end items-center gap-2 sm:gap-3 min-w-0">
             <div className="hidden sm:flex items-center gap-2 text-xs sm:text-sm text-sand/70 truncate max-w-[200px]">
               <User size={16} className="flex-shrink-0" />
               <span className="truncate">{email || ''}</span>
             </div>
-            {isPreisdatenbank ? (
-              <Link
-                href="/dashboard"
-                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                title="Zurück zu Angebot generieren"
-              >
-                <span className="hidden sm:inline">Angebot generieren</span>
-              </Link>
-            ) : (
-              <Link
-                href="/dashboard/preisdatenbank"
-                className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                title="Preisdatenbank"
-              >
-                <Database size={18} className="shrink-0" />
-                <span className="hidden sm:inline">Preisdatenbank</span>
-              </Link>
-            )}
+            <div className="relative" ref={dropdownRef}>
+              {isSettingsArea ? (
+                <Link
+                  href="/dashboard"
+                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                  title="Zurück zu Angebot generieren"
+                >
+                  <span className="hidden sm:inline">Angebot generieren</span>
+                </Link>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen((o) => !o)}
+                    className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    title="Einstellungen"
+                  >
+                    <Settings size={18} className="shrink-0" />
+                    <span className="hidden sm:inline">Einstellungen</span>
+                    <ChevronDown size={16} className={`shrink-0 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {settingsOpen && (
+                    <div className="absolute right-0 top-full mt-1 py-1 w-72 rounded-xl bg-coffee-850 border border-white/20 shadow-xl z-50">
+                      {isAdmin && (
+                        <Link
+                          href="/dashboard/settings/organisation"
+                          onClick={() => setSettingsOpen(false)}
+                          className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                        >
+                          <Building2 size={18} className="shrink-0 text-sand/80" />
+                          <span className="leading-snug">Organisationseinstellungen</span>
+                        </Link>
+                      )}
+                      <Link
+                        href="/dashboard/preisdatenbank"
+                        onClick={() => setSettingsOpen(false)}
+                        className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                      >
+                        <Database size={18} className="shrink-0 text-sand/80" />
+                        <span className="leading-snug">Preisdatenbank</span>
+                      </Link>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
             <button
               onClick={handleLogout}
               className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-md transition-all duration-200 ease-out border border-white/30 bg-coffee-850 hover:bg-coffee-800 hover:border-[#FF9F0F]/50"

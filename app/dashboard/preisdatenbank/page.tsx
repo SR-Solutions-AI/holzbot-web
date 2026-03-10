@@ -1,23 +1,12 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Plus, Pencil, Upload } from 'lucide-react'
+import { Save, Loader2, CheckCircle2, AlertCircle, Trash2, Plus, Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { apiFetch } from '../../lib/supabaseClient'
 import { buildPriceSectionsFromFormStepsJson } from '../../../lib/buildFormFromJson'
 import holzbauFormStepsJson from '../../../data/form-schema/holzbau-form-steps.json'
 import type { PreisdatenbankSection } from '../formConfig'
-
-type CompanyInfo = {
-  companyName: string
-  companyAddress: string
-  email: string
-  phone: string
-  fax: string
-  website: string
-  logoUrl: string
-  handlerName: string
-}
 
 /** Sursă unică: data/form-schema/holzbau-form-steps.json – secțiunile și variabilele vin doar din acest fișier. */
 
@@ -132,22 +121,6 @@ export default function PreisdatenbankPage() {
   /** Doar chei prezente în holzbau-form-steps.json (priceSections.variables[].key) – nimic în plus. */
   const allowedPricingKeysRef = useRef<Set<string>>(new Set())
 
-  /** Allgemeine Informationen (Firmenname, Adresse, E-Mail, Telefon, Logo) – für PDF und Navbar. */
-  const [companyInfo, setCompanyInfo] = useState<CompanyInfo>({
-    companyName: '',
-    companyAddress: '',
-    email: '',
-    phone: '',
-    fax: '',
-    website: '',
-    logoUrl: '',
-    handlerName: '',
-  })
-  const [companyInfoSaving, setCompanyInfoSaving] = useState(false)
-  const [companyInfoMessage, setCompanyInfoMessage] = useState<'success' | 'error' | null>(null)
-  const [logoUploading, setLogoUploading] = useState(false)
-  const logoInputRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
     let cancelled = false
     supabase.auth.getSession().then(async ({ data, error }) => {
@@ -242,19 +215,6 @@ export default function PreisdatenbankPage() {
         if (!cancelled) {
           setSections(merged)
           setHasUnsavedChanges(false)
-        }
-        const companyRes = (await apiFetch('/tenant-config').catch(() => null)) as CompanyInfo | null
-        if (!cancelled && companyRes && typeof companyRes === 'object') {
-          setCompanyInfo({
-            companyName: (companyRes as CompanyInfo).companyName ?? '',
-            companyAddress: (companyRes as CompanyInfo).companyAddress ?? '',
-            email: (companyRes as CompanyInfo).email ?? '',
-            phone: (companyRes as CompanyInfo).phone ?? '',
-            fax: (companyRes as CompanyInfo).fax ?? '',
-            website: (companyRes as CompanyInfo).website ?? '',
-            logoUrl: (companyRes as CompanyInfo).logoUrl ?? '',
-            handlerName: (companyRes as CompanyInfo).handlerName ?? '',
-          })
         }
       } catch (e) {
         if (!cancelled) {
@@ -527,59 +487,6 @@ export default function PreisdatenbankPage() {
     setAddingAt(null)
   }
 
-  const handleSaveCompanyInfo = async () => {
-    setCompanyInfoSaving(true)
-    setCompanyInfoMessage(null)
-    try {
-      await apiFetch('/tenant-config', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          companyName: companyInfo.companyName.trim(),
-          companyAddress: companyInfo.companyAddress.trim(),
-          email: companyInfo.email.trim(),
-          phone: companyInfo.phone.trim(),
-          fax: companyInfo.fax.trim(),
-          website: companyInfo.website.trim(),
-          handlerName: companyInfo.handlerName.trim(),
-        }),
-      })
-      setCompanyInfoMessage('success')
-      setTimeout(() => setCompanyInfoMessage(null), 3000)
-      window.dispatchEvent(new CustomEvent('tenant-config:saved'))
-    } catch {
-      setCompanyInfoMessage('error')
-    } finally {
-      setCompanyInfoSaving(false)
-    }
-  }
-
-  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file || !file.type.startsWith('image/')) return
-    setLogoUploading(true)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      const res = (await apiFetch('/tenant-config/logo', {
-        method: 'POST',
-        body: form,
-        headers: {},
-      })) as { logoUrl?: string }
-      if (res?.logoUrl) {
-        setCompanyInfo((prev) => ({ ...prev, logoUrl: res.logoUrl! }))
-        setCompanyInfoMessage('success')
-        setTimeout(() => setCompanyInfoMessage(null), 3000)
-        window.dispatchEvent(new CustomEvent('tenant-config:saved'))
-      }
-    } catch {
-      setCompanyInfoMessage('error')
-    } finally {
-      setLogoUploading(false)
-      e.target.value = ''
-      if (logoInputRef.current) logoInputRef.current.value = ''
-    }
-  }
-
   const handleEditLabel = (sectionIndex: number, subsectionIndex: number, id: string, newLabel: string) => {
     if (!newLabel.trim()) return
     setHasUnsavedChanges(true)
@@ -681,160 +588,6 @@ export default function PreisdatenbankPage() {
         </div>
       </div>
       <div className="flex flex-col gap-10 md:gap-12">
-        {/* Allgemeine Informationen – Firmenangaben für PDF-Angebot und Navbar */}
-        <div className="flex flex-col gap-4 md:gap-5 border-t border-white/10 pt-4">
-          <header className="text-center">
-            <h2 className="text-xl md:text-2xl font-bold text-[#FF9F0F]">Allgemeine Informationen</h2>
-            <p className="text-white text-sm md:text-base mt-1">
-              Diese Angaben erscheinen im PDF-Angebot.
-            </p>
-          </header>
-          <div className="max-w-2xl mx-auto w-full">
-            <article className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-6 flex flex-col gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-sun/90">Logo Upload</label>
-                  <div className="flex items-center gap-4">
-                    <div className="w-24 h-24 rounded-lg border border-white/20 bg-white/5 flex items-center justify-center overflow-hidden shrink-0">
-                      {companyInfo.logoUrl ? (
-                        <img src={companyInfo.logoUrl} alt="Firmenlogo" className="w-full h-full object-contain" />
-                      ) : (
-                        <Upload className="w-8 h-8 text-sand/50" />
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1 min-w-0">
-                      <input
-                        ref={logoInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleLogoChange}
-                      />
-                      <button
-                        type="button"
-                        disabled={logoUploading}
-                        onClick={() => logoInputRef.current?.click()}
-                        className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm font-medium disabled:opacity-60"
-                      >
-                        {logoUploading ? 'Wird hochgeladen…' : 'Logo auswählen'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="company-name" className="text-sm font-medium text-sun/90">Firmenname:</label>
-                  <input
-                    id="company-name"
-                    type="text"
-                    value={companyInfo.companyName}
-                    onChange={(e) => setCompanyInfo((p) => ({ ...p, companyName: e.target.value }))}
-                    className="sun-input w-full"
-                    placeholder="z. B. Muster GmbH"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label htmlFor="company-address" className="text-sm font-medium text-sun/90">Firmenadresse:</label>
-                <textarea
-                  id="company-address"
-                  value={companyInfo.companyAddress}
-                  onChange={(e) => setCompanyInfo((p) => ({ ...p, companyAddress: e.target.value }))}
-                  className="sun-input w-full min-h-[80px] resize-y"
-                  placeholder="Straße, PLZ Ort"
-                  rows={3}
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="company-email" className="text-sm font-medium text-sun/90">Email Adresse:</label>
-                  <input
-                    id="company-email"
-                    type="email"
-                    value={companyInfo.email}
-                    onChange={(e) => setCompanyInfo((p) => ({ ...p, email: e.target.value }))}
-                    className="sun-input w-full"
-                    placeholder="info@firma.de"
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="company-phone" className="text-sm font-medium text-sun/90">Telefonnummer:</label>
-                  <input
-                    id="company-phone"
-                    type="tel"
-                    value={companyInfo.phone}
-                    onChange={(e) => setCompanyInfo((p) => ({ ...p, phone: e.target.value }))}
-                    className="sun-input w-full"
-                    placeholder="+49 123 456789"
-                  />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label htmlFor="company-fax" className="text-sm font-medium text-sun/90">Fax:</label>
-                  <input
-                    id="company-fax"
-                    type="tel"
-                    value={companyInfo.fax}
-                    onChange={(e) => setCompanyInfo((p) => ({ ...p, fax: e.target.value }))}
-                    className="sun-input w-full"
-                    placeholder="+49 123 456789-11"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label htmlFor="company-website" className="text-sm font-medium text-sun/90">Website:</label>
-                <input
-                  id="company-website"
-                  type="url"
-                  value={companyInfo.website}
-                  onChange={(e) => setCompanyInfo((p) => ({ ...p, website: e.target.value }))}
-                  className="sun-input w-full"
-                  placeholder="https://www.firma.de"
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label htmlFor="company-handler" className="text-sm font-medium text-sun/90">Name Bearbeiter:</label>
-                <input
-                  id="company-handler"
-                  type="text"
-                  value={companyInfo.handlerName}
-                  onChange={(e) => setCompanyInfo((p) => ({ ...p, handlerName: e.target.value }))}
-                  className="sun-input w-full"
-                  placeholder="z. B. Max Mustermann (wird im PDF als Bearbeiter angezeigt)"
-                />
-              </div>
-              <div className="flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  disabled={companyInfoSaving}
-                  onClick={handleSaveCompanyInfo}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold bg-[#FF9F0F] hover:bg-[#e08e0d] text-white disabled:opacity-60"
-                >
-                  {companyInfoSaving ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      Speichern…
-                    </>
-                  ) : (
-                    <>
-                      <Save size={18} />
-                      Angaben speichern
-                    </>
-                  )}
-                </button>
-                {companyInfoMessage === 'success' && (
-                  <span className="flex items-center gap-1.5 text-orange-400 text-sm">
-                    <CheckCircle2 size={18} /> Gespeichert
-                  </span>
-                )}
-                {companyInfoMessage === 'error' && (
-                  <span className="flex items-center gap-1.5 text-amber-400 text-sm">
-                    <AlertCircle size={18} /> Fehler beim Speichern
-                  </span>
-                )}
-              </div>
-            </article>
-          </div>
-        </div>
-
         {sections.map((section, sectionIndex) => {
           // Grupăm cardurile cu un singur element (unu sub altul)
           const items: Array<
