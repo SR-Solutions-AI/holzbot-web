@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiFetch } from '../lib/supabaseClient'
-import { Plus, Loader2, Search, Filter, Trash2, ChevronDown, Check } from 'lucide-react'
+import { Plus, Loader2, Search, Filter, Trash2, ChevronDown, Check, X } from 'lucide-react'
 import { DatePickerPopover } from './DatePickerPopover'
 
 type OfferListItem = {
