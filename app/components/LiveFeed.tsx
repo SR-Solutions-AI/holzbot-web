@@ -29,6 +29,12 @@ const STAGE_TO_SEQUENCE: Record<string, number[]> = {
   computation_complete: [],
 }
 
+/** Fallback sequence index for unknown stages so they still appear in history (e.g. backend adds new stage) */
+const UNKNOWN_STAGE_SEQUENCE = [0]
+function getStageSequence(stage: string): number[] {
+  return STAGE_TO_SEQUENCE[stage] ?? UNKNOWN_STAGE_SEQUENCE
+}
+
 // Calculează progresul bazat pe etapele procesate
 const TOTAL_STAGES = 19 // Ultimul număr din secvență
 function calculateProgress(processedStages: Set<string>, currentStage: string | null): { progress: number; currentStageName: string | null } {
@@ -40,7 +46,7 @@ function calculateProgress(processedStages: Set<string>, currentStage: string | 
   let completedSteps = 0
   for (const stage of processedStages) {
     const seq = STAGE_TO_SEQUENCE[stage]
-    if (seq && seq.length > 0) {
+    if (seq && seq.length > 0 && seq[0] > 0) {
       completedSteps = Math.max(completedSteps, Math.max(...seq))
     }
   }
@@ -48,7 +54,7 @@ function calculateProgress(processedStages: Set<string>, currentStage: string | 
   // Dacă există o etapă curentă, adaugă progres parțial
   if (currentStage) {
     const seq = STAGE_TO_SEQUENCE[currentStage]
-    if (seq && seq.length > 0) {
+    if (seq && seq.length > 0 && seq[0] > 0) {
       const currentStep = Math.max(...seq)
       // Dacă etapa curentă e mai mare decât cea procesată, o considerăm în progres
       if (currentStep > completedSteps) {
@@ -170,6 +176,11 @@ const STAGE_TITLES: Record<string, string[]> = {
     'Verarbeitung abgeschlossen',
     'Fertiggestellt',
     'Berechnung beendet'
+  ],
+  cubicasa_step: [
+    'RasterScan-Detail',
+    'CubiCasa Verarbeitungsschritt',
+    'Zwischenschritt RasterScan'
   ]
 }
 
@@ -309,6 +320,13 @@ const MESSAGES: Record<number, Trio> = {
   },
 }
 
+/** Fallback when stage has no MESSAGES entry (unknown stage or sequence [0]) so the feed always shows at least one line */
+const FALLBACK_MESSAGE: Trio = {
+  ai: 'Dieser Verarbeitungsschritt wurde ausgeführt.',
+  formula: '—',
+  rezultat: 'Schritt abgeschlossen.'
+}
+
 async function paraphrase(text: string) {
   try { 
     const res = await fetch('/api/paraphrase', {method:'POST', body:JSON.stringify({text})})
@@ -414,27 +432,34 @@ function FitFormula({ html }: { html: string }) {
 }
 
 function FormulaBlock({ input }: { input: string }) {
+  const raw = (input ?? '').trim()
   let content: JSX.Element
   
-  try {
-    const html = katex.renderToString(input, {
-      displayMode: true,
-      throwOnError: true,
-      strict: false,
-      trust: false,
-      maxSize: 100
-    })
-    
-    content = <FitFormula html={html} />
-  } catch (e) {
-    console.warn('KaTeX render error:', e);
+  if (!raw || raw === '—' || raw === '-') {
     content = (
       <div className="math-note rounded-lg px-3 py-2 border border-white/10 bg-coffee-800/40">
-        <div className="text-sm text-sand/85 font-mono break-words leading-relaxed">
-          {input}
-        </div>
+        <div className="text-sm text-sand/85 font-mono">{raw || '—'}</div>
       </div>
     )
+  } else {
+    try {
+      const html = katex.renderToString(raw, {
+        displayMode: true,
+        throwOnError: true,
+        strict: false,
+        trust: false,
+        maxSize: 100
+      })
+      content = <FitFormula html={html} />
+    } catch (e) {
+      content = (
+        <div className="math-note rounded-lg px-3 py-2 border border-white/10 bg-coffee-800/40">
+          <div className="text-sm text-sand/85 font-mono break-words leading-relaxed whitespace-pre-wrap">
+            {raw}
+          </div>
+        </div>
+      )
+    }
   }
   
   return <div className="my-2">{content}</div>
@@ -467,12 +492,11 @@ function TypeWriter({ text, speed = 16, instant = false }: { text: string; speed
 }
 
 function MessageRow({ role, text, instant = false }: { role: string, text: string, instant?: boolean }) {
-  // Ensure text is always a string to avoid React #418 error
-  const safeContent = safeString(text || '')
-  const displayContent = strip(safeContent)
+  const safeContent = safeString(text ?? '')
+  // Formula: do not strip (preserve LaTeX); other roles: strip stage/prefix so display is clean
+  const displayContent = role === 'formula' ? safeContent.trim() : strip(safeContent)
   
-  // Don't render if content is empty
-  if (!displayContent.trim()) {
+  if (!displayContent) {
     return null
   }
   
@@ -481,7 +505,7 @@ function MessageRow({ role, text, instant = false }: { role: string, text: strin
       <div className="shrink-0 text-neutral-300 mt-1">
         {role==='ai' ? <Cpu size={18}/> : role==='formula' ? <FunctionSquare size={18}/> : <CheckCircle2 size={18}/>}
       </div>
-      <div className="text-[16px] leading-relaxed text-neutral-100">
+      <div className="text-[16px] leading-relaxed text-neutral-100 min-w-0 flex-1">
         {role==='formula' ? <FormulaBlock input={displayContent} /> : <TypeWriter text={displayContent} instant={instant} />}
       </div>
     </div>
@@ -537,6 +561,8 @@ export default function LiveFeed() {
 
   const queuedStages = useRef<Set<string>>(new Set())
   const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null } | null>(null)
+  /** In history mode: first event created_at per stage (for correct timestamps) */
+  const stageStartedAtRef = useRef<Record<string, string>>({})
 
   const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
   const STORAGE_KEY_RUNNING = 'holzbot_dashboard_running'
@@ -651,6 +677,7 @@ export default function LiveFeed() {
       queuedStages.current.clear();
       pendingCompletionRef.current = null;
       serverProgressRef.current = null;
+      stageStartedAtRef.current = {};
       setPdfUrl(null)
 
       setRunId(null)
@@ -700,13 +727,18 @@ export default function LiveFeed() {
               }
             }
 
-            const uniqueStages = [...new Set(
-              historyData.items
-                .map((ev: any) => ev.message.match(/^\s*\[([^\]]+)\]/)?.[1])
-                .filter(Boolean)
-            )] as string[]
+            const stageOrder: string[] = []
+            const seen = new Set<string>()
+            for (const ev of historyData.items) {
+              const m = ev.message?.match(/^\s*\[([^\]]+)\]/)
+              const stage = m?.[1]?.trim()
+              if (stage && !seen.has(stage)) {
+                seen.add(stage)
+                stageOrder.push(stage)
+              }
+            }
 
-            stageQueue.current = uniqueStages.filter(s => STAGE_TO_SEQUENCE[s])
+            stageQueue.current = stageOrder
             await processQueueInstant()
 
             // set cursor for live polling
@@ -766,7 +798,10 @@ export default function LiveFeed() {
       
       try {
         const historyData = await apiFetch(`/calc-events/history?offer_id=${id}`)
-        
+        const runStatus = (historyData as any)?.run_status
+        const runIdFromHistory = (historyData as any)?.run_id ?? null
+        const lastEventId = (historyData as any)?.last_event_id ?? null
+
         if (historyData.items && historyData.items.length > 0) {
           setRows([])
           setGroups([])
@@ -779,9 +814,20 @@ export default function LiveFeed() {
 
           setRunId(historyData.run_id)
           activeRunIdRef.current = historyData.run_id
-          
+
+          // Build stage → first event created_at so timestamps in feed are correct
+          stageStartedAtRef.current = {}
           for (const ev of historyData.items) {
-            const match = ev.message.match(/^\s*\[([^\]]+)\]/)
+            const m = ev.message?.match(/^\s*\[([^\]]+)\]/)
+            const stage = m?.[1]?.trim()
+            const createdAt = (ev as any).created_at
+            if (stage && createdAt && stageStartedAtRef.current[stage] === undefined) {
+              stageStartedAtRef.current[stage] = typeof createdAt === 'string' ? createdAt : new Date(createdAt).toISOString()
+            }
+          }
+
+          for (const ev of historyData.items) {
+            const match = ev.message?.match(/^\s*\[([^\]]+)\]/)
             if (match && ev.payload?.files) {
               const stage = match[1].trim()
               const newFiles = ev.payload.files.filter((f: any) => isDisplayable(f))
@@ -794,16 +840,31 @@ export default function LiveFeed() {
             }
           }
           
-          const uniqueStages = [...new Set(
-            historyData.items
-              .map((ev: any) => ev.message.match(/^\s*\[([^\]]+)\]/)?.[1])
-              .filter(Boolean)
-          )] as string[]
+          const stageOrder: string[] = []
+          const seen = new Set<string>()
+          for (const ev of historyData.items) {
+            const m = ev.message?.match(/^\s*\[([^\]]+)\]/)
+            const stage = m?.[1]?.trim()
+            if (stage && !seen.has(stage)) {
+              seen.add(stage)
+              stageOrder.push(stage)
+            }
+          }
           
-          stageQueue.current = uniqueStages.filter(s => STAGE_TO_SEQUENCE[s])
+          stageQueue.current = stageOrder
           await processQueueInstant()
           allStagesCompleted.current = true
-          
+
+          // Dacă oferta e încă în curs, trecem în mod live: GIF + progress + polling
+          if (runStatus === 'running' && runIdFromHistory) {
+            isHistoryMode.current = false
+            setComputing(true)
+            setRunId(runIdFromHistory)
+            activeRunIdRef.current = runIdFromHistory
+            sinceRef.current = lastEventId ?? undefined
+            window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: runIdFromHistory } }))
+          }
+
           try {
             const fresh = await apiFetch(`/offers/${id}/export-url`)
             const url = fresh?.url || fresh?.download_url || fresh?.pdf
@@ -814,6 +875,23 @@ export default function LiveFeed() {
               }))
             }
           } catch {}
+        } else if (runStatus === 'running' && runIdFromHistory) {
+          // Oferta rulează dar nu avem încă evenimente: afișăm GIF + progress și pornim polling
+          setRunId(runIdFromHistory)
+          activeRunIdRef.current = runIdFromHistory
+          isHistoryMode.current = false
+          setComputing(true)
+          sinceRef.current = lastEventId ?? undefined
+          window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: runIdFromHistory } }))
+          setRows([])
+          setGroups([])
+          filesByStage.current = {}
+          processedStages.current.clear()
+          stageQueue.current = []
+          processing.current = false
+          currentStageRef.current = null
+          serverProgressRef.current = null
+          allStagesCompleted.current = false
         } else {
           setRunId(null)
           activeRunIdRef.current = null
@@ -826,6 +904,7 @@ export default function LiveFeed() {
           currentStageRef.current = null
           serverProgressRef.current = null
           allStagesCompleted.current = true
+          stageStartedAtRef.current = {}
           
           try {
             const fresh = await apiFetch(`/offers/${id}/export-url`)
@@ -860,6 +939,7 @@ export default function LiveFeed() {
         setPdfUrl(null)
         setComputing(false)
         allStagesCompleted.current = true
+        stageStartedAtRef.current = {}
         setProgress(100)
         setCurrentStageName('Abgeschlossen')
       }
@@ -1043,8 +1123,56 @@ export default function LiveFeed() {
   }
 
   const processQueueInstant = async () => {
-    while(stageQueue.current.length > 0) {
-      const stage = stageQueue.current.shift()!
+    const queue = [...stageQueue.current]
+    stageQueue.current = []
+    if (queue.length === 0) return
+
+    // History mode: build all groups in one pass and set state once for better performance
+    if (isHistoryMode.current) {
+      const newGroups: Group[] = []
+      for (const stage of queue) {
+        const indices = getStageSequence(stage)
+        const gid = generateId('g-')
+        const title = STAGE_TITLES[stage]?.[0] ?? stage
+        const items: SyntheticItem[] = []
+
+        for (let i = 0; i < indices.length; i++) {
+          const idx = indices[i]
+          const m = (idx > 0 ? MESSAGES[idx] : null) ?? FALLBACK_MESSAGE
+          if (i > 0) items.push({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
+          items.push({ kind: 'text', role: 'ai', text: safeString(m.ai), stage, __id: `ai-${idx}` } as TextItem)
+          items.push({ kind: 'text', role: 'formula', text: safeString(m.formula), stage, __id: `f-${idx}` } as TextItem)
+          items.push({ kind: 'text', role: 'rezultat', text: safeString(m.rezultat), stage, __id: `r-${idx}` } as TextItem)
+        }
+        // If stage has no sequence entries (e.g. computation_complete with []), show at least one line
+        if (items.length === 0 && stage !== 'computation_complete') {
+          items.push({ kind: 'text', role: 'ai', text: FALLBACK_MESSAGE.ai, stage, __id: 'fb-ai' } as TextItem)
+          items.push({ kind: 'text', role: 'formula', text: FALLBACK_MESSAGE.formula, stage, __id: 'fb-f' } as TextItem)
+          items.push({ kind: 'text', role: 'rezultat', text: FALLBACK_MESSAGE.rezultat, stage, __id: 'fb-r' } as TextItem)
+        }
+
+        if (STAGES_WITH_IMAGES.includes(stage)) {
+          const files = filesByStage.current[stage]
+          if (files?.length) {
+            items.push({ kind: 'image', stage, files, __id: generateId('img-') } as ImageItem)
+          }
+        }
+
+        const startedAt = stageStartedAtRef.current[stage] ?? new Date().toISOString()
+        const skipEmptyComplete = stage === 'computation_complete' && items.length === 0
+        if (!skipEmptyComplete) {
+          newGroups.push({ id: gid, stage, startedAt, title, items, instant: true })
+        }
+        processedStages.current.add(stage)
+        queuedStages.current.add(stage)
+      }
+      setGroups(prev => [...prev, ...newGroups])
+      setRows(prev => [...prev, ...newGroups.map(g => ({ kind: 'group' as const, id: g.id, group: g }))])
+      return
+    }
+
+    while (queue.length > 0) {
+      const stage = queue.shift()!
       await executeStageInstant(stage)
       processedStages.current.add(stage)
       queuedStages.current.add(stage)
@@ -1186,23 +1314,26 @@ export default function LiveFeed() {
   }
 
   const executeStageInstant = async (stage: string) => {
-    const indices = STAGE_TO_SEQUENCE[stage]
-    if(!indices) return
+    const indices = getStageSequence(stage)
+    if (!indices || indices.length === 0) return
     const gid = generateId('g-')
     const title = nextTitle(stage)
     const items: SyntheticItem[] = []
 
     for (let i = 0; i < indices.length; i++) {
-      const m = MESSAGES[indices[i]]
-      if (m) {
-        if (i > 0) {
-          items.push({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
-        }
-        // Ensure text values are always strings to avoid React #418 error
-        items.push({ kind: 'text', role: 'ai', text: safeString(m.ai), stage, __id: `ai-${indices[i]}` } as TextItem)
-        items.push({ kind: 'text', role: 'formula', text: safeString(m.formula), stage, __id: `f-${indices[i]}` } as TextItem)
-        items.push({ kind: 'text', role: 'rezultat', text: safeString(m.rezultat), stage, __id: `r-${indices[i]}` } as TextItem)
+      const idx = indices[i]
+      const m = (idx > 0 ? MESSAGES[idx] : null) ?? FALLBACK_MESSAGE
+      if (i > 0) {
+        items.push({ kind: 'break', stage, __id: `br-${i}` } as BreakItem)
       }
+      items.push({ kind: 'text', role: 'ai', text: safeString(m.ai), stage, __id: `ai-${idx}` } as TextItem)
+      items.push({ kind: 'text', role: 'formula', text: safeString(m.formula), stage, __id: `f-${idx}` } as TextItem)
+      items.push({ kind: 'text', role: 'rezultat', text: safeString(m.rezultat), stage, __id: `r-${idx}` } as TextItem)
+    }
+    if (items.length === 0 && stage !== 'computation_complete') {
+      items.push({ kind: 'text', role: 'ai', text: FALLBACK_MESSAGE.ai, stage, __id: 'fb-ai' } as TextItem)
+      items.push({ kind: 'text', role: 'formula', text: FALLBACK_MESSAGE.formula, stage, __id: 'fb-f' } as TextItem)
+      items.push({ kind: 'text', role: 'rezultat', text: FALLBACK_MESSAGE.rezultat, stage, __id: 'fb-r' } as TextItem)
     }
 
     if (STAGES_WITH_IMAGES.includes(stage)) {

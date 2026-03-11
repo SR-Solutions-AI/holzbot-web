@@ -109,6 +109,8 @@ export const formSteps: Step[] = [
     fields: [
       { type: 'select', name: 'bodentiefeFenster', label: 'Bodentiefe Fenster / Glasflächen vorhanden', options: ['Nein', 'Ja – einzelne', 'Ja – mehrere / große Glasflächen'] },
       { type: 'select', name: 'windowQuality', label: 'Fensterart (Preis 2-/3-fach)', options: ['2-fach verglast', '3-fach verglast', '3-fach verglast, Passiv'] },
+      { type: 'select', name: 'doorMaterialInterior', label: 'Material Innentüren', options: ['Standard', 'Holz', 'Glas', 'Weiß lackiert'] },
+      { type: 'select', name: 'doorMaterialExterior', label: 'Material Außentüren', options: ['Standard', 'Holz', 'Aluminium', 'Kunststoff'] },
       { type: 'select', name: 'turhohe', label: 'Türhöhe', options: ['Standard (2m)', 'Erhöht / Sondermaß (2,2+ m)'] },
     ],
   },

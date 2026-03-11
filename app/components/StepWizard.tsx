@@ -2339,7 +2339,8 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
   const totalFloors = 1 + etajeIntermediare
   const INTERIOR_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_tencuiala', 'Lemn': 'interior_lemn', 'Fibrociment': 'interior_fibrociment', 'Mix': 'interior_mix' }
   const EXTERIOR_FACADE_KEY: Record<string, string> = { 'Tencuială': 'exterior_tencuiala', 'Lemn': 'exterior_lemn', 'Fibrociment': 'exterior_fibrociment', 'Mix': 'exterior_mix' }
-  const finishOptionsDedup = useMemo(() => Array.from(new Set([...(preisdatenbankOptionsByTag['interior_finish'] ?? []), ...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])])), [preisdatenbankOptionsByTag['interior_finish'], preisdatenbankOptionsByTag['exterior_facade']])
+  const finishOptionsInterior = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish']])
+  const finishOptionsExterior = useMemo(() => [...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])], [preisdatenbankOptionsByTag['exterior_facade']])
   const displayFinish = (fieldName: string, opt: string) => {
     const isExterior = fieldName.startsWith('fatada')
     const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : INTERIOR_FINISH_KEY[opt]
@@ -2355,7 +2356,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
           <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
           <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
+            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
           </div>
         </label>
       )}
@@ -2366,11 +2367,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
           <div key={floorKey} className="flex gap-4 items-start">
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Innenausbau - {floorLabel}</span>
-              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
+              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
             </label>
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
-              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
+              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })} options={finishOptionsExterior} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
             </label>
           </div>
         )
@@ -2379,11 +2380,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Innenausbau - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
+            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
           </label>
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
-            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm({ ...form, fatadaMansarda: v })} options={finishOptionsDedup} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
+            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm({ ...form, fatadaMansarda: v })} options={finishOptionsExterior} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
           </label>
         </div>
       )}

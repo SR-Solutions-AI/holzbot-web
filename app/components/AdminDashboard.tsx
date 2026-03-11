@@ -178,6 +178,7 @@ export default function AdminDashboard() {
 
   return (
     <>
+    <div className="grid grid-cols-[minmax(200px,280px)_1fr] gap-4 h-full min-h-0">
       {/* Left: users */}
       <aside className="bg-panel/80 border border-black/40 rounded-xl2 p-3 shadow-soft flex flex-col min-w-0 h-full min-h-0">
         <div className="text-sand font-semibold mb-3 shrink-0 flex items-center justify-between gap-2">
@@ -519,8 +520,7 @@ export default function AdminDashboard() {
           </div>
         </div>
       </main>
-
-      {/* Right: live feed stays the same in dashboard/page.tsx */}
+    </div>
 
       {/* Processing Images Modal */}
       {processingModal ? (

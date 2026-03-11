@@ -74,6 +74,7 @@ const CARD_SUBTITLES: Record<string, string> = {
   'Heizungssystem': 'Gas, Wärmepumpe, Elektrisch – €/m²',
   'Lüftung / Wärmerückgewinnung': 'Lüftung mit Wärmerückgewinnung – €/m²',
   'Kamin / Ofen': 'Holzofen, Design, Pelletofen, Einbaukamin, Kachel – Pauschal €',
+  'Kaminabzug': 'Schornstein: Aufschlag pro Geschoss',
   'Haustechnik (Basis)': 'Strom und Abwasser – €/m²',
 }
 
@@ -593,10 +594,23 @@ export default function PreisdatenbankPage() {
           const items: Array<
             | { type: 'card'; sub: (typeof section.subsections)[0]; subsectionIndex: number }
             | { type: 'stack'; subs: Array<{ sub: (typeof section.subsections)[0]; subsectionIndex: number }> }
+            | { type: 'kaminCard'; subs: Array<{ sub: (typeof section.subsections)[0]; subsectionIndex: number }> }
           > = []
           let i = 0
           while (i < section.subsections.length) {
             const sub = section.subsections[i]
+            const nextSub = section.subsections[i + 1]
+            if (sub.title === 'Kaminabzug' && nextSub?.title === 'Kamin / Ofen') {
+              items.push({
+                type: 'kaminCard',
+                subs: [
+                  { sub: section.subsections[i], subsectionIndex: i },
+                  { sub: section.subsections[i + 1], subsectionIndex: i + 1 },
+                ],
+              })
+              i += 2
+              continue
+            }
             if (sub.variables.length === 1) {
               const stackSubs: Array<{ sub: (typeof section.subsections)[0]; subsectionIndex: number }> = []
               while (i < section.subsections.length && section.subsections[i].variables.length === 1) {
@@ -610,7 +624,7 @@ export default function PreisdatenbankPage() {
             }
           }
           const nItems = items.length
-          const wideCount = items.filter((it) => it.type === 'card' && it.sub.variables.length > 4).length
+          const wideCount = items.filter((it) => (it.type === 'card' && it.sub.variables.length > 4) || it.type === 'kaminCard').length
           // Coloane fixe 300px; cardurile „late” (2 coloane interne) ocupă 2 celule ca gap-ul să rămână constant.
           const stepColumns = Math.min(6, maxColumnsThatFit, Math.max(1, nItems + wideCount))
           const stepGridMaxPx = stepColumns * CARD_MAX_PX + (stepColumns - 1) * GAP_PX
@@ -650,7 +664,7 @@ export default function PreisdatenbankPage() {
                             <p className="text-white/90 text-xs mt-0.5">{cardSubtitle(sub.title, sub.subtitle)}</p>
                           </div>
                           <div className="grid grid-cols-1 gap-2">
-                            {sub.variables.filter((v) => !v.isCustomOption).map((v) => (
+                            {sub.variables.map((v) => (
                               <div key={v.id} className="flex flex-col gap-1 group" data-field={v.id}>
                                 <div className="flex items-center gap-2 wiz-label text-sun/90 text-sm">
                                   {editingLabelId === v.id ? (
@@ -689,30 +703,6 @@ export default function PreisdatenbankPage() {
                                 </div>
                               </div>
                             ))}
-                            {sub.variables.some((v) => v.isCustomOption) && (
-                              <>
-                                <p className="text-sand/60 text-xs font-medium mt-1 pt-1 border-t border-white/10">Zusätzliche Optionen</p>
-                                {sub.variables.filter((v) => v.isCustomOption).map((v) => (
-                                  <div key={v.id} className="flex flex-col gap-1 group" data-field={v.id}>
-                                    <div className="flex items-center gap-2 wiz-label text-sun/90 text-sm">
-                                      {editingLabelId === v.id ? (
-                                        <input type="text" className="sun-input flex-1 min-w-0 text-sm" defaultValue={labelWithoutUnit(v.label)} autoFocus onBlur={(e) => handleEditLabel(sectionIndex, subsectionIndex, v.id, e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleEditLabel(sectionIndex, subsectionIndex, v.id, (e.target as HTMLInputElement).value); if (e.key === 'Escape') setEditingLabelId(null) }} />
-                                      ) : (
-                                        <>
-                                          <span className="flex-1 min-w-0 truncate">{labelWithoutUnit(v.label)}</span>
-                                          <button type="button" onClick={() => setEditingLabelId(v.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-[#FF9F0F]" title="Bezeichnung bearbeiten" aria-label="Bezeichnung bearbeiten"><Pencil size={14} /></button>
-                                          <button type="button" onClick={() => handleDelete(sectionIndex, subsectionIndex, v.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-red-400" title="Option entfernen" aria-label="Option entfernen"><Trash2 size={14} /></button>
-                                        </>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <input id={v.id} type="number" min={0} step={getStep(v.unit)} value={v.value} onChange={(e) => updateValue(sectionIndex, subsectionIndex, v.id, parseFloat(e.target.value) || 0)} className="sun-input flex-1 min-w-0 max-w-[100px] text-sm" />
-                                      {v.unit ? <span className="text-sand/70 text-sm shrink-0">{v.unit}</span> : null}
-                                    </div>
-                                  </div>
-                                ))}
-                              </>
-                            )}
                             {addingAt?.sectionIndex === sectionIndex && addingAt?.subsectionIndex === subsectionIndex && (
                               <div className="flex flex-wrap items-center gap-2 text-left text-sm">
                                 <input type="text" placeholder="Bezeichnung" className="sun-input w-32 text-sm" id={`add-label-${sectionIndex}-${subsectionIndex}`} />
@@ -731,6 +721,76 @@ export default function PreisdatenbankPage() {
                         </article>
                       ))}
                     </div>
+                  ) : item.type === 'kaminCard' ? (
+                    <article
+                      key="Kamin / Ofen"
+                      className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-5 flex flex-col min-w-0 w-full max-w-[624px]"
+                      style={{ gridColumn: 'span 2' }}
+                    >
+                      <div className="border-b border-white/10 pb-3 mb-3">
+                        <h3 className="text-base font-semibold text-[#FF9F0F]">Kamin / Ofen</h3>
+                        <p className="text-white/90 text-sm mt-1">{cardSubtitle('Kamin / Ofen', null)}</p>
+                      </div>
+                      <div className="flex flex-col gap-6">
+                        {item.subs.map(({ sub, subsectionIndex }) => (
+                          <div key={sub.title} className="flex flex-col gap-2">
+                            <h4 className="text-sm font-medium text-sand/80 border-b border-white/10 pb-1">{sub.title}</h4>
+                            <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
+                              {sub.variables.map((v) => (
+                                <div key={v.id} className="flex flex-col gap-1 group" data-field={v.id}>
+                                  <div className="flex items-center gap-2 wiz-label text-sun/90 text-sm">
+                                    {editingLabelId === v.id ? (
+                                      <input
+                                        type="text"
+                                        className="sun-input flex-1 min-w-0 text-sm"
+                                        defaultValue={labelWithoutUnit(v.label)}
+                                        autoFocus
+                                        onBlur={(e) => handleEditLabel(sectionIndex, subsectionIndex, v.id, e.target.value)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') handleEditLabel(sectionIndex, subsectionIndex, v.id, (e.target as HTMLInputElement).value)
+                                          if (e.key === 'Escape') setEditingLabelId(null)
+                                        }}
+                                      />
+                                    ) : (
+                                      <>
+                                        <span className="flex-1 min-w-0 truncate">{labelWithoutUnit(v.label)}</span>
+                                        <button type="button" onClick={() => setEditingLabelId(v.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-[#FF9F0F]" title="Bezeichnung bearbeiten" aria-label="Bezeichnung bearbeiten"><Pencil size={14} /></button>
+                                        <button type="button" onClick={() => handleDelete(sectionIndex, subsectionIndex, v.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-red-400" title="Option entfernen" aria-label="Option entfernen"><Trash2 size={14} /></button>
+                                      </>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      id={v.id}
+                                      type="number"
+                                      min={0}
+                                      step={getStep(v.unit)}
+                                      value={v.value}
+                                      onChange={(e) => updateValue(sectionIndex, subsectionIndex, v.id, parseFloat(e.target.value) || 0)}
+                                      className="sun-input flex-1 min-w-0 max-w-[120px] text-sm"
+                                    />
+                                    {v.unit ? <span className="text-sand/70 text-sm shrink-0">{v.unit}</span> : null}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            {sub.fieldTag && sub.fieldTag !== 'foundation_type' && addingAt?.sectionIndex === sectionIndex && addingAt?.subsectionIndex === subsectionIndex ? (
+                              <div className="flex flex-wrap items-center gap-2 text-left text-sm">
+                                <input type="text" placeholder="Bezeichnung" className="sun-input w-32 text-sm" id={`add-label-${sectionIndex}-${subsectionIndex}`} />
+                                <input type="number" min={0} step={0.01} placeholder="Preis" className="sun-input w-20 text-sm" id={`add-value-${sectionIndex}-${subsectionIndex}`} />
+                                {sub.variables[0]?.unit ? <span className="text-sand/70 text-sm">{sub.variables[0].unit}</span> : null}
+                                <button type="button" onClick={() => { const labelEl = document.getElementById(`add-label-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; const valueEl = document.getElementById(`add-value-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; if (labelEl && valueEl && sub.fieldTag) handleAddOption(sectionIndex, subsectionIndex, sub.fieldTag, labelEl.value, parseFloat(valueEl.value) || 0, sub.variables[0]?.unit ?? '') }} className="px-2 py-1 rounded bg-[#FF9F0F] text-white text-sm">Übernehmen</button>
+                                <button type="button" onClick={() => setAddingAt(null)} className="px-2 py-1 rounded border border-white/20 text-sand/80 text-sm">Abbrechen</button>
+                              </div>
+                            ) : sub.fieldTag && sub.fieldTag !== 'foundation_type' ? (
+                              <button type="button" onClick={() => setAddingAt({ sectionIndex, subsectionIndex })} className="flex items-center gap-2 py-1 text-sm text-[#FF9F0F] hover:underline text-left">
+                                <Plus size={14} /> Option hinzufügen
+                              </button>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </article>
                   ) : (
                   <article
                     key={item.sub.title}
@@ -748,7 +808,7 @@ export default function PreisdatenbankPage() {
                     <div
                       className={`grid gap-3 md:gap-4 ${item.sub.variables.length > 4 ? 'grid-cols-2' : 'grid-cols-1'}`}
                     >
-                      {item.sub.variables.filter((v) => !v.isCustomOption).map((v) => (
+                            {item.sub.variables.map((v) => (
                         <div key={v.id} className="flex flex-col gap-1 group" data-field={v.id}>
                           <div className="flex items-center gap-2 wiz-label text-sun/90 text-sm md:text-base">
                             {editingLabelId === v.id ? (
@@ -805,70 +865,6 @@ export default function PreisdatenbankPage() {
                           </div>
                         </div>
                       ))}
-                      {item.sub.variables.some((v) => v.isCustomOption) && (
-                        <>
-                          <p className={`text-sand/60 text-sm font-medium mt-2 pt-2 border-t border-white/10 text-left ${item.sub.variables.length > 4 ? 'col-span-2' : ''}`}>
-                            Zusätzliche Optionen
-                          </p>
-                          {item.sub.variables.filter((v) => v.isCustomOption).map((v) => (
-                            <div key={v.id} className="flex flex-col gap-1 group" data-field={v.id}>
-                              <div className="flex items-center gap-2 wiz-label text-sun/90 text-sm md:text-base">
-                                {editingLabelId === v.id ? (
-                                  <input
-                                    type="text"
-                                    className="sun-input flex-1 min-w-0"
-                                    defaultValue={labelWithoutUnit(v.label)}
-                                    autoFocus
-                                    onBlur={(e) => handleEditLabel(sectionIndex, item.subsectionIndex, v.id, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        handleEditLabel(sectionIndex, item.subsectionIndex, v.id, (e.target as HTMLInputElement).value)
-                                      }
-                                      if (e.key === 'Escape') setEditingLabelId(null)
-                                    }}
-                                  />
-                                ) : (
-                                  <>
-                                    <span className="flex-1 min-w-0">{labelWithoutUnit(v.label)}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingLabelId(v.id)}
-                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-[#FF9F0F]"
-                                      title="Bezeichnung bearbeiten"
-                                      aria-label="Bezeichnung bearbeiten"
-                                    >
-                                      <Pencil size={14} />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDelete(sectionIndex, item.subsectionIndex, v.id)}
-                                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-sand/70 hover:text-red-400"
-                                      title="Option entfernen"
-                                      aria-label="Option entfernen"
-                                    >
-                                      <Trash2 size={14} />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  id={v.id}
-                                  type="number"
-                                  min={0}
-                                  step={getStep(v.unit)}
-                                  value={v.value}
-                                  onChange={(e) =>
-                                    updateValue(sectionIndex, item.subsectionIndex, v.id, parseFloat(e.target.value) || 0)
-                                  }
-                                  className="sun-input flex-1 min-w-0 max-w-[120px] md:max-w-[140px]"
-                                />
-                                {v.unit ? <span className="text-sand/70 text-sm md:text-base shrink-0">{v.unit}</span> : null}
-                              </div>
-                            </div>
-                          ))}
-                        </>
-                      )}
                       {addingAt?.sectionIndex === sectionIndex && addingAt?.subsectionIndex === item.subsectionIndex ? (
                         <div className={`flex flex-wrap items-center gap-2 text-left ${item.sub.variables.length > 4 ? 'col-span-2' : ''}`}>
                           <input

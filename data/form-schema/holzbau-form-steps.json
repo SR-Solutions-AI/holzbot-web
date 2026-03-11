@@ -205,6 +205,8 @@
       "fields": [
         { "type": "select", "name": "bodentiefeFenster", "label": "Bodentiefe Fenster (nur für Flächenberechnung)", "options": ["Nein", "Ja – einzelne", "Ja – mehrere / große Glasflächen"], "tag": "floor_level_windows" },
         { "type": "select", "name": "windowQuality", "label": "Fensterart (Preis: 2- oder 3-fach)", "options": ["2-fach verglast", "3-fach verglast", "3-fach verglast, Passiv"], "tag": "window_quality" },
+        { "type": "select", "name": "doorMaterialInterior", "label": "Material Innentüren", "options": ["Standard", "Holz", "Glas", "Weiß lackiert"], "tag": "door_material_interior" },
+        { "type": "select", "name": "doorMaterialExterior", "label": "Material Außentüren", "options": ["Standard", "Holz", "Aluminium", "Kunststoff"], "tag": "door_material_exterior" },
         { "type": "select", "name": "turhohe", "label": "Türhöhe (nur für Flächenberechnung)", "options": ["Standard (2m)", "Erhöht / Sondermaß (2,2+ m)"], "tag": "door_height" }
       ],
       "priceSections": [
@@ -219,11 +221,25 @@
           ]
         },
         {
-          "title": "Türen",
-          "subtitle": "Preis pro m² (Höhe nur für Flächenberechnung)",
+          "title": "Innentüren",
+          "subtitle": "Preis pro m² je nach Material Innentüren",
+          "fieldTag": "door_material_interior",
           "variables": [
-            { "key": "door_interior_price", "label": "Innen (€/m²)", "unit": "€/m²", "value": 380 },
-            { "key": "door_exterior_price", "label": "Außen (€/m²)", "unit": "€/m²", "value": 480 }
+            { "key": "door_interior_standard", "label": "Standard (€/m²)", "unit": "€/m²", "value": 380 },
+            { "key": "door_interior_holz", "label": "Holz (€/m²)", "unit": "€/m²", "value": 420 },
+            { "key": "door_interior_glas", "label": "Glas (€/m²)", "unit": "€/m²", "value": 520 },
+            { "key": "door_interior_weiss_lackiert", "label": "Weiß lackiert (€/m²)", "unit": "€/m²", "value": 400 }
+          ]
+        },
+        {
+          "title": "Außentüren",
+          "subtitle": "Preis pro m² je nach Material Außentüren",
+          "fieldTag": "door_material_exterior",
+          "variables": [
+            { "key": "door_exterior_standard", "label": "Standard (€/m²)", "unit": "€/m²", "value": 480 },
+            { "key": "door_exterior_holz", "label": "Holz (€/m²)", "unit": "€/m²", "value": 550 },
+            { "key": "door_exterior_aluminium", "label": "Aluminium (€/m²)", "unit": "€/m²", "value": 620 },
+            { "key": "door_exterior_kunststoff", "label": "Kunststoff (€/m²)", "unit": "€/m²", "value": 420 }
           ]
         }
       ]
@@ -275,6 +291,7 @@
         {
           "title": "Innenausbau",
           "subtitle": "Innenausbau pro m²",
+          "fieldTag": "interior_finish",
           "variables": [
             { "key": "interior_tencuiala", "label": "Putz (€/m²)", "unit": "€/m²", "value": 35 },
             { "key": "interior_lemn", "label": "Holz (€/m²)", "unit": "€/m²", "value": 55 },
@@ -285,6 +302,7 @@
         {
           "title": "Fassade",
           "subtitle": "Fassade pro m²",
+          "fieldTag": "exterior_facade",
           "variables": [
             { "key": "exterior_tencuiala", "label": "Putz (€/m²)", "unit": "€/m²", "value": 85 },
             { "key": "exterior_lemn", "label": "Holz (€/m²)", "unit": "€/m²", "value": 95 },
@@ -368,6 +386,13 @@
           "subtitle": "Feld „Lüftung / Wärmerückgewinnung“",
           "variables": [
             { "key": "ventilation_base_price", "label": "Lüftung (€/m²)", "unit": "€/m²", "value": 55 }
+          ]
+        },
+        {
+          "title": "Kaminabzug",
+          "subtitle": "Schornstein pro Geschoss",
+          "variables": [
+            { "key": "horn_price_per_floor", "label": "Pro Geschoss (€)", "unit": "€", "value": 1500 }
           ]
         },
         {
@@ -582,12 +607,25 @@
             ]
           },
           {
-            "title": "Türen",
-            "subtitle": "Preis pro m² (Höhe nur für Flächenberechnung)",
-            "fieldTag": "door_height",
+            "title": "Innentüren",
+            "subtitle": "Preis pro m² je nach Material Innentüren",
+            "fieldTag": "door_material_interior",
             "variables": [
-              { "key": "door_interior_price", "label": "Innen (€/m²)", "unit": "€/m²", "value": 380 },
-              { "key": "door_exterior_price", "label": "Außen (€/m²)", "unit": "€/m²", "value": 480 }
+              { "key": "door_interior_standard", "label": "Standard (€/m²)", "unit": "€/m²", "value": 380 },
+              { "key": "door_interior_holz", "label": "Holz (€/m²)", "unit": "€/m²", "value": 420 },
+              { "key": "door_interior_glas", "label": "Glas (€/m²)", "unit": "€/m²", "value": 520 },
+              { "key": "door_interior_weiss_lackiert", "label": "Weiß lackiert (€/m²)", "unit": "€/m²", "value": 400 }
+            ]
+          },
+          {
+            "title": "Außentüren",
+            "subtitle": "Preis pro m² je nach Material Außentüren",
+            "fieldTag": "door_material_exterior",
+            "variables": [
+              { "key": "door_exterior_standard", "label": "Standard (€/m²)", "unit": "€/m²", "value": 480 },
+              { "key": "door_exterior_holz", "label": "Holz (€/m²)", "unit": "€/m²", "value": 550 },
+              { "key": "door_exterior_aluminium", "label": "Aluminium (€/m²)", "unit": "€/m²", "value": 620 },
+              { "key": "door_exterior_kunststoff", "label": "Kunststoff (€/m²)", "unit": "€/m²", "value": 420 }
             ]
           }
         ]
@@ -722,6 +760,13 @@
             "fieldTag": "ventilation",
             "variables": [
               { "key": "ventilation_base_price", "label": "Lüftung (€/m²)", "unit": "€/m²", "value": 55 }
+            ]
+          },
+          {
+            "title": "Kaminabzug",
+            "subtitle": "Schornstein pro Geschoss",
+            "variables": [
+              { "key": "horn_price_per_floor", "label": "Pro Geschoss (€)", "unit": "€", "value": 1500 }
             ]
           },
           {
