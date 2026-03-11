@@ -556,23 +556,21 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
                 onClick={() => {
                   if (isCreating) return
                   setSelected(it.id)
-                  ;(async () => {
-                    // Dacă oferta este în draft, deschidem întotdeauna formularul (fără spectator/rulare)
-                    if (!isDraftStatus) {
-                      try {
-                        const hist = await apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(it.id)}`)
+                  // Actualizare instantă: resetează panoul și încarcă oferta; apoi, în background, verificăm dacă rulează
+                  window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: it.id } }))
+                  if (!isDraftStatus) {
+                    apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(it.id)}`)
+                      .then((hist: any) => {
                         if (hist?.run_id && hist?.run_status === 'running') {
                           window.dispatchEvent(
                             new CustomEvent('offer:compute-started', {
                               detail: { offerId: it.id, runId: hist.run_id },
                             })
                           )
-                          return
                         }
-                      } catch (_) {}
-                    }
-                    window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: it.id } }))
-                  })()
+                      })
+                      .catch(() => {})
+                  }
                 }}
                 className="w-full text-left px-3 py-2.5 pr-9"
               >
