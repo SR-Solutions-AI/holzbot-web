@@ -15,11 +15,16 @@ export default function DashboardHeader() {
   const isPreisdatenbank = pathname?.includes('/preisdatenbank')
   const isSettingsArea = pathname?.includes('/settings') || isPreisdatenbank
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [me, setMe] = useState<{ user?: { email?: string | null; role?: string | null }, tenant?: { config?: any } | null } | null>(null)
+  const [me, setMe] = useState<{ user?: { email?: string | null; role?: string | null; can_manage_org?: boolean }, tenant?: { config?: any } | null } | null>(null)
+  const [wrongApp, setWrongApp] = useState<{ forApp: string; loginUrl: string } | null>(null)
   const mountedRef = useRef(true)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const isAdmin = (me?.user as any)?.role === 'admin'
+  const canSeeOrgSettings =
+    (me?.user as any)?.role === 'org_leader' || (me?.user as any)?.can_manage_org === true
+  const isSiteAdmin = (me?.user as any)?.role === 'admin'
+  // ADMIN vede doar interfața admin; USER și ORGANIZATION LEADER văd Preisdatenbank
+  const canSeePreisdatenbank = !isSiteAdmin
 
   // --- FUNCTIA DE LOGOUT (FIXED) ---
   const handleLogout = async () => {
@@ -38,7 +43,16 @@ export default function DashboardHeader() {
   const fetchMe = async () => {
     try {
       const data = await apiFetch('/me')
-      if (mountedRef.current) setMe(data)
+      if (!mountedRef.current) return
+      // Conturile betonbau (Betonbot) nu au acces aici: sign out + mesaj (fără redirect)
+      if (data?.tenant?.slug === 'betonbau') {
+        await supabase.auth.signOut()
+        setMe(null)
+        setWrongApp({ forApp: 'Betonbot', loginUrl: process.env.NEXT_PUBLIC_BETONBOT_ORIGIN ? `${process.env.NEXT_PUBLIC_BETONBOT_ORIGIN}/login` : 'http://localhost:3600/login' })
+        return
+      }
+      setWrongApp(null)
+      setMe(data)
     } catch {
       if (mountedRef.current) setMe(null)
     }
@@ -72,6 +86,21 @@ export default function DashboardHeader() {
     (tenantConfig?.logo_url ?? tenantConfig?.logoUrl) as string | undefined
   const tenantLogoUrl =
     (tenantLogoUrlRaw && tenantLogoUrlRaw.startsWith('http') ? tenantLogoUrlRaw : undefined)
+
+  if (wrongApp) {
+    return (
+      <header className="h-[4.5rem] flex items-center justify-center bg-coffee-850 border-b border-black/50 shrink-0 z-40">
+        <div className="text-center px-4">
+          <p className="text-sand/90 text-sm">
+            Dieses Konto ist für {wrongApp.forApp}. Bitte melden Sie sich dort an:
+          </p>
+          <a href={wrongApp.loginUrl} className="text-[#FF9F0F] font-medium underline mt-1 inline-block">
+            {wrongApp.loginUrl}
+          </a>
+        </div>
+      </header>
+    )
+  }
 
   return (
     <header className="h-[4.5rem] flex items-center bg-coffee-850 border-b border-black/50 shadow-soft relative shrink-0 z-40">
@@ -137,7 +166,7 @@ export default function DashboardHeader() {
                   </button>
                   {settingsOpen && (
                     <div className="absolute right-0 top-full mt-1 py-1 w-72 rounded-xl bg-coffee-850 border border-white/20 shadow-xl z-50">
-                      {isAdmin && (
+                      {canSeeOrgSettings && (
                         <Link
                           href="/dashboard/settings/organisation"
                           onClick={() => setSettingsOpen(false)}
@@ -147,14 +176,16 @@ export default function DashboardHeader() {
                           <span className="leading-snug">Organisationseinstellungen</span>
                         </Link>
                       )}
-                      <Link
-                        href="/dashboard/preisdatenbank"
-                        onClick={() => setSettingsOpen(false)}
-                        className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
-                      >
-                        <Database size={18} className="shrink-0 text-sand/80" />
-                        <span className="leading-snug">Preisdatenbank</span>
-                      </Link>
+                      {canSeePreisdatenbank && (
+                        <Link
+                          href="/dashboard/preisdatenbank"
+                          onClick={() => setSettingsOpen(false)}
+                          className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                        >
+                          <Database size={18} className="shrink-0 text-sand/80" />
+                          <span className="leading-snug">Preisdatenbank</span>
+                        </Link>
+                      )}
                     </div>
                   )}
                 </>

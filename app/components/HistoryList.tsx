@@ -149,9 +149,10 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
         const me = await apiFetch('/me')
         const u = (me as any)?.user?.id
         const role = (me as any)?.user?.role
+        const canManageOrg = (me as any)?.user?.can_manage_org === true
         if (!cancelled) {
           setUserId(u ?? null)
-          setIsAdmin(role === 'admin')
+          setIsAdmin(role === 'org_leader' || role === 'admin' || canManageOrg)
         }
         const [typesRes, membersRes] = await Promise.all([
           apiFetch('/offers/types').catch(() => ({ items: [] })),

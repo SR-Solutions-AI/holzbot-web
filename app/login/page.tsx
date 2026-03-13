@@ -6,6 +6,11 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { LogIn, ArrowLeft, Mail, Lock } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
+import { apiFetch } from '../lib/supabaseClient'
+
+const BETONBOT_LOGIN_URL = process.env.NEXT_PUBLIC_BETONBOT_ORIGIN
+  ? `${process.env.NEXT_PUBLIC_BETONBOT_ORIGIN}/login`
+  : 'http://localhost:3600/login'
 
 const DE = {
   title: 'Anmeldung',
@@ -14,6 +19,7 @@ const DE = {
   submit: 'Anmelden',
   back: 'Zurück zur Startseite',
   genericError: 'Anmeldung fehlgeschlagen.',
+  wrongApp: 'Dieses Konto ist für Betonbot. Bitte melden Sie sich dort an:',
 }
 
 function toGermanError(msg: string | null | undefined): string {
@@ -70,12 +76,31 @@ export default function LoginPage() {
     if (err) {
       setError(err.message)
       setSubmitting(false)
-    } else {
-      router.push('/')
+      return
     }
+
+    try {
+      const me = await apiFetch('/me')
+      if ((me?.tenant as any)?.slug === 'betonbau') {
+        await supabase.auth.signOut()
+        setError(`${DE.wrongApp} ${BETONBOT_LOGIN_URL}`)
+        setSubmitting(false)
+        return
+      }
+    } catch {
+      setError(DE.genericError)
+      setSubmitting(false)
+      return
+    }
+
+    router.push('/')
+    setSubmitting(false)
   }
 
   const errorDe = toGermanError(error || undefined)
+  const errorDisplay = error && (error.includes('Betonbot') || error.includes('Holzbot'))
+    ? error
+    : errorDe
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-coffee-900 flex flex-col items-center justify-center px-4 py-8">
@@ -195,7 +220,7 @@ export default function LoginPage() {
                 transition={{ duration: 0.25 }}
                 className="overflow-hidden rounded-xl border border-[#FF9F0F]/40 bg-[#FF9F0F]/10 px-3 py-2.5 text-center text-sm text-[#FF9F0F]"
               >
-                {errorDe}
+                {errorDisplay}
               </motion.p>
             )}
           </AnimatePresence>

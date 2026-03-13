@@ -37,10 +37,9 @@ export default function Home() {
       try {
         const me = await apiFetch('/me')
         const role = (me?.user?.role ?? null) as string | null
-        const canDownloadAdminPdf = me?.tenant?.can_download_admin_pdf === true
         if (mounted) {
-          setIsOrgAdmin(role === 'admin')
-          setIsSiteAdmin(role === 'admin' && canDownloadAdminPdf)
+          setIsOrgAdmin(role === 'org_leader' || (me?.user as any)?.can_manage_org === true)
+          setIsSiteAdmin(role === 'admin')
         }
       } catch {
         if (mounted) {

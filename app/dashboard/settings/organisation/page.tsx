@@ -29,8 +29,8 @@ function RoleDropdown({
   onChange,
   id,
 }: {
-  value: 'user' | 'admin'
-  onChange: (v: 'user' | 'admin') => void
+  value: 'user' | 'org_leader'
+  onChange: (v: 'user' | 'org_leader') => void
   id?: string
 }) {
   const [open, setOpen] = useState(false)
@@ -40,7 +40,7 @@ function RoleDropdown({
 
   useEffect(() => {
     if (!open || !triggerRef.current) return
-    const MIN_W = 200
+    const MIN_W = 240
     const MENU_H = 120
     const GAP = 6
     const update = () => {
@@ -73,7 +73,7 @@ function RoleDropdown({
     return () => document.removeEventListener('click', handleClickOutside)
   }, [open])
 
-  const label = value === 'admin' ? 'Admin' : 'User'
+  const label = value === 'org_leader' ? 'Organization Leader' : 'User'
 
   return (
     <div ref={triggerRef} className="relative" id={id}>
@@ -95,7 +95,7 @@ function RoleDropdown({
             className="fixed z-[9998] rounded-xl bg-coffee-850 border border-white/20 shadow-xl shadow-black/40 overflow-hidden py-1.5"
             style={{ top: pos.top, left: pos.left, width: pos.width }}
           >
-            {(['user', 'admin'] as const).map((opt) => {
+            {(['user', 'org_leader'] as const).map((opt) => {
               const isSelected = value === opt
               return (
                 <button
@@ -110,7 +110,7 @@ function RoleDropdown({
                   }`}
                 >
                   {isSelected ? <Check size={16} className="shrink-0" /> : <span className="w-5" />}
-                  {opt === 'admin' ? 'Admin' : 'User'}
+                  {opt === 'org_leader' ? 'Organization Leader' : 'User'}
                 </button>
               )
             })}
@@ -146,11 +146,11 @@ export default function OrganisationSettingsPage() {
   const [addEmail, setAddEmail] = useState('')
   const [addFullName, setAddFullName] = useState('')
   const [addPassword, setAddPassword] = useState('')
-  const [addRole, setAddRole] = useState<'user' | 'admin'>('user')
+  const [addRole, setAddRole] = useState<'user' | 'org_leader'>('user')
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [editFullName, setEditFullName] = useState('')
-  const [editRole, setEditRole] = useState<'user' | 'admin'>('user')
+  const [editRole, setEditRole] = useState<'user' | 'org_leader'>('user')
   const [editPassword, setEditPassword] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -162,9 +162,11 @@ export default function OrganisationSettingsPage() {
       try {
         const me = await apiFetch('/me')
         const role = (me?.user as any)?.role
+        const canManageOrg = (me?.user as any)?.can_manage_org === true
+        const canSeeOrgSettings = role === 'org_leader' || canManageOrg
         if (!cancelled) {
-          setIsAdmin(role === 'admin')
-          if (role !== 'admin') {
+          setIsAdmin(canSeeOrgSettings)
+          if (!canSeeOrgSettings) {
             router.replace('/dashboard')
             return
           }
@@ -511,7 +513,7 @@ export default function OrganisationSettingsPage() {
                           <div className="min-w-0">
                             <div className="font-medium text-white truncate">{m.full_name || m.email || '—'}</div>
                             <div className="text-sm text-sand/70 truncate">{m.email}</div>
-                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{m.role === 'admin' ? 'Admin' : 'User'}</span>
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{m.role === 'org_leader' || m.role === 'admin' ? 'Organization Leader' : 'User'}</span>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <button
@@ -519,7 +521,7 @@ export default function OrganisationSettingsPage() {
                               onClick={() => {
                                 setEditingId(m.id)
                                 setEditFullName(m.full_name || '')
-                                setEditRole((m.role === 'admin' ? 'admin' : 'user') as 'user' | 'admin')
+                                setEditRole((m.role === 'org_leader' || m.role === 'admin' ? 'org_leader' : 'user') as 'user' | 'org_leader')
                                 setEditPassword('')
                               }}
                               className="p-2 rounded text-sand/70 hover:text-[#FF9F0F]"
