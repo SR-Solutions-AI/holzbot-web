@@ -39,8 +39,11 @@ export async function loadPdfJs() {
       }
       
       // Set worker source
+      // În loc de: pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+      // Pune asta:
       if (pdfjs.GlobalWorkerOptions) {
-        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+        // Folosim versiunea din pachet ca să fim siguri că se potrivesc mereu
+        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
       }
       
       pdfjsModule = pdfjs
