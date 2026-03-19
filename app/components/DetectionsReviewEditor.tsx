@@ -1,4 +1,10 @@
 'use client'
+/**
+ * Editor verificare detecții: camere (poligoane + etichete) și uși/geamuri.
+ * Datele vin din detections_review_data.json (API compute/detections-review-data):
+ * - Etichete camere = room_scales.json (pipeline per-crop Gemini, OCR exact).
+ * - Tipuri uși/geamuri = doors_types.json (Gemini) + euristică aspect – aceeași clasificare ca în LiveFeed.
+ */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
@@ -72,7 +78,7 @@ export function DetectionsReviewEditor({
   const [loading, setLoading] = useState(true)
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null)
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
-  const [newDoorType, setNewDoorType] = useState<'door' | 'window'>('door')
+  const [newDoorType, setNewDoorType] = useState<'door' | 'window' | 'garage_door' | 'stairs'>('door')
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [roomTypePopoverIndex, setRoomTypePopoverIndex] = useState<number | null>(null)
   const [history, setHistory] = useState<PlanData[][]>([])
@@ -138,6 +144,7 @@ export function DetectionsReviewEditor({
             roomName: (r.roomName ?? r.room_name ?? r.roomType ?? 'Raum').trim() || 'Raum',
             points: mergeClosePolygonPoints(r.points || [], MERGE_VERTEX_DIST_PX),
           })),
+          // Tipuri uși/geamuri = aceeași clasificare ca LiveFeed (detections_review_doors.png): backend doors_types.json + euristică
           doors: (p.doors || []).map((d: DoorRect) => ({
             ...d,
             type: normalizeDoorType(d.type),
@@ -368,8 +375,8 @@ export function DetectionsReviewEditor({
       </div>
 
       {(tool === 'add' && activeTab === 'doors') && (
-        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5">
-          <span className="text-sand/70 text-xs">Tür oder Fenster:</span>
+        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
+          <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Tür, Fenster, Treppe:</span>
           <button
             type="button"
             onClick={() => setNewDoorType('door')}
@@ -384,6 +391,20 @@ export function DetectionsReviewEditor({
           >
             Fenster
           </button>
+          <button
+            type="button"
+            onClick={() => setNewDoorType('garage_door')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${newDoorType === 'garage_door' ? 'bg-purple-500/30 text-purple-200 border border-purple-400/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Garagentor
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewDoorType('stairs')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${newDoorType === 'stairs' ? 'bg-orange-600/30 text-orange-200 border border-orange-500/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Treppe
+          </button>
         </div>
       )}
       {tool === 'select' && activeTab === 'doors' && selectedPolygonIndex !== null && plansData[planIndexClamped]?.doors[selectedPolygonIndex] && (
@@ -396,8 +417,8 @@ export function DetectionsReviewEditor({
             const activeClasses: Record<string, string> = {
               door: 'bg-[#22c55e]/30 text-green-300 border border-green-400/50',
               window: 'bg-blue-500/30 text-blue-200 border border-blue-400/50',
-              garage_door: 'bg-orange-500/30 text-orange-200 border border-orange-400/50',
-              stairs: 'bg-gray-500/30 text-gray-200 border border-gray-400/50',
+              garage_door: 'bg-purple-500/30 text-purple-200 border border-purple-400/50',
+              stairs: 'bg-orange-600/30 text-orange-200 border border-orange-500/50',
             }
             return (
               <button
