@@ -53,8 +53,57 @@ type Tool = 'select' | 'add' | 'remove' | 'edit'
 type PlanData = {
   imageWidth: number
   imageHeight: number
+  metersPerPixel?: number | null
   rooms: RoomPolygon[]
   doors: DoorRect[]
+}
+
+type DoorType = 'door' | 'window' | 'garage_door' | 'stairs'
+const isEditableOpeningType = (t?: string) => {
+  const nt = normalizeDoorType(t)
+  return nt === 'door' || nt === 'window'
+}
+const round2 = (v: number) => Math.round(v * 100) / 100
+
+function computeOpeningWidthMeters(door: DoorRect, metersPerPixel: number | null | undefined): number | null {
+  const [x1, y1, x2, y2] = door.bbox
+  const widthPx = Math.abs(x2 - x1)
+  const heightPx = Math.abs(y2 - y1)
+  const normalizedType = normalizeDoorType(door.type) as DoorType
+  const pxValue = normalizedType === 'window' ? Math.max(widthPx, heightPx) : Math.min(widthPx, heightPx)
+  if (!metersPerPixel || metersPerPixel <= 0) return null
+  return round2(pxValue * metersPerPixel)
+}
+
+function computeWindowHeightMeters(widthMeters: number): number {
+  if (widthMeters <= 1) return 0.8
+  if (widthMeters <= 2) return 1.5
+  return 2.0
+}
+
+function computeOpeningHeightMeters(door: DoorRect, widthMeters: number | null): number | null {
+  if (widthMeters == null) return null
+  const normalizedType = normalizeDoorType(door.type) as DoorType
+  return round2(normalizedType === 'window' ? computeWindowHeightMeters(widthMeters) : 2.0)
+}
+
+function withAutoDoorDimensions(
+  doors: DoorRect[],
+  metersPerPixel: number | null | undefined
+): DoorRect[] {
+  return doors.map((door) => {
+    if (door.dimensionsEdited && typeof door.width_m === 'number' && typeof door.height_m === 'number') {
+      return door
+    }
+    const width_m = computeOpeningWidthMeters(door, metersPerPixel)
+    const height_m = computeOpeningHeightMeters(door, width_m)
+    return {
+      ...door,
+      ...(typeof width_m === 'number' ? { width_m } : {}),
+      ...(typeof height_m === 'number' ? { height_m } : {}),
+      dimensionsEdited: Boolean(door.dimensionsEdited),
+    }
+  })
 }
 
 type DetectionsReviewEditorProps = {
@@ -78,9 +127,13 @@ export function DetectionsReviewEditor({
   const [loading, setLoading] = useState(true)
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null)
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
-  const [newDoorType, setNewDoorType] = useState<'door' | 'window' | 'garage_door' | 'stairs'>('door')
+  const [newDoorType, setNewDoorType] = useState<DoorType>('door')
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
+  const [pendingNewDoorBbox, setPendingNewDoorBbox] = useState<[number, number, number, number] | null>(null)
   const [roomTypePopoverIndex, setRoomTypePopoverIndex] = useState<number | null>(null)
+  const [hoverDoorInfo, setHoverDoorInfo] = useState<{ index: number; x: number; y: number } | null>(null)
+  const [doorEditDialog, setDoorEditDialog] = useState<{ index: number; width: string; height: string } | null>(null)
+  const [newDoorDims, setNewDoorDims] = useState<{ width: string; height: string }>({ width: '', height: '' })
   const [history, setHistory] = useState<PlanData[][]>([])
   const historyLimit = 50
   const skipNextPushRef = useRef(false)
@@ -108,6 +161,17 @@ export function DetectionsReviewEditor({
       return h.slice(0, -1)
     })
   }, [])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isUndo = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey
+      if (!isUndo) return
+      e.preventDefault()
+      handleUndo()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [handleUndo])
 
   const ROOM_TYPE_OPTIONS = ['Garage', 'Balkon', 'Wintergarten', 'Sonstige'] as const
   type RoomTypeOption = typeof ROOM_TYPE_OPTIONS[number]
@@ -138,6 +202,7 @@ export function DetectionsReviewEditor({
         const plans = Array.isArray(res?.plans) ? res.plans : []
         const normalized = plans.map((p) => ({
           ...p,
+          metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
           rooms: (p.rooms || []).map((r: RoomPolygon & { room_name?: string }) => ({
             ...r,
             roomType: r.roomType ?? 'Raum',
@@ -145,10 +210,10 @@ export function DetectionsReviewEditor({
             points: mergeClosePolygonPoints(r.points || [], MERGE_VERTEX_DIST_PX),
           })),
           // Tipuri uși/geamuri = aceeași clasificare ca LiveFeed (detections_review_doors.png): backend doors_types.json + euristică
-          doors: (p.doors || []).map((d: DoorRect) => ({
+          doors: withAutoDoorDimensions((p.doors || []).map((d: DoorRect) => ({
             ...d,
             type: normalizeDoorType(d.type),
-          })),
+          })), typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null),
         }))
         setPlansData(normalized)
         setFloorLabels(Array.isArray(res?.floorLabels) ? res.floorLabels : [])
@@ -171,7 +236,8 @@ export function DetectionsReviewEditor({
     setPlansData((prev) => {
       const next = [...prev]
       if (planIdx >= next.length) return next
-      next[planIdx] = { ...next[planIdx], doors }
+      const plan = next[planIdx]
+      next[planIdx] = { ...plan, doors: withAutoDoorDimensions(doors, plan?.metersPerPixel) }
       return next
     })
   }, [])
@@ -220,6 +286,24 @@ export function DetectionsReviewEditor({
     setSelectedPolygonIndex(null)
   }, [tabPerPlan, selectedPolygonIndex, planIndexClamped])
 
+  useEffect(() => {
+    const onDeleteKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isTypingTarget =
+        !!target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      if (isTypingTarget) return
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (selectedPolygonIndex == null) return
+      e.preventDefault()
+      handleRemoveSelected()
+    }
+    window.addEventListener('keydown', onDeleteKey)
+    return () => window.removeEventListener('keydown', onDeleteKey)
+  }, [selectedPolygonIndex, handleRemoveSelected])
+
   const handleRequestCloseNewPolygon = useCallback(() => {
     if (!newPolygonPoints || newPolygonPoints.length < 3 || !currentPlan) return
     setPendingNewRoomPoints([...newPolygonPoints])
@@ -248,6 +332,21 @@ export function DetectionsReviewEditor({
     setDoors(planIndexClamped, next)
   }, [selectedPolygonIndex, planIndexClamped, plansData, setDoors, pushHistory])
 
+  const handleSaveDoorDimensions = useCallback(() => {
+    if (!doorEditDialog || planIndexClamped >= plansData.length) return
+    const width = round2(Number(doorEditDialog.width))
+    const height = round2(Number(doorEditDialog.height))
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    const plan = plansData[planIndexClamped]
+    if (!plan || doorEditDialog.index < 0 || doorEditDialog.index >= plan.doors.length) return
+    pushHistory()
+    const next = plan.doors.map((d, i) =>
+      i !== doorEditDialog.index ? d : { ...d, width_m: width, height_m: height, dimensionsEdited: true }
+    )
+    setDoors(planIndexClamped, next)
+    setDoorEditDialog(null)
+  }, [doorEditDialog, planIndexClamped, plansData, pushHistory, setDoors])
+
   const handlePickEditRoomType = useCallback((roomType: RoomTypeOption) => {
     if (roomTypePopoverIndex === null || planIndexClamped >= plansData.length) return
     const plan = plansData[planIndexClamped]
@@ -262,13 +361,13 @@ export function DetectionsReviewEditor({
   useEffect(() => {
     setSelectedPolygonIndex(null)
     setNewPolygonPoints(null)
+    setHoverDoorInfo(null)
+    setDoorEditDialog(null)
+    setPendingNewDoorBbox(null)
   }, [planIndex])
 
   useEffect(() => {
     if (newPolygonPoints?.length !== 2 || getTabForPlan(planIndexClamped) !== 'doors') return
-    const plan = plansData[planIndexClamped]
-    if (!plan) return
-    pushHistory()
     const [a, b] = newPolygonPoints
     const bbox: [number, number, number, number] = [
       Math.min(a[0], b[0]),
@@ -276,11 +375,34 @@ export function DetectionsReviewEditor({
       Math.max(a[0], b[0]),
       Math.max(a[1], b[1]),
     ]
-    setDoors(planIndexClamped, [...plan.doors, { bbox, type: newDoorType }])
+    setPendingNewDoorBbox(bbox)
+    setNewDoorDims({ width: '', height: '' })
     setNewPolygonPoints(null)
-  }, [newPolygonPoints, planIndexClamped, newDoorType, getTabForPlan, setDoors, plansData, pushHistory])
+  }, [newPolygonPoints, planIndexClamped, getTabForPlan])
 
   const activeTab = getTabForPlan(planIndexClamped)
+  const handleCreateNewDoorWithDimensions = useCallback(() => {
+    if (!pendingNewDoorBbox || planIndexClamped >= plansData.length) return
+    const width = round2(Number(newDoorDims.width))
+    const height = round2(Number(newDoorDims.height))
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    const plan = plansData[planIndexClamped]
+    if (!plan) return
+    pushHistory()
+    setDoors(planIndexClamped, [
+      ...plan.doors,
+      {
+        bbox: pendingNewDoorBbox,
+        type: newDoorType,
+        width_m: width,
+        height_m: height,
+        dimensionsEdited: true,
+      },
+    ])
+    setPendingNewDoorBbox(null)
+    setNewDoorDims({ width: '', height: '' })
+  }, [pendingNewDoorBbox, planIndexClamped, plansData, newDoorDims, newDoorType, pushHistory, setDoors])
+
   const toolHint =
     tool === 'select'
       ? 'Auf Element klicken und ziehen zum Verschieben'
@@ -519,7 +641,7 @@ export function DetectionsReviewEditor({
                   </div>
                 </div>
                 <div className="relative w-full min-h-[38vh] max-h-[50vh] rounded-lg overflow-hidden border border-[#FF9F0F]/50 ring-1 ring-[#FF9F0F]/30 bg-black/30">
-                  {(pendingNewRoomPoints || (roomTypePopoverIndex !== null && plansData[planIndexClamped]?.rooms[roomTypePopoverIndex])) && (
+                  {(pendingNewRoomPoints || pendingNewDoorBbox || (roomTypePopoverIndex !== null && plansData[planIndexClamped]?.rooms[roomTypePopoverIndex])) && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50 rounded-lg">
                       <div className="flex flex-wrap items-center justify-center gap-2 p-4 bg-[#1a1a1a] rounded-xl border-2 border-[#FF9F0F]/60 shadow-xl max-w-md">
                         {pendingNewRoomPoints ? (
@@ -536,6 +658,44 @@ export function DetectionsReviewEditor({
                               </button>
                             ))}
                             <button type="button" onClick={() => setPendingNewRoomPoints(null)} className="text-sand/60 text-sm hover:underline mt-1">Abbrechen</button>
+                          </>
+                        ) : pendingNewDoorBbox ? (
+                          <>
+                            <span className="text-white text-sm font-medium w-full text-center">Maße für neues Element (m):</span>
+                            <div className="w-full flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={0.01}
+                                step={0.01}
+                                placeholder="Breite (m)"
+                                value={newDoorDims.width}
+                                onChange={(e) => setNewDoorDims((prev) => ({ ...prev, width: e.target.value }))}
+                                className="w-full rounded-md bg-black/40 border border-white/20 text-white px-2 py-1 text-sm"
+                              />
+                              <input
+                                type="number"
+                                min={0.01}
+                                step={0.01}
+                                placeholder="Höhe (m)"
+                                value={newDoorDims.height}
+                                onChange={(e) => setNewDoorDims((prev) => ({ ...prev, height: e.target.value }))}
+                                className="w-full rounded-md bg-black/40 border border-white/20 text-white px-2 py-1 text-sm"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleCreateNewDoorWithDimensions}
+                              className="px-4 py-2 rounded-lg text-sm font-medium bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/60 hover:bg-[#FF9F0F]/35"
+                            >
+                              Speichern
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setPendingNewDoorBbox(null); setNewDoorDims({ width: '', height: '' }) }}
+                              className="text-sand/60 text-sm hover:underline mt-1"
+                            >
+                              Abbrechen
+                            </button>
                           </>
                         ) : roomTypePopoverIndex !== null ? (
                           <>
@@ -599,7 +759,78 @@ export function DetectionsReviewEditor({
                     onEditStart={pushHistory}
                     onRoomsChange={(rooms: RoomPolygon[]) => setRooms(i, rooms)}
                     onDoorsChange={(doors: DoorRect[]) => setDoors(i, doors)}
+                    onDoorHover={(payload) => {
+                      if (!payload) {
+                        setHoverDoorInfo(null)
+                        return
+                      }
+                      const d = plan.doors[payload.index]
+                      if (!d || !isEditableOpeningType(d.type)) {
+                        setHoverDoorInfo(null)
+                        return
+                      }
+                      setHoverDoorInfo(payload)
+                    }}
+                    onDoorActivate={(idx) => {
+                      const d = plan.doors[idx]
+                      if (!d || !isEditableOpeningType(d.type)) return
+                      setDoorEditDialog({
+                        index: idx,
+                        width: typeof d.width_m === 'number' ? d.width_m.toFixed(2) : '',
+                        height: typeof d.height_m === 'number' ? d.height_m.toFixed(2) : '',
+                      })
+                    }}
                   />
+                  {activeTab === 'doors' && hoverDoorInfo && (
+                    <div
+                      className="absolute z-20 rounded-md border border-white/20 bg-black/85 px-2 py-1 text-[11px] text-white min-w-[130px]"
+                      style={{
+                        left: `${Math.max(8, hoverDoorInfo.x + 8)}px`,
+                        top: `${Math.max(8, hoverDoorInfo.y + 8)}px`,
+                      }}
+                    >
+                      {(() => {
+                        const d = plan.doors[hoverDoorInfo.index]
+                        return (
+                          <>
+                            <div>B: {typeof d?.width_m === 'number' ? `${d.width_m.toFixed(2)} m` : '-'}</div>
+                            <div>H: {typeof d?.height_m === 'number' ? `${d.height_m.toFixed(2)} m` : '-'}</div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  )}
+                  {activeTab === 'doors' && doorEditDialog && (
+                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45">
+                      <div className="w-[260px] rounded-lg border border-[#FF9F0F]/60 bg-[#1a1a1a] p-3">
+                        <div className="text-white text-sm font-medium mb-2">Öffnung Maße (m)</div>
+                        <div className="grid grid-cols-[16px_1fr] items-center gap-2 mb-2">
+                          <span className="text-sand/70 text-xs">B</span>
+                          <input
+                            type="number"
+                            min={0.01}
+                            step={0.01}
+                            value={doorEditDialog.width}
+                            onChange={(e) => setDoorEditDialog((prev) => prev ? { ...prev, width: e.target.value } : prev)}
+                            className="w-full rounded bg-black/40 border border-white/20 px-2 py-1 text-sm text-white"
+                          />
+                          <span className="text-sand/70 text-xs">H</span>
+                          <input
+                            type="number"
+                            min={0.01}
+                            step={0.01}
+                            value={doorEditDialog.height}
+                            onChange={(e) => setDoorEditDialog((prev) => prev ? { ...prev, height: e.target.value } : prev)}
+                            className="w-full rounded bg-black/40 border border-white/20 px-2 py-1 text-sm text-white"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={() => setDoorEditDialog(null)} className="px-2 py-1 text-xs text-sand/70">Abbrechen</button>
+                          <button type="button" onClick={handleSaveDoorDimensions} className="rounded bg-[#FF9F0F]/25 border border-[#FF9F0F]/60 px-2 py-1 text-xs text-[#FF9F0F]">Speichern</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )
