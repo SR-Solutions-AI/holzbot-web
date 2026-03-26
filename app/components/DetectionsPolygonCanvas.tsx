@@ -4,7 +4,15 @@ import { useRef, useEffect, useCallback, useState } from 'react'
 
 export type Point = [number, number]
 
-export type RoomPolygon = { points: Point[]; roomType?: string; roomName?: string }
+export type RoomPolygon = {
+  points: Point[]
+  roomType?: string
+  roomName?: string
+  /** Roof editor: pitch in degrees (0–60). */
+  roofAngleDeg?: number
+  /** Roof editor: e.g. 0_w, 1_w, 2_w, 4_w, 4.5_w */
+  roofType?: string
+}
 export type DoorRect = {
   bbox: [number, number, number, number]
   type?: string
@@ -33,9 +41,14 @@ type PolygonCanvasProps = {
   onRoomsChange: (rooms: RoomPolygon[]) => void
   onDoorsChange: (doors: DoorRect[]) => void
   onDoorHover?: (payload: { index: number; x: number; y: number } | null) => void
+  /** Apelat la tap scurt (fără drag) pe o ușă/fereastră în modul Select — ex. ciclare tip. */
   onDoorActivate?: (index: number) => void
   onRoomTypeLabelClick?: (roomIndex: number) => void
   onEditStart?: () => void
+  /** Când e true și există selecție, poligoanele nealese sunt estompate (ex. roof editor). */
+  dimUnselectedRoomPolygons?: boolean
+  /** tab=doors: desenează mai întâi poligoanele din `rooms` ca fundal (ex. Dachflächen + Dachfenster). */
+  showRoomPolygonsUnderDoors?: boolean
   className?: string
 }
 
@@ -50,6 +63,8 @@ const DOOR_VERTEX_HIT_R = 24
 const DOOR_HIT_PADDING = 16
 /** Raza (în px canvas) la care click închide poligonul la prima apăsare */
 const CLOSE_POLYGON_HIT_PX = 22
+/** Mișcare maximă în px ecran pentru a considera tap (vs. drag) pe uși în Select. */
+const DOOR_TAP_MAX_MOVE_PX = 8
 
 function pointInPolygon(px: number, py: number, points: Point[]): boolean {
   if (points.length < 3) return false
@@ -113,6 +128,8 @@ export function DetectionsPolygonCanvas({
   onDoorActivate,
   onRoomTypeLabelClick,
   onEditStart,
+  dimUnselectedRoomPolygons = false,
+  showRoomPolygonsUnderDoors = false,
   newDoorType = 'door',
   className = '',
 }: PolygonCanvasProps) {
@@ -132,6 +149,7 @@ export function DetectionsPolygonCanvas({
   const lastEdgeClickRef = useRef<{ time: number; polyIndex: number; edgeIndex: number } | null>(null)
   const edgeDragTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingEdgeDragRef = useRef<{ polyIndex: number; edgeIndex: number; initV0: Point; initV1: Point; startImage: Point } | null>(null)
+  const doorTapPendingRef = useRef<{ index: number; clientX: number; clientY: number; pt: Point } | null>(null)
   const [previewEndPoint, setPreviewEndPoint] = useState<Point | null>(null)
   const doorsRef = useRef(doors)
   const roomsRef = useRef(rooms)
@@ -154,14 +172,39 @@ export function DetectionsPolygonCanvas({
 
   useEffect(() => {
     setImageLoaded(false)
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = imageUrl
-    img.onload = () => {
-      imgRef.current = img
-      setImageLoaded(true)
+    let cancelled = false
+
+    const attachLoaded = (img: HTMLImageElement) => {
+      img.onload = () => {
+        if (cancelled) return
+        imgRef.current = img
+        setImageLoaded(true)
+      }
     }
-    return () => { imgRef.current = null }
+
+    // First attempt: CORS-friendly load (useful for signed/public storage URLs).
+    const primary = new Image()
+    primary.crossOrigin = 'anonymous'
+    attachLoaded(primary)
+    primary.onerror = () => {
+      if (cancelled) return
+      // Fallback: retry without crossOrigin; some storage/CDN responses reject anonymous CORS
+      // but still allow normal image rendering.
+      const fallback = new Image()
+      attachLoaded(fallback)
+      fallback.onerror = () => {
+        if (cancelled) return
+        imgRef.current = null
+        setImageLoaded(false)
+      }
+      fallback.src = imageUrl
+    }
+    primary.src = imageUrl
+
+    return () => {
+      cancelled = true
+      imgRef.current = null
+    }
   }, [imageUrl])
 
   const recomputeFit = useCallback(() => {
@@ -229,13 +272,18 @@ export function DetectionsPolygonCanvas({
     const s = effective.scale
     const ox = effective.offX
     const oy = effective.offY
+    const useDimOthers = dimUnselectedRoomPolygons && selectedIndex !== null && rooms.length > 0
     if (tab === 'rooms') {
       rooms.forEach((room, i) => {
         const pts = room.points
         if (pts.length < 2) return
         const selected = selectedIndex === i
         ctx.fillStyle = roomColors[i % roomColors.length]
-        ctx.globalAlpha = selected ? 0.5 : 0.35
+        let fillA = selected ? 0.5 : 0.35
+        if (useDimOthers) {
+          fillA = selected ? 0.52 : 0.12
+        }
+        ctx.globalAlpha = fillA
         ctx.beginPath()
         ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
         for (let k = 1; k < pts.length; k++) {
@@ -244,8 +292,8 @@ export function DetectionsPolygonCanvas({
         ctx.closePath()
         ctx.fill()
         ctx.globalAlpha = 1
-        ctx.strokeStyle = selected ? '#FF9F0F' : ctx.fillStyle
-        ctx.lineWidth = selected ? 3 : 2
+        ctx.strokeStyle = selected ? '#FF9F0F' : useDimOthers ? 'rgba(255,255,255,0.35)' : ctx.fillStyle
+        ctx.lineWidth = selected ? 3 : useDimOthers ? 1.5 : 2
         ctx.stroke()
         const label = (room.roomName ?? (room as { room_name?: string }).room_name ?? room.roomType ?? `R${i}`).trim() || `R${i}`
         if (pts.length > 0 && label) {
@@ -304,6 +352,26 @@ export function DetectionsPolygonCanvas({
         })
       }
     } else {
+      if (showRoomPolygonsUnderDoors) {
+        const underlayColors = ['#3b82f6', '#22c55e', '#eab308', '#8b5cf6', '#06b6d4']
+        rooms.forEach((room, i) => {
+          const pts = room.points
+          if (pts.length < 2) return
+          ctx.fillStyle = underlayColors[i % underlayColors.length]
+          ctx.globalAlpha = 0.14
+          ctx.beginPath()
+          ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
+          for (let k = 1; k < pts.length; k++) {
+            ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
+          }
+          ctx.closePath()
+          ctx.fill()
+          ctx.globalAlpha = 1
+          ctx.strokeStyle = 'rgba(255,255,255,0.28)'
+          ctx.lineWidth = 1.25
+          ctx.stroke()
+        })
+      }
       doors.forEach((door, i) => {
         const [x1, y1, x2, y2] = door.bbox
         const selected = selectedIndex === i
@@ -353,7 +421,22 @@ export function DetectionsPolygonCanvas({
         })
       }
     }
-  }, [tab, rooms, doors, selectedIndex, tool, newPoints, newDoorType, previewEndPoint, effective, imageWidth, imageHeight, imageLoaded])
+  }, [
+    tab,
+    rooms,
+    doors,
+    selectedIndex,
+    tool,
+    newPoints,
+    newDoorType,
+    previewEndPoint,
+    effective,
+    imageWidth,
+    imageHeight,
+    imageLoaded,
+    dimUnselectedRoomPolygons,
+    showRoomPolygonsUnderDoors,
+  ])
 
   useEffect(() => { draw() }, [draw])
 
@@ -487,8 +570,16 @@ export function DetectionsPolygonCanvas({
     }
 
     if (hit?.kind === 'poly') {
-      if (tab === 'doors' && (tool === 'select' || tool === 'edit')) {
-        onDoorActivate?.(hit.index)
+      if (tab === 'doors' && tool === 'remove') {
+        onRemoveSelected(hit.index)
+        return
+      }
+      // Select: tap = schimbare tip (callback); drag după prag = mutare dreptunghi
+      if (tab === 'doors' && tool === 'select' && pt) {
+        onSelect(hit.index)
+        doorTapPendingRef.current = { index: hit.index, clientX: e.clientX, clientY: e.clientY, pt: [pt[0], pt[1]] }
+        ;(e.target as Element).setPointerCapture(e.pointerId)
+        return
       }
       if (tab === 'rooms' && pt && onRoomTypeLabelClick) {
         const r = rooms[hit.index]
@@ -537,6 +628,24 @@ export function DetectionsPolygonCanvas({
     const cx = e.clientX - rect.left
     const cy = e.clientY - rect.top
     const pt = toImage(cx, cy)
+    const pendingTap = doorTapPendingRef.current
+    if (pendingTap && !dragging) {
+      const d = Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY)
+      if (d > DOOR_TAP_MAX_MOVE_PX) {
+        const idx = pendingTap.index
+        const dr = doorsRef.current[idx]
+        if (dr) {
+          onEditStart?.()
+          doorTapPendingRef.current = null
+          setDragging({
+            kind: 'poly',
+            polyIndex: idx,
+            startImage: pendingTap.pt,
+            initBbox: [...dr.bbox] as [number, number, number, number],
+          })
+        }
+      }
+    }
     const hoverHit = hitTest(cx, cy)
     if (tab === 'doors' && hoverHit?.kind === 'poly') {
       onDoorHover?.({ index: hoverHit.index, x: cx, y: cy })
@@ -646,9 +755,17 @@ export function DetectionsPolygonCanvas({
         }
       }
     }
-  }, [panning, panStart, dragging, effective, tool, tab, newPoints, imageWidth, imageHeight, toImage, hitTest, onDoorHover, onRoomsChange, onDoorsChange])
+  }, [panning, panStart, dragging, effective, tool, tab, newPoints, imageWidth, imageHeight, toImage, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onEditStart])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    const pendingTap = doorTapPendingRef.current
+    if (pendingTap) {
+      const d = Math.hypot(e.clientX - pendingTap.clientX, e.clientY - pendingTap.clientY)
+      doorTapPendingRef.current = null
+      if (d <= DOOR_TAP_MAX_MOVE_PX) {
+        onDoorActivate?.(pendingTap.index)
+      }
+    }
     try { (e.target as Element).releasePointerCapture(e.pointerId) } catch (_) {}
     setDragging(null)
     setPanning(false)
@@ -658,7 +775,7 @@ export function DetectionsPolygonCanvas({
       edgeDragTimeoutRef.current = null
     }
     pendingEdgeDragRef.current = null
-  }, [])
+  }, [onDoorActivate])
   const handlePointerLeave = useCallback((e: React.PointerEvent) => {
     try { (e.target as Element).releasePointerCapture(e.pointerId) } catch (_) {}
     setDragging(null)
@@ -670,6 +787,7 @@ export function DetectionsPolygonCanvas({
       edgeDragTimeoutRef.current = null
     }
     pendingEdgeDragRef.current = null
+    doorTapPendingRef.current = null
     onDoorHover?.(null)
   }, [onDoorHover])
 

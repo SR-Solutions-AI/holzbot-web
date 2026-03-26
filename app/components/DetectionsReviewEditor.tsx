@@ -132,8 +132,8 @@ export function DetectionsReviewEditor({
   const [pendingNewDoorBbox, setPendingNewDoorBbox] = useState<[number, number, number, number] | null>(null)
   const [roomTypePopoverIndex, setRoomTypePopoverIndex] = useState<number | null>(null)
   const [hoverDoorInfo, setHoverDoorInfo] = useState<{ index: number; x: number; y: number } | null>(null)
-  const [doorEditDialog, setDoorEditDialog] = useState<{ index: number; width: string; height: string } | null>(null)
   const [newDoorDims, setNewDoorDims] = useState<{ width: string; height: string }>({ width: '', height: '' })
+  const [isConfirming, setIsConfirming] = useState(false)
   const [history, setHistory] = useState<PlanData[][]>([])
   const historyLimit = 50
   const skipNextPushRef = useRef(false)
@@ -196,30 +196,50 @@ export function DetectionsReviewEditor({
     }
     let cancelled = false
     setLoading(true)
-    apiFetch(`/offers/${offerId}/compute/detections-review-data`)
-      .then((res: { plans?: PlanData[]; floorLabels?: string[] }) => {
-        if (cancelled) return
-        const plans = Array.isArray(res?.plans) ? res.plans : []
-        const normalized = plans.map((p) => ({
-          ...p,
-          metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
-          rooms: (p.rooms || []).map((r: RoomPolygon & { room_name?: string }) => ({
-            ...r,
-            roomType: r.roomType ?? 'Raum',
-            roomName: (r.roomName ?? r.room_name ?? r.roomType ?? 'Raum').trim() || 'Raum',
-            points: mergeClosePolygonPoints(r.points || [], MERGE_VERTEX_DIST_PX),
-          })),
-          // Tipuri uși/geamuri = aceeași clasificare ca LiveFeed (detections_review_doors.png): backend doors_types.json + euristică
-          doors: withAutoDoorDimensions((p.doors || []).map((d: DoorRect) => ({
-            ...d,
-            type: normalizeDoorType(d.type),
-          })), typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null),
-        }))
-        setPlansData(normalized)
-        setFloorLabels(Array.isArray(res?.floorLabels) ? res.floorLabels : [])
-      })
-      .catch(() => { if (!cancelled) setPlansData([]) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    const fetchWithRetry = async () => {
+      let lastPlans: PlanData[] = []
+      for (let attempt = 0; attempt < 12 && !cancelled; attempt++) {
+        try {
+          const res = (await apiFetch(`/offers/${offerId}/compute/detections-review-data?ts=${Date.now()}`)) as {
+            plans?: PlanData[]
+            floorLabels?: string[]
+          }
+          const plans = Array.isArray(res?.plans) ? res.plans : []
+          const normalized = plans.map((p) => ({
+            ...p,
+            metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
+            rooms: (p.rooms || []).map((r: RoomPolygon & { room_name?: string }) => ({
+              ...r,
+              roomType: r.roomType ?? 'Raum',
+              roomName: (r.roomName ?? r.room_name ?? r.roomType ?? 'Raum').trim() || 'Raum',
+              points: mergeClosePolygonPoints(r.points || [], MERGE_VERTEX_DIST_PX),
+            })),
+            // Tipuri uși/geamuri = aceeași clasificare ca LiveFeed (detections_review_doors.png): backend doors_types.json + euristică
+            doors: withAutoDoorDimensions((p.doors || []).map((d: DoorRect) => ({
+              ...d,
+              type: normalizeDoorType(d.type),
+            })), typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null),
+          }))
+          lastPlans = normalized
+          if (cancelled) return
+          setFloorLabels(Array.isArray(res?.floorLabels) ? res.floorLabels : [])
+          if (normalized.length > 0 || attempt === 11) {
+            setPlansData(normalized)
+            setLoading(false)
+            return
+          }
+        } catch (_) {
+          if (attempt === 11 && !cancelled) {
+            setPlansData(lastPlans)
+            setLoading(false)
+            return
+          }
+        }
+        await new Promise((r) => setTimeout(r, 450))
+      }
+      if (!cancelled) setLoading(false)
+    }
+    void fetchWithRetry()
     return () => { cancelled = true }
   }, [offerId, images.length])
 
@@ -243,15 +263,25 @@ export function DetectionsReviewEditor({
   }, [])
 
   const handleConfirm = useCallback(async () => {
+    const withTimeout = <T,>(p: Promise<T>, ms: number) =>
+      Promise.race<T | null>([
+        p,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+      ])
+
     if (offerId && plansData.length > 0) {
       try {
-        await apiFetch(`/offers/${offerId}/compute/detections-review-data`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            plans: plansData.map((p) => ({ rooms: p.rooms, doors: p.doors })),
+        // Nu blocăm UI pe rețea lentă: dăm un timeout scurt, iar salvarea poate continua best-effort.
+        void withTimeout(
+          apiFetch(`/offers/${offerId}/compute/detections-review-data`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              plans: plansData.map((p) => ({ rooms: p.rooms, doors: p.doors })),
+            }),
           }),
-        })
+          2500,
+        )
       } catch (_) {}
     }
     await onConfirm()
@@ -332,20 +362,17 @@ export function DetectionsReviewEditor({
     setDoors(planIndexClamped, next)
   }, [selectedPolygonIndex, planIndexClamped, plansData, setDoors, pushHistory])
 
-  const handleSaveDoorDimensions = useCallback(() => {
-    if (!doorEditDialog || planIndexClamped >= plansData.length) return
-    const width = round2(Number(doorEditDialog.width))
-    const height = round2(Number(doorEditDialog.height))
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+  const handleSetSelectedDoorDimension = useCallback((axis: 'width_m' | 'height_m', raw: string) => {
+    if (selectedPolygonIndex === null || planIndexClamped >= plansData.length) return
+    const val = round2(Number(raw))
+    if (!Number.isFinite(val) || val <= 0) return
     const plan = plansData[planIndexClamped]
-    if (!plan || doorEditDialog.index < 0 || doorEditDialog.index >= plan.doors.length) return
-    pushHistory()
+    if (!plan || selectedPolygonIndex < 0 || selectedPolygonIndex >= plan.doors.length) return
     const next = plan.doors.map((d, i) =>
-      i !== doorEditDialog.index ? d : { ...d, width_m: width, height_m: height, dimensionsEdited: true }
+      i !== selectedPolygonIndex ? d : { ...d, [axis]: val, dimensionsEdited: true }
     )
     setDoors(planIndexClamped, next)
-    setDoorEditDialog(null)
-  }, [doorEditDialog, planIndexClamped, plansData, pushHistory, setDoors])
+  }, [selectedPolygonIndex, planIndexClamped, plansData, setDoors])
 
   const handlePickEditRoomType = useCallback((roomType: RoomTypeOption) => {
     if (roomTypePopoverIndex === null || planIndexClamped >= plansData.length) return
@@ -362,7 +389,6 @@ export function DetectionsReviewEditor({
     setSelectedPolygonIndex(null)
     setNewPolygonPoints(null)
     setHoverDoorInfo(null)
-    setDoorEditDialog(null)
     setPendingNewDoorBbox(null)
   }, [planIndex])
 
@@ -404,7 +430,9 @@ export function DetectionsReviewEditor({
   }, [pendingNewDoorBbox, planIndexClamped, plansData, newDoorDims, newDoorType, pushHistory, setDoors])
 
   const toolHint =
-    tool === 'select'
+    tool === 'select' && activeTab === 'doors'
+      ? 'Element wählen und ziehen zum Verschieben'
+      : tool === 'select'
       ? 'Auf Element klicken und ziehen zum Verschieben'
       : tool === 'add' && activeTab === 'rooms'
         ? 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
@@ -431,9 +459,6 @@ export function DetectionsReviewEditor({
         <h2 className="text-white font-semibold text-base text-center">
           Erkennung prüfen – Räume und Fenster/Türen
         </h2>
-        <p className="text-sand/80 text-xs max-w-xl text-center mx-auto mt-0.5">
-          Alle Pläne unten: Ansicht Räume (ein Polygon pro Zimmer) oder Fenster/Türen. Rad zum Zoomen, Ziehen zum Schwenken.
-        </p>
       </div>
 
       <div className="shrink-0 flex flex-wrap items-center justify-center gap-3 px-2 py-1">
@@ -498,7 +523,7 @@ export function DetectionsReviewEditor({
 
       {(tool === 'add' && activeTab === 'doors') && (
         <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
-          <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Tür, Fenster, Treppe:</span>
+          <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Element:</span>
           <button
             type="button"
             onClick={() => setNewDoorType('door')}
@@ -530,7 +555,7 @@ export function DetectionsReviewEditor({
         </div>
       )}
       {tool === 'select' && activeTab === 'doors' && selectedPolygonIndex !== null && plansData[planIndexClamped]?.doors[selectedPolygonIndex] && (
-        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5">
+        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
           <span className="text-sand/70 text-xs">Typ:</span>
           {(['door', 'window', 'garage_door', 'stairs'] as const).map((doorType) => {
             const labels = { door: 'Tür', window: 'Fenster', garage_door: 'Garagentor', stairs: 'Treppe' }
@@ -553,6 +578,28 @@ export function DetectionsReviewEditor({
               </button>
             )
           })}
+          {normalizeDoorType(plansData[planIndexClamped]?.doors[selectedPolygonIndex]?.type) !== 'stairs' && (
+            <>
+              <span className="text-sand/70 text-xs ml-2">B (m):</span>
+              <input
+                type="number"
+                min={0.01}
+                step={0.01}
+                value={typeof plansData[planIndexClamped]?.doors[selectedPolygonIndex]?.width_m === 'number' ? plansData[planIndexClamped].doors[selectedPolygonIndex].width_m!.toFixed(2) : ''}
+                onChange={(e) => handleSetSelectedDoorDimension('width_m', e.target.value)}
+                className="w-[84px] rounded bg-black/40 border border-white/20 px-2 py-1 text-xs text-white"
+              />
+              <span className="text-sand/70 text-xs">H (m):</span>
+              <input
+                type="number"
+                min={0.01}
+                step={0.01}
+                value={typeof plansData[planIndexClamped]?.doors[selectedPolygonIndex]?.height_m === 'number' ? plansData[planIndexClamped].doors[selectedPolygonIndex].height_m!.toFixed(2) : ''}
+                onChange={(e) => handleSetSelectedDoorDimension('height_m', e.target.value)}
+                className="w-[84px] rounded bg-black/40 border border-white/20 px-2 py-1 text-xs text-white"
+              />
+            </>
+          )}
         </div>
       )}
 
@@ -771,15 +818,7 @@ export function DetectionsReviewEditor({
                       }
                       setHoverDoorInfo(payload)
                     }}
-                    onDoorActivate={(idx) => {
-                      const d = plan.doors[idx]
-                      if (!d || !isEditableOpeningType(d.type)) return
-                      setDoorEditDialog({
-                        index: idx,
-                        width: typeof d.width_m === 'number' ? d.width_m.toFixed(2) : '',
-                        height: typeof d.height_m === 'number' ? d.height_m.toFixed(2) : '',
-                      })
-                    }}
+                    onDoorActivate={undefined}
                   />
                   {activeTab === 'doors' && hoverDoorInfo && (
                     <div
@@ -800,37 +839,6 @@ export function DetectionsReviewEditor({
                       })()}
                     </div>
                   )}
-                  {activeTab === 'doors' && doorEditDialog && (
-                    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/45">
-                      <div className="w-[260px] rounded-lg border border-[#FF9F0F]/60 bg-[#1a1a1a] p-3">
-                        <div className="text-white text-sm font-medium mb-2">Öffnung Maße (m)</div>
-                        <div className="grid grid-cols-[16px_1fr] items-center gap-2 mb-2">
-                          <span className="text-sand/70 text-xs">B</span>
-                          <input
-                            type="number"
-                            min={0.01}
-                            step={0.01}
-                            value={doorEditDialog.width}
-                            onChange={(e) => setDoorEditDialog((prev) => prev ? { ...prev, width: e.target.value } : prev)}
-                            className="w-full rounded bg-black/40 border border-white/20 px-2 py-1 text-sm text-white"
-                          />
-                          <span className="text-sand/70 text-xs">H</span>
-                          <input
-                            type="number"
-                            min={0.01}
-                            step={0.01}
-                            value={doorEditDialog.height}
-                            onChange={(e) => setDoorEditDialog((prev) => prev ? { ...prev, height: e.target.value } : prev)}
-                            className="w-full rounded bg-black/40 border border-white/20 px-2 py-1 text-sm text-white"
-                          />
-                        </div>
-                        <div className="flex justify-end gap-2">
-                          <button type="button" onClick={() => setDoorEditDialog(null)} className="px-2 py-1 text-xs text-sand/70">Abbrechen</button>
-                          <button type="button" onClick={handleSaveDoorDimensions} className="rounded bg-[#FF9F0F]/25 border border-[#FF9F0F]/60 px-2 py-1 text-xs text-[#FF9F0F]">Speichern</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             )
@@ -841,11 +849,16 @@ export function DetectionsReviewEditor({
       <div className="shrink-0 flex flex-wrap items-center justify-center gap-2 px-2 py-2">
         <button
           type="button"
-          onClick={handleConfirm}
+          onClick={async () => {
+            if (isConfirming) return
+            setIsConfirming(true)
+            try { await handleConfirm() } finally { setIsConfirming(false) }
+          }}
+          disabled={isConfirming}
           className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[0.5px] active:translate-y-0"
         >
           <Check size={18} />
-          Erkennung bestätigen – weiter
+          {isConfirming ? 'Speichern…' : 'Erkennung bestätigen – weiter'}
         </button>
         <button
           type="button"
