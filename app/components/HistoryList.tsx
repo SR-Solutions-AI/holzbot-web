@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiFetch } from '../lib/supabaseClient'
+import { inferOfferFlow } from '../lib/offerFlow'
 import { Plus, Loader2, Search, Filter, Trash2, ChevronDown, Check, X } from 'lucide-react'
 import { DatePickerPopover } from './DatePickerPopover'
 
@@ -115,6 +116,7 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
   const offerTypeTriggerRef = useRef<HTMLDivElement>(null)
   const offerTypeMenuRef = useRef<HTMLDivElement>(null)
   const [offerTypeMenuPosition, setOfferTypeMenuPosition] = useState({ top: 0, left: 0, width: 200 })
+  const loadGenerationRef = useRef(0)
 
   const wizardOfferTypes = offerTypes.filter((ot) =>
     WIZARD_OFFER_SLUGS.includes(ot.slug as (typeof WIZARD_OFFER_SLUGS)[number])
@@ -126,6 +128,7 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
   ].filter(Boolean) as OfferType[]
 
   async function load() {
+    const gen = ++loadGenerationRef.current
     setApiError(null)
     try {
       const params = new URLSearchParams()
@@ -136,8 +139,10 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
       if (dateTo) params.set('date_to', dateTo)
       if (selectedUserIds.length) selectedUserIds.forEach((id) => params.append('created_by', id))
       const data = await apiFetch(`/offers?${params.toString()}`)
+      if (gen !== loadGenerationRef.current) return
       setItems((data.items || []) as OfferListItem[])
     } catch (e: any) {
+      if (gen !== loadGenerationRef.current) return
       const isNetwork = e?.message === 'Failed to fetch' || e?.name === 'TypeError'
       setItems([])
       setApiError(
@@ -562,16 +567,31 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
                 disabled={isCreating}
                 onClick={() => {
                   if (isCreating) return
+                  if (typeof window !== 'undefined') {
+                    const url = new URL(window.location.href)
+                    url.searchParams.set('offerId', it.id)
+                    url.searchParams.delete('runId')
+                    window.history.pushState(null, '', url.toString())
+                  }
                   setSelected(it.id)
                   // Actualizare instantă: resetează panoul și încarcă oferta; apoi, în background, verificăm dacă rulează
                   window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: it.id } }))
                   if (!isDraftStatus) {
                     apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(it.id)}`)
                       .then((hist: any) => {
+                        if (typeof window !== 'undefined') {
+                          const cur = new URL(window.location.href).searchParams.get('offerId')
+                          if (cur !== it.id) return
+                        }
                         if (hist?.run_id && hist?.run_status === 'running') {
+                          const flow = inferOfferFlow({
+                            roof_only_offer: it.meta?.roof_only_offer,
+                            wizard_package: it.meta?.wizard_package,
+                            offer_type_slug: it.offer_type_slug,
+                          })
                           window.dispatchEvent(
                             new CustomEvent('offer:compute-started', {
-                              detail: { offerId: it.id, runId: hist.run_id },
+                              detail: { offerId: it.id, runId: hist.run_id, flow },
                             })
                           )
                         }

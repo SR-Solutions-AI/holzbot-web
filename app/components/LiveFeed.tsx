@@ -6,6 +6,7 @@ import { apiFetch } from '../lib/supabaseClient'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { Cpu, FunctionSquare, CheckCircle2, Loader2, Download } from 'lucide-react'
+import { inferOfferFlow, type OfferFlow } from '../lib/offerFlow'
 
 /* ========= CONFIGURARE ETAPE (Protocolul Nou) ========= */
 
@@ -36,14 +37,28 @@ function getStageSequence(stage: string): number[] {
   return STAGE_TO_SEQUENCE[stage] ?? UNKNOWN_STAGE_SEQUENCE
 }
 
-// Calculează progresul bazat pe etapele procesate
-const TOTAL_STAGES = 19 // Ultimul număr din secvență
-function calculateProgress(processedStages: Set<string>, currentStage: string | null): { progress: number; currentStageName: string | null } {
+// Calculează progresul bazat pe etapele procesate (fallback când motorul nu trimite încă UI:PROGRESS)
+const TOTAL_STAGES_NEUBAU = 19
+/** Dachstuhl: același graf de etape, dar pondere ușor spre final (acoperiș) în fallback */
+const TOTAL_STAGES_DACHSTUHL = 17
+
+function getStageTitlesForFlow(flow: OfferFlow, stage: string): string[] {
+  if (flow === 'dachstuhl' && STAGE_TITLES_DACHSTUHL[stage]) return STAGE_TITLES_DACHSTUHL[stage]
+  const t = STAGE_TITLES[stage]
+  return t && t.length > 0 ? t : [stage]
+}
+
+function calculateProgress(
+  processedStages: Set<string>,
+  currentStage: string | null,
+  flow: OfferFlow,
+): { progress: number; currentStageName: string | null } {
+  const totalStages = flow === 'dachstuhl' ? TOTAL_STAGES_DACHSTUHL : TOTAL_STAGES_NEUBAU
+
   if (processedStages.size === 0 && !currentStage) {
     return { progress: 0, currentStageName: null }
   }
-  
-  // Numără etapele procesate (folosind numărul maxim din fiecare secvență)
+
   let completedSteps = 0
   for (const stage of processedStages) {
     const seq = STAGE_TO_SEQUENCE[stage]
@@ -51,32 +66,25 @@ function calculateProgress(processedStages: Set<string>, currentStage: string | 
       completedSteps = Math.max(completedSteps, Math.max(...seq))
     }
   }
-  
-  // Dacă există o etapă curentă, adaugă progres parțial
+
   if (currentStage) {
     const seq = STAGE_TO_SEQUENCE[currentStage]
     if (seq && seq.length > 0 && seq[0] > 0) {
       const currentStep = Math.max(...seq)
-      // Dacă etapa curentă e mai mare decât cea procesată, o considerăm în progres
       if (currentStep > completedSteps) {
-        completedSteps = currentStep - 0.5 // 50% din etapa curentă
+        completedSteps = currentStep - 0.5
       }
     }
   }
-  
-  const progress = Math.min(100, Math.round((completedSteps / TOTAL_STAGES) * 100))
-  
-  // Obține numele etapei curente pentru afișare
+
+  const progress = Math.min(100, Math.round((completedSteps / totalStages) * 100))
+
   let stageName: string | null = null
   if (currentStage) {
-    const titles = STAGE_TITLES[currentStage]
-    if (titles && titles.length > 0) {
-      stageName = titles[0] // Folosește primul titlu
-    } else {
-      stageName = currentStage
-    }
+    const titles = getStageTitlesForFlow(flow, currentStage)
+    stageName = titles[0] ?? currentStage
   }
-  
+
   return { progress, currentStageName: stageName }
 }
 
@@ -188,6 +196,65 @@ const STAGE_TITLES: Record<string, string[]> = {
     'CubiCasa Verarbeitungsschritt',
     'Zwischenschritt RasterScan'
   ]
+}
+
+/** Titluri pentru flux Dachstuhl (roof-only): același protocol de etape, alt focus în feed */
+const STAGE_TITLES_DACHSTUHL: Partial<Record<string, string[]>> = {
+  segmentation_start: [
+    'Dachstuhl-Plan – Analysestart',
+    'Vorbereitung Schnitte und Grundrisse',
+    'Eingabe prüfen',
+  ],
+  segmentation: [
+    'Planaufbereitung für Dachstuhl',
+    'Geometrie und Konturen',
+    'Vektorisierung der relevanten Bereiche',
+  ],
+  classification: [
+    'Ansichten und Schnitte zuordnen',
+    'Planarten erkennen',
+    'Dachrelevante Blätter markieren',
+  ],
+  floor_classification: [
+    'Geschosse / Dachkörper zuordnen',
+    'Ebenen für Dachmodell',
+    'Referenzgeschosse',
+  ],
+  detections_review: [
+    'Planlage prüfen (Dachstuhl)',
+    'Blueprint-Editor',
+    'Freigabe für Holztragwerk',
+  ],
+  scale: [
+    'Maßstab für Dachstuhl',
+    'Kalibrierung Pixel/Meter',
+    'Referenzlängen',
+  ],
+  roof: [
+    'Dachstuhl-Geometrie und Neigung',
+    'Hauptkalkulation Dach',
+    'Flächen und Sparrenlogik',
+  ],
+  pricing: [
+    'Dachstuhl-Preisbildung',
+    'Positionen und Zuschläge',
+    'Kostenermittlung',
+  ],
+  offer_generation: [
+    'Angebot Dachstuhl zusammenstellen',
+    'Positionen finalisieren',
+    'Kalkulation prüfen',
+  ],
+  pdf_generation: [
+    'PDF Dachstuhl erzeugen',
+    'Dokumentlayout',
+    'Druckversion',
+  ],
+  computation_complete: [
+    'Dachstuhl-Berechnung fertig',
+    'Abgeschlossen',
+    'Bereit zum Download',
+  ],
 }
 
 /* ========= TIMING ========= */
@@ -348,12 +415,17 @@ async function downloadPdfWithRefresh(
   offerId: string,
   currentUrl: string,
   kind: 'offer' | 'roofMeasurements' | 'admin' = 'offer',
+  isAllowed?: () => boolean,
 ) {
+  const allow = () => isAllowed == null || isAllowed()
+  if (!allow()) return
+
   let urlToUse = currentUrl
   
   if (!currentUrl || currentUrl.startsWith('/') || !currentUrl.startsWith('http')) {
     try {
       const fresh = await apiFetch(`/offers/${offerId}/export-url`)
+      if (!allow()) return
       const freshUrl =
         kind === 'roofMeasurements'
           ? (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
@@ -386,11 +458,13 @@ async function downloadPdfWithRefresh(
   }
 
   try { 
+    if (!allow()) return
     await tryBlobDownload(urlToUse); 
     return 
   } catch {
     try {
         const fresh = await apiFetch(`/offers/${offerId}/export-url`)
+        if (!allow()) return
         const freshUrl =
           kind === 'roofMeasurements'
             ? (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
@@ -399,15 +473,18 @@ async function downloadPdfWithRefresh(
               : (fresh?.url || fresh?.download_url || fresh?.pdf)
         if (freshUrl) { 
             try { 
+                if (!allow()) return
                 await tryBlobDownload(freshUrl); 
                 return 
             } catch { 
+                if (!allow()) return
                 tryOpenAsLastResort(freshUrl); 
                 return 
             } 
         }
     } catch {}
     
+    if (!allow()) return
     tryOpenAsLastResort(urlToUse)
   }
 }
@@ -556,12 +633,16 @@ export default function LiveFeed() {
   const [rows, setRows] = useState<Row[]>([])
   const [groups, setGroups] = useState<Group[]>([])
   const [offerId, setOfferId] = useState<string|null>(null)
+  const offerIdRef = useRef<string | null>(null)
   const [runId, setRunId] = useState<string|null>(null)
   const [computing, setComputing] = useState(false)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [canDownloadAdminPdf, setCanDownloadAdminPdf] = useState(false)
   const [progress, setProgress] = useState(0) // 0-100
   const [currentStageName, setCurrentStageName] = useState<string | null>(null)
+  /** Neubau vs Dachstuhl: titluri și fallback progres */
+  const [offerFlow, setOfferFlow] = useState<OfferFlow>('neubau')
+  const flowModeRef = useRef<OfferFlow>('neubau')
 
   const filesByStage = useRef<Record<string, FeedFile[]>>({})
   const processedStages = useRef<Set<string>>(new Set())
@@ -570,8 +651,11 @@ export default function LiveFeed() {
   const sinceRef = useRef<number|undefined>(undefined)
   const seenEventIdsRef = useRef<Set<number>>(new Set())
   const currentStageRef = useRef<string|null>(null)
-  /** Progres de la server (UI:PROGRESS) – are prioritate față de calculateProgress când e setat */
-  const serverProgressRef = useRef<number | null>(null)
+  /** Țintă progres: server (UI:PROGRESS) sau calculateProgress; afișarea e interpolată (fără salturi). */
+  const targetProgressRef = useRef(0)
+  const displayProgressRef = useRef(0)
+  /** După primul eveniment [progress] din run, ținem bara sincronă cu motorul Python (monoton). */
+  const serverDrivesProgressRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const titleIndexRef = useRef<Record<string, number>>({})
   
@@ -588,10 +672,21 @@ export default function LiveFeed() {
   const pendingStagesAfterReviewRef = useRef<string[]>([])
   const roofReviewPendingRef = useRef<{ files: FeedFile[] } | null>(null)
   const pendingStagesAfterRoofReviewRef = useRef<string[]>([])
+  const detectionsReviewActiveRef = useRef(false)
+  const roofReviewActiveRef = useRef(false)
+  const progressLockedInEditorRef = useRef<number | null>(null)
+  const freezeProgressAtCurrent = () => {
+    const base = progressLockedInEditorRef.current ?? displayProgressRef.current
+    const frozen = Math.min(100, Math.max(0, base || 0))
+    progressLockedInEditorRef.current = frozen
+    targetProgressRef.current = frozen
+    displayProgressRef.current = frozen
+    setProgress(Math.round(frozen * 10) / 10)
+  }
 
   const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
   const STORAGE_KEY_RUNNING = 'holzbot_dashboard_running'
-  const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean) => {
+  const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean, flow: OfferFlow = 'neubau') => {
     try {
       if (typeof window === 'undefined') return
       if (!offerId) {
@@ -599,7 +694,7 @@ export default function LiveFeed() {
         sessionStorage.removeItem(STORAGE_KEY_RUNNING)
         return
       }
-      sessionStorage.setItem(STORAGE_KEY_OFFER, JSON.stringify({ offerId, runId: runId || null, isComputing }))
+      sessionStorage.setItem(STORAGE_KEY_OFFER, JSON.stringify({ offerId, runId: runId || null, isComputing, flow }))
       if (isComputing && runId) {
         sessionStorage.setItem(STORAGE_KEY_RUNNING, JSON.stringify({ offerId, runId }))
       } else {
@@ -617,18 +712,42 @@ export default function LiveFeed() {
 
   // ✅ [FIX CRITIC] Session ID pentru a invalida procesele vechi la reset
   const sessionRef = useRef<number>(0)
+  /** Generație pentru loadHistory: nu folosește sessionRef (reset/compute-started ar invalida același flux). */
+  const historyLoadGenRef = useRef(0)
   const activeRunIdRef = useRef<string|null>(null)
+
+  useEffect(() => {
+    offerIdRef.current = offerId
+  }, [offerId])
+
+  /** Aliniat cu StepWizard: ignoră evenimente întârziate după „Neues Projekt” sau schimbare URL. */
+  function offerEventMatchesUrlAndRef(oid: string): boolean {
+    if (typeof window === 'undefined') return true
+    const fromUrl = new URL(window.location.href).searchParams.get('offerId')
+    if (fromUrl != null && fromUrl !== oid) return false
+    if (fromUrl == null && offerIdRef.current !== oid) return false
+    return true
+  }
+
+  /** În loadHistory: înainte de setOfferId, ref-ul e încă vechi — folosim doar conflict explicit în URL. */
+  function urlOfferConflictsWithSelection(id: string): boolean {
+    if (typeof window === 'undefined') return false
+    const fromUrl = new URL(window.location.href).searchParams.get('offerId')
+    return fromUrl != null && fromUrl !== id
+  }
 
   useEffect(() => { 
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) 
   }, [rows])
 
-  // Actualizează progresul periodic: preferă serverProgressRef (din UI:PROGRESS), altfel calculateProgress din etape
+  // Progres afișat: interpolare (lerp) spre țintă – ținta vine din server sau din etape (fallback).
   useEffect(() => {
     if (!computing && !runId) {
       setProgress(0)
       setCurrentStageName(null)
-      serverProgressRef.current = null
+      targetProgressRef.current = 0
+      displayProgressRef.current = 0
+      serverDrivesProgressRef.current = false
       return
     }
 
@@ -636,25 +755,42 @@ export default function LiveFeed() {
       if (!computing && !runId) {
         setProgress(0)
         setCurrentStageName(null)
-        serverProgressRef.current = null
+        targetProgressRef.current = 0
+        displayProgressRef.current = 0
+        serverDrivesProgressRef.current = false
         return
       }
 
-      const serverP = serverProgressRef.current
-      if (serverP != null) {
-        setProgress(serverP)
-        if (!currentStageName) setCurrentStageName('Verarbeitung...')
+      const editorOpen =
+        detectionsReviewActiveRef.current ||
+        roofReviewActiveRef.current ||
+        reviewPendingRef.current != null ||
+        roofReviewPendingRef.current != null
+      if (editorOpen) {
+        freezeProgressAtCurrent()
         return
       }
 
-      const { progress: newProgress, currentStageName: newStageName } = calculateProgress(
-        processedStages.current,
-        currentStageRef.current
-      )
+      let target = targetProgressRef.current
+      if (!serverDrivesProgressRef.current) {
+        const { progress: np, currentStageName: ns } = calculateProgress(
+          processedStages.current,
+          currentStageRef.current,
+          flowModeRef.current,
+        )
+        target = np
+        targetProgressRef.current = np
+        setCurrentStageName(ns)
+      }
 
-      setProgress(newProgress)
-      setCurrentStageName(newStageName)
-    }, 500) // la fiecare 500ms
+      const d = displayProgressRef.current
+      const k = 0.18
+      let next = d + (target - d) * k
+      if (Math.abs(target - next) < 0.05) next = target
+      next = Math.min(100, Math.max(0, next))
+      displayProgressRef.current = next
+      setProgress(Math.round(next * 10) / 10)
+    }, 42)
 
     return () => clearInterval(interval)
   }, [computing, runId])
@@ -676,9 +812,28 @@ export default function LiveFeed() {
     activeRunIdRef.current = runId
   }, [runId])
 
+  // Încărcăm meta ofertă imediat ce avem runId: evenimentele scale pot ajunge înainte de offer:compute-started.
+  useEffect(() => {
+    if (!offerId || !runId) return
+    let cancelled = false
+    void apiFetch(`/offers/${encodeURIComponent(offerId)}`)
+      .then((o: any) => {
+        if (cancelled) return
+        const meta = o?.meta ?? o?.offer?.meta
+        const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+        const inferred = inferOfferFlow({ ...meta, offer_type_slug: slug })
+        flowModeRef.current = inferred
+        setOfferFlow(inferred)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [offerId, runId])
+
   // Persistăm starea „nu mai e computing” ca să nu restaurem GIF la refresh după ce run-ul s-a terminat
   useEffect(() => {
-    if (!computing && offerId) persistOfferState(offerId, null, false)
+    if (!computing && offerId) persistOfferState(offerId, null, false, flowModeRef.current)
   }, [computing, offerId])
 
   useEffect(() => {
@@ -701,7 +856,16 @@ export default function LiveFeed() {
       allStagesCompleted.current = false;
       queuedStages.current.clear();
       pendingCompletionRef.current = null;
-      serverProgressRef.current = null;
+      reviewPendingRef.current = null;
+      pendingStagesAfterReviewRef.current = [];
+      roofReviewPendingRef.current = null;
+      pendingStagesAfterRoofReviewRef.current = [];
+      detectionsReviewActiveRef.current = false;
+      roofReviewActiveRef.current = false;
+      progressLockedInEditorRef.current = null;
+      targetProgressRef.current = 0
+      displayProgressRef.current = 0
+      serverDrivesProgressRef.current = false
       stageStartedAtRef.current = {};
       setPdfUrl(null)
 
@@ -710,15 +874,27 @@ export default function LiveFeed() {
       setComputing(false)
       setProgress(0)
       setCurrentStageName(null)
+      flowModeRef.current = 'neubau'
+      setOfferFlow('neubau')
     }
     
-    const onComputeStarted = (e: any) => { 
+    const onComputeStarted = (e: any) => {
+      const oid = e?.detail?.offerId as string | undefined
+      const rid = e?.detail?.runId as string | undefined
+      if (!oid || !rid) return
+      if (!offerEventMatchesUrlAndRef(oid)) return
+
       // 1. Întâi resetăm totul (inclusiv incrementarea sessionRef pentru filtrare)
       reset() 
       
       // 2. Apoi setăm noile valori
-      const offerId = e.detail.offerId
-      const runId = e.detail.runId
+      const offerId = oid
+      const runId = rid
+      const detailFlow = e.detail?.flow as OfferFlow | undefined
+      let flow: OfferFlow = detailFlow === 'neubau' || detailFlow === 'dachstuhl' ? detailFlow : 'neubau'
+      flowModeRef.current = flow
+      setOfferFlow(flow)
+
       setOfferId(offerId); 
       setComputing(true) // Activează progress bar-ul
       // Pornește polling-ul live imediat (nu mai așteptăm history hydrate).
@@ -726,11 +902,30 @@ export default function LiveFeed() {
       activeRunIdRef.current = runId
       isHistoryMode.current = false
       allStagesCompleted.current = false
-      persistOfferState(offerId, runId, true)
+      persistOfferState(offerId, runId, true, flow)
+
+      if (!detailFlow) {
+        const metaSession = sessionRef.current
+        void apiFetch(`/offers/${encodeURIComponent(offerId)}`)
+          .then((o: any) => {
+            if (sessionRef.current !== metaSession) return
+            if (!offerEventMatchesUrlAndRef(offerId)) return
+            const meta = o?.meta ?? o?.offer?.meta
+            const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+            const inferred = inferOfferFlow({ ...meta, offer_type_slug: slug })
+            flowModeRef.current = inferred
+            setOfferFlow(inferred)
+            persistOfferState(offerId, runId, true, inferred)
+          })
+          .catch(() => {})
+      }
       // Hydrate instant from history so spectators see everything immediately, then continue live.
       ;(async () => {
+        const hydrateSession = sessionRef.current
         try {
           const historyData = await apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(offerId)}`)
+          if (sessionRef.current !== hydrateSession) return
+          if (!offerEventMatchesUrlAndRef(offerId)) return
           if (historyData?.items?.length && historyData?.run_id === runId) {
             setRows([])
             setGroups([])
@@ -739,7 +934,9 @@ export default function LiveFeed() {
             stageQueue.current = []
             processing.current = false
             currentStageRef.current = null
-            serverProgressRef.current = null
+            targetProgressRef.current = 0
+            displayProgressRef.current = 0
+            serverDrivesProgressRef.current = false
             seenEventIdsRef.current.clear()
 
             // collect files per stage
@@ -748,7 +945,13 @@ export default function LiveFeed() {
               const match = ev.message.match(/^\s*\[([^\]]+)\]/)
               if (match && ev.payload?.files) {
                 const stage = match[1].trim()
-                const newFiles = ev.payload.files.filter((f: any) => isDisplayable(f))
+                const newFiles = ev.payload.files
+                  .filter((f: any) => isDisplayable(f))
+                  .filter((f: FeedFile) => {
+                    if (stage !== 'scale' || flow !== 'dachstuhl') return true
+                    const raw = `${f.url || ''} ${f.path || ''} ${f.name || ''}`.toLowerCase()
+                    return !raw.includes('04_walls_3d.png')
+                  })
                 const existing = filesByStage.current[stage] || []
                 const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
                 if (uniqueNew.length > 0) {
@@ -770,6 +973,8 @@ export default function LiveFeed() {
 
             stageQueue.current = stageOrder
             await processQueueInstant()
+            if (sessionRef.current !== hydrateSession) return
+            if (!offerEventMatchesUrlAndRef(offerId)) return
 
             // set cursor for live polling
             sinceRef.current = historyData.last_event_id ?? (historyData.items[historyData.items.length - 1]?.id)
@@ -781,12 +986,32 @@ export default function LiveFeed() {
     }
 
     const onOfferNew = () => {
+      historyLoadGenRef.current += 1
       persistOfferState(null, null, false)
       reset()
+      setOfferId(null)
+    }
+    const onDetectionsReviewStart = () => {
+      if (progressLockedInEditorRef.current == null) {
+        progressLockedInEditorRef.current = Math.min(100, Math.max(0, displayProgressRef.current || 0))
+      }
+      detectionsReviewActiveRef.current = true
+      reviewPendingRef.current = { files: reviewPendingRef.current?.files ?? [] }
+      freezeProgressAtCurrent()
+    }
+    const onRoofReviewStart = () => {
+      if (progressLockedInEditorRef.current == null) {
+        progressLockedInEditorRef.current = Math.min(100, Math.max(0, displayProgressRef.current || 0))
+      }
+      roofReviewActiveRef.current = true
+      roofReviewPendingRef.current = { files: roofReviewPendingRef.current?.files ?? [] }
+      freezeProgressAtCurrent()
     }
 
     window.addEventListener('offer:compute-started', onComputeStarted)
     window.addEventListener('offer:new', onOfferNew)
+    window.addEventListener('offer:detections-review-start', onDetectionsReviewStart as EventListener)
+    window.addEventListener('offer:roof-review-start', onRoofReviewStart as EventListener)
     // Fallback: if the wizard signals PDF ready but stage queue never reaches computation_complete,
     // inject the final download card anyway.
     const onPdfReady = (e: Event) => {
@@ -795,8 +1020,7 @@ export default function LiveFeed() {
         const oid = String(detail?.offerId || '').trim()
         const url = String(detail?.pdfUrl || '').trim()
         if (!oid || !url) return
-        // Only for the currently selected offer (avoid cross-offer bleed).
-        if (offerId && oid !== offerId) return
+        if (!offerEventMatchesUrlAndRef(oid)) return
         pendingCompletionRef.current = { offerId: oid, pdfUrl: url, canDownloadAdminPdf }
         if (!queuedStages.current.has('computation_complete')) {
           queuedStages.current.add('computation_complete')
@@ -810,12 +1034,14 @@ export default function LiveFeed() {
     return () => {
       window.removeEventListener('offer:compute-started', onComputeStarted)
       window.removeEventListener('offer:new', onOfferNew)
+      window.removeEventListener('offer:detections-review-start', onDetectionsReviewStart as EventListener)
+      window.removeEventListener('offer:roof-review-start', onRoofReviewStart as EventListener)
       window.removeEventListener('offer:pdf-ready', onPdfReady as EventListener)
     }
   }, [])
 
   const nextTitle = (stage: string): string => {
-    const variants = STAGE_TITLES[stage] || [stage]
+    const variants = getStageTitlesForFlow(flowModeRef.current, stage)
     const idx = (titleIndexRef.current[stage] ?? -1) + 1
     titleIndexRef.current[stage] = idx % variants.length
     return variants[titleIndexRef.current[stage]]
@@ -825,24 +1051,70 @@ export default function LiveFeed() {
     const loadHistory = async (e: any) => {
       // ✅ Invalidăm sesiunea veche și aici
       sessionRef.current = sessionRef.current + 1
-      
+      historyLoadGenRef.current += 1
+      const loadGen = historyLoadGenRef.current
+
       const id = e.detail.offerId as string
+      if (id == null || id === '') {
+        persistOfferState(null, null, false)
+        setOfferId(null)
+        setComputing(false)
+        setRunId(null)
+        activeRunIdRef.current = null
+        setPdfUrl(null)
+        setRows([])
+        setGroups([])
+        filesByStage.current = {}
+        processedStages.current.clear()
+        stageQueue.current = []
+        processing.current = false
+        sinceRef.current = undefined
+        seenEventIdsRef.current.clear()
+        currentStageRef.current = null
+        targetProgressRef.current = 0
+        displayProgressRef.current = 0
+        serverDrivesProgressRef.current = false
+        isHistoryMode.current = false
+        allStagesCompleted.current = false
+        setProgress(0)
+        setCurrentStageName(null)
+        flowModeRef.current = 'neubau'
+        setOfferFlow('neubau')
+        return
+      }
+
+      let offerFlowResolved: OfferFlow = 'neubau'
+      try {
+        const o = await apiFetch(`/offers/${encodeURIComponent(id)}`)
+        const meta = o?.meta ?? o?.offer?.meta
+        const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+        offerFlowResolved = inferOfferFlow({ ...meta, offer_type_slug: slug })
+      } catch (_) {}
+      if (loadGen !== historyLoadGenRef.current) return
+      if (urlOfferConflictsWithSelection(id)) return
+      flowModeRef.current = offerFlowResolved
+      setOfferFlow(offerFlowResolved)
+
       // Când selectăm o ofertă din History (inclusiv draft),
       // resetăm explicit starea de rulare ca să nu mai rămână GIF-ul vechi.
       setComputing(false)
       setRunId(null)
       activeRunIdRef.current = null
-      serverProgressRef.current = null
+      targetProgressRef.current = 0
+      displayProgressRef.current = 0
+      serverDrivesProgressRef.current = false
       setProgress(0)
       setCurrentStageName(null)
 
       setOfferId(id)
-      persistOfferState(id, null, false)
+      persistOfferState(id, null, false, offerFlowResolved)
       isHistoryMode.current = true
       allStagesCompleted.current = false
       
       try {
         const historyData = await apiFetch(`/calc-events/history?offer_id=${id}`)
+        if (loadGen !== historyLoadGenRef.current) return
+        if (urlOfferConflictsWithSelection(id)) return
         const runStatus = (historyData as any)?.run_status
         const runIdFromHistory = (historyData as any)?.run_id ?? null
         const lastEventId = (historyData as any)?.last_event_id ?? null
@@ -855,7 +1127,9 @@ export default function LiveFeed() {
           stageQueue.current = []
           processing.current = false
           currentStageRef.current = null
-          serverProgressRef.current = null
+          targetProgressRef.current = 0
+          displayProgressRef.current = 0
+          serverDrivesProgressRef.current = false
 
           setRunId(historyData.run_id)
           activeRunIdRef.current = historyData.run_id
@@ -875,7 +1149,13 @@ export default function LiveFeed() {
             const match = ev.message?.match(/^\s*\[([^\]]+)\]/)
             if (match && ev.payload?.files) {
               const stage = match[1].trim()
-              const newFiles = ev.payload.files.filter((f: any) => isDisplayable(f))
+              const newFiles = ev.payload.files
+                .filter((f: any) => isDisplayable(f))
+                .filter((f: FeedFile) => {
+                  if (stage !== 'scale' || flowModeRef.current !== 'dachstuhl') return true
+                  const raw = `${f.url || ''} ${f.path || ''} ${f.name || ''}`.toLowerCase()
+                  return !raw.includes('04_walls_3d.png')
+                })
               const existing = filesByStage.current[stage] || []
               const uniqueNew = newFiles.filter((nf: FeedFile) => !existing.some((ex: FeedFile) => ex.url === nf.url))
               
@@ -898,22 +1178,32 @@ export default function LiveFeed() {
           
           stageQueue.current = stageOrder
           await processQueueInstant()
+          if (loadGen !== historyLoadGenRef.current) return
+          if (urlOfferConflictsWithSelection(id)) return
           allStagesCompleted.current = true
 
           // Dacă oferta e încă în curs, trecem în mod live: GIF + progress + polling
           if (runStatus === 'running' && runIdFromHistory) {
+            if (!offerEventMatchesUrlAndRef(id)) return
             isHistoryMode.current = false
             setComputing(true)
             setRunId(runIdFromHistory)
             activeRunIdRef.current = runIdFromHistory
             sinceRef.current = lastEventId ?? undefined
-            window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: runIdFromHistory } }))
+            window.dispatchEvent(
+              new CustomEvent('offer:compute-started', {
+                detail: { offerId: id, runId: runIdFromHistory, flow: offerFlowResolved },
+              }),
+            )
           }
 
           try {
             const fresh = await apiFetch(`/offers/${id}/export-url`)
+            if (loadGen !== historyLoadGenRef.current) return
+            if (urlOfferConflictsWithSelection(id)) return
             const url = fresh?.url || fresh?.download_url || fresh?.pdf
             if (url) {
+              if (!offerEventMatchesUrlAndRef(id)) return
               addCongrats(id, url)
               window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
                 detail: { offerId: id, pdfUrl: url } 
@@ -922,12 +1212,17 @@ export default function LiveFeed() {
           } catch {}
         } else if (runStatus === 'running' && runIdFromHistory) {
           // Oferta rulează dar nu avem încă evenimente: afișăm GIF + progress și pornim polling
+          if (!offerEventMatchesUrlAndRef(id)) return
           setRunId(runIdFromHistory)
           activeRunIdRef.current = runIdFromHistory
           isHistoryMode.current = false
           setComputing(true)
           sinceRef.current = lastEventId ?? undefined
-          window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: runIdFromHistory } }))
+          window.dispatchEvent(
+            new CustomEvent('offer:compute-started', {
+              detail: { offerId: id, runId: runIdFromHistory, flow: offerFlowResolved },
+            }),
+          )
           setRows([])
           setGroups([])
           filesByStage.current = {}
@@ -935,7 +1230,9 @@ export default function LiveFeed() {
           stageQueue.current = []
           processing.current = false
           currentStageRef.current = null
-          serverProgressRef.current = null
+          targetProgressRef.current = 0
+          displayProgressRef.current = 0
+          serverDrivesProgressRef.current = false
           allStagesCompleted.current = false
         } else {
           setRunId(null)
@@ -947,15 +1244,20 @@ export default function LiveFeed() {
           stageQueue.current = []
           processing.current = false
           currentStageRef.current = null
-          serverProgressRef.current = null
+          targetProgressRef.current = 0
+          displayProgressRef.current = 0
+          serverDrivesProgressRef.current = false
           allStagesCompleted.current = true
           stageStartedAtRef.current = {}
           
           try {
             const fresh = await apiFetch(`/offers/${id}/export-url`)
+            if (loadGen !== historyLoadGenRef.current) return
+            if (urlOfferConflictsWithSelection(id)) return
             const url = fresh?.url || fresh?.download_url || fresh?.pdf
             
             if (url) {
+              if (!offerEventMatchesUrlAndRef(id)) return
               setPdfUrl(url)
               setComputing(false)
               window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
@@ -966,11 +1268,13 @@ export default function LiveFeed() {
               setComputing(false)
             }
           } catch {
+            if (loadGen !== historyLoadGenRef.current) return
             setPdfUrl(null)
             setComputing(false)
           }
         }
       } catch (err) {
+        if (loadGen !== historyLoadGenRef.current) return
         setRunId(null)
         activeRunIdRef.current = null
         setRows([])
@@ -980,7 +1284,9 @@ export default function LiveFeed() {
         stageQueue.current = []
         processing.current = false
         currentStageRef.current = null
-        serverProgressRef.current = null
+        targetProgressRef.current = 100
+        displayProgressRef.current = 100
+        serverDrivesProgressRef.current = true
         setPdfUrl(null)
         setComputing(false)
         allStagesCompleted.current = true
@@ -999,6 +1305,26 @@ export default function LiveFeed() {
     
     // ✅ CAPTURE SESSIONS ID
     const mySessionId = sessionRef.current
+    const flowLooksDachstuhl = () => {
+      if (flowModeRef.current === 'dachstuhl' || offerFlow === 'dachstuhl') return true
+      try {
+        const raw = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY_OFFER) : null
+        if (raw) {
+          const d = JSON.parse(raw) as { flow?: string }
+          if (d?.flow === 'dachstuhl') return true
+        }
+      } catch {
+        /* ignore */
+      }
+      return false
+    }
+
+    const shouldHideScaleWalls3d = (stage: string, f: FeedFile) => {
+      if (stage !== 'scale') return false
+      if (!flowLooksDachstuhl()) return false
+      const raw = `${f.url || ''} ${f.path || ''} ${f.name || ''}`.toLowerCase()
+      return raw.includes('04_walls_3d.png')
+    }
     
     const iv = setInterval(async () => {
       // ✅ CHECK 1: Sesiune invalidată înainte de request
@@ -1024,17 +1350,25 @@ export default function LiveFeed() {
             if(!match) continue
             const stage = match[1].trim()
 
-            // ✅ Progres de la server (UI:PROGRESS) – actualizează bara direct
+            // ✅ Progres de la server (UI:PROGRESS) – țintă pentru interpolarea barei
             if (stage === 'progress' && ev.payload?.progress != null) {
+              if (
+                detectionsReviewActiveRef.current ||
+                roofReviewActiveRef.current ||
+                reviewPendingRef.current != null ||
+                roofReviewPendingRef.current != null
+              ) {
+                continue
+              }
               const p = Math.min(100, Math.max(0, Number(ev.payload.progress)))
-              serverProgressRef.current = p
-              setProgress(p)
+              serverDrivesProgressRef.current = true
+              targetProgressRef.current = p
               setCurrentStageName('Verarbeitung...')
               continue
             }
             
             if(ev.payload?.files?.length) {
-              const newImages = ev.payload.files.filter(isDisplayable)
+              const newImages = ev.payload.files.filter(isDisplayable).filter((f: FeedFile) => !shouldHideScaleWalls3d(stage, f))
               const existing = filesByStage.current[stage] || []
               const uniqueNew = newImages.filter((nf: FeedFile) => !existing.some(ex => ex.url === nf.url))
               
@@ -1051,7 +1385,12 @@ export default function LiveFeed() {
             if (stage === 'detections_review' && ev.payload?.files?.length) {
               const files = (ev.payload.files as FeedFile[]).filter(isDisplayable)
               if (files.length > 0) {
+                detectionsReviewActiveRef.current = true
+                if (progressLockedInEditorRef.current == null) {
+                  progressLockedInEditorRef.current = Math.min(100, Math.max(0, displayProgressRef.current || 0))
+                }
                 reviewPendingRef.current = { files }
+                freezeProgressAtCurrent()
                 try {
                   window.dispatchEvent(new CustomEvent('offer:detections-review', { detail: { files } }))
                 } catch (_) {}
@@ -1060,7 +1399,16 @@ export default function LiveFeed() {
             }
 
             // Roof editor is handled in StepWizard (direct calc-events poll). LiveFeed must ignore roof stage completely.
-            if (stage === 'roof') continue
+            if (stage === 'roof') {
+              const files = (ev.payload?.files as FeedFile[] | undefined)?.filter(isDisplayable) ?? []
+              roofReviewActiveRef.current = true
+              if (progressLockedInEditorRef.current == null) {
+                progressLockedInEditorRef.current = Math.min(100, Math.max(0, displayProgressRef.current || 0))
+              }
+              roofReviewPendingRef.current = { files }
+              freezeProgressAtCurrent()
+              continue
+            }
 
             // În timpul review-ului, etapele de detecții se bufferizează și vor fi procesate după Approve
             const stagesBufferedDuringReview = ['scale_flood', 'detections', 'exterior_doors', 'count_objects']
@@ -1081,10 +1429,14 @@ export default function LiveFeed() {
                 let roofMeasurementsPdfUrl: string | null = null
                 try {
                   const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
+                  if (sessionRef.current !== mySessionId) return
+                  if (offerId && !offerEventMatchesUrlAndRef(offerId)) return
                   realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf || realPdfUrl
                   adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
                   roofMeasurementsPdfUrl = exportRes?.roofMeasurementsPdf?.download_url || exportRes?.roofMeasurementsPdf?.url || null
                 } catch (_) {}
+                if (sessionRef.current !== mySessionId) return
+                if (offerId && !offerEventMatchesUrlAndRef(offerId)) return
                 pendingCompletionRef.current = {
                   offerId,
                   pdfUrl: realPdfUrl || '',
@@ -1106,6 +1458,9 @@ export default function LiveFeed() {
 
             if(stage === 'computation_complete') {
               allStagesCompleted.current = true
+              serverDrivesProgressRef.current = true
+              targetProgressRef.current = 100
+              displayProgressRef.current = 100
               setProgress(100)
               setCurrentStageName('Abgeschlossen')
               await new Promise(r => setTimeout(r, 1500));
@@ -1118,6 +1473,8 @@ export default function LiveFeed() {
                 try {
                     // Obține URL-ul pentru PDF-ul normal și admin PDF-ul dacă e disponibil
                     const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
+                    if (sessionRef.current !== mySessionId) return
+                    if (!offerEventMatchesUrlAndRef(offerId)) return
                     realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf
                     adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
                     roofMeasurementsPdfUrl = exportRes?.roofMeasurementsPdf?.download_url || exportRes?.roofMeasurementsPdf?.url || null
@@ -1125,6 +1482,9 @@ export default function LiveFeed() {
                     console.warn("Failed to fetch export url on complete", e)
                 }
               }
+
+              if (sessionRef.current !== mySessionId) return
+              if (offerId && !offerEventMatchesUrlAndRef(offerId)) return
 
               if (!realPdfUrl && finalPdfUrlRef.current) {
                 realPdfUrl = finalPdfUrlRef.current
@@ -1150,7 +1510,7 @@ export default function LiveFeed() {
             if (STAGE_TO_SEQUENCE[stage]) {
               if (processedStages.current.has(stage)) {
                 if (ev.payload?.files?.length) {
-                  const newImages = ev.payload.files.filter(isDisplayable)
+                  const newImages = ev.payload.files.filter(isDisplayable).filter((f: FeedFile) => !shouldHideScaleWalls3d(stage, f))
                   setGroups(prev => {
                     const groupIndex = prev.findIndex(g => g.stage === stage)
                     if (groupIndex >= 0) {
@@ -1187,12 +1547,22 @@ export default function LiveFeed() {
     }, 250)
     
     return () => clearInterval(iv)
-  }, [runId, offerId])
+  }, [runId, offerId, offerFlow])
 
   // După ce userul aprobă detecțiile în editor, eliberăm review-ul și procesăm etapele bufferizate
   useEffect(() => {
     const onApproved = () => {
       if (reviewPendingRef.current == null) return
+      detectionsReviewActiveRef.current = false
+      if (!roofReviewActiveRef.current) {
+        const locked = progressLockedInEditorRef.current
+        if (typeof locked === 'number') {
+          targetProgressRef.current = locked
+          displayProgressRef.current = locked
+          setProgress(Math.round(locked * 10) / 10)
+        }
+        progressLockedInEditorRef.current = null
+      }
       reviewPendingRef.current = null
       if (!queuedStages.current.has('detections_review')) {
         queuedStages.current.add('detections_review')
@@ -1214,6 +1584,16 @@ export default function LiveFeed() {
   useEffect(() => {
     const onApproved = () => {
       if (roofReviewPendingRef.current == null) return
+      roofReviewActiveRef.current = false
+      if (!detectionsReviewActiveRef.current) {
+        const locked = progressLockedInEditorRef.current
+        if (typeof locked === 'number') {
+          targetProgressRef.current = locked
+          displayProgressRef.current = locked
+          setProgress(Math.round(locked * 10) / 10)
+        }
+        progressLockedInEditorRef.current = null
+      }
       roofReviewPendingRef.current = null
       if (!queuedStages.current.has('roof')) {
         queuedStages.current.add('roof')
@@ -1241,12 +1621,17 @@ export default function LiveFeed() {
     const stage = stageQueue.current.shift()!
     currentStageRef.current = stage
     
-    // Actualizează progresul cu etapa curentă
+    // Actualizează progresul cu etapa curentă (dacă motorul nu trimite încă UI:PROGRESS)
     const progressData = calculateProgress(
       processedStages.current,
-      stage
+      stage,
+      flowModeRef.current,
     )
-    setProgress(progressData.progress)
+    if (!serverDrivesProgressRef.current) {
+      setProgress(progressData.progress)
+      targetProgressRef.current = progressData.progress
+      displayProgressRef.current = progressData.progress
+    }
     setCurrentStageName(progressData.currentStageName)
     
     // ✅ PASS CURRENT SESSION ID
@@ -1258,9 +1643,14 @@ export default function LiveFeed() {
     // Actualizează progresul după finalizarea etapei
     const finalProgressData = calculateProgress(
       processedStages.current,
-      null
+      null,
+      flowModeRef.current,
     )
-    setProgress(finalProgressData.progress)
+    if (!serverDrivesProgressRef.current) {
+      setProgress(finalProgressData.progress)
+      targetProgressRef.current = finalProgressData.progress
+      displayProgressRef.current = finalProgressData.progress
+    }
     setCurrentStageName(finalProgressData.currentStageName)
     
     processing.current = false
@@ -1278,7 +1668,7 @@ export default function LiveFeed() {
       for (const stage of queue) {
         const indices = getStageSequence(stage)
         const gid = generateId('g-')
-        const title = STAGE_TITLES[stage]?.[0] ?? stage
+        const title = getStageTitlesForFlow(flowModeRef.current, stage)[0] ?? stage
         const items: SyntheticItem[] = []
 
         for (let i = 0; i < indices.length; i++) {
@@ -1375,6 +1765,13 @@ export default function LiveFeed() {
     if (stage === 'computation_complete') {
       const completion = pendingCompletionRef.current
       if (completion) {
+        if (!offerEventMatchesUrlAndRef(completion.offerId)) {
+          pendingCompletionRef.current = null
+          if (!instant) {
+            setRows(prev => [...prev, { kind: 'gap', id: generateId('gap-') }])
+          }
+          return
+        }
         const item: CongratsItem = {
           kind: 'congrats',
           stage: 'final',
@@ -1547,18 +1944,29 @@ export default function LiveFeed() {
       {/* Progress Bar */}
       {computing && runId && (
         <div className="shrink-0 px-3 pt-3 pb-2 border-b border-white/10 bg-panel/40">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-medium text-sand/80">
-              {currentStageName || 'Verarbeitung...'}
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <span
+                className={`shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${
+                  offerFlow === 'dachstuhl'
+                    ? 'border-amber-500/45 text-amber-200/95 bg-amber-500/10'
+                    : 'border-white/15 text-sand/75 bg-white/[0.06]'
+                }`}
+              >
+                {offerFlow === 'dachstuhl' ? 'Dachstuhl' : 'Neubau'}
+              </span>
+              <div className="text-xs font-medium text-sand/80 truncate">
+                {currentStageName || 'Verarbeitung...'}
+              </div>
             </div>
-            <div className="text-xs font-semibold text-[#FF9F0F]">
-              {progress}%
+            <div className="text-xs font-semibold text-[#FF9F0F] shrink-0">
+              {Math.round(progress)}%
             </div>
           </div>
           <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-[#FF9F0F] to-[#FFB84D] transition-all duration-500 ease-out rounded-full"
-              style={{ width: `${Math.max(2, progress)}%` }}
+              className="h-full bg-gradient-to-r from-[#FF9F0F] to-[#FFB84D] transition-[width] duration-200 ease-out rounded-full"
+              style={{ width: `${Math.max(2, Math.round(progress))}%` }}
             />
           </div>
         </div>
@@ -1593,7 +2001,13 @@ export default function LiveFeed() {
                      </div>
                      
                      <div className="space-y-4">
-                         {g.items.filter(Boolean).map((it, idx) => {
+                         {g.items
+                           .filter(Boolean)
+                           .filter((it) => {
+                             if (it.kind !== 'congrats') return true
+                             return offerEventMatchesUrlAndRef(it.offerId)
+                           })
+                           .map((it, idx) => {
                              const uniqueKey = `${it.__id}-${idx}`;
 
                              if(it.kind === 'text') {
@@ -1619,6 +2033,7 @@ export default function LiveFeed() {
                              }
                              
                              if(it.kind === 'congrats') {
+                               const allowDownload = () => offerEventMatchesUrlAndRef(it.offerId)
                                return (
                                  <div
                                    key={uniqueKey}
@@ -1647,16 +2062,18 @@ export default function LiveFeed() {
                                        <div className="mt-3 flex flex-col gap-2">
                                         <button
                                           onClick={async () => {
+                                            if (!allowDownload()) return
                                             let url: string | null = it.pdfUrl || null
                                             if (!url) {
                                               try {
                                                 const res = await apiFetch(`/offers/${it.offerId}/export-url`) as { download_url?: string; url?: string; pdf?: string }
+                                                if (!allowDownload()) return
                                                 url = res?.url || res?.download_url || res?.pdf || null
                                               } catch {
                                                 url = null
                                               }
                                             }
-                                            if (url) downloadPdfWithRefresh(it.offerId, url, 'offer')
+                                            if (url) await downloadPdfWithRefresh(it.offerId, url, 'offer', allowDownload)
                                           }}
                                           className="btn-sun"
                                         >
@@ -1664,16 +2081,18 @@ export default function LiveFeed() {
                                         </button>
                                         <button
                                           onClick={async () => {
+                                            if (!allowDownload()) return
                                             let url: string | null = it.roofMeasurementsPdfUrl || null
                                             if (!url) {
                                               try {
                                                 const res = await apiFetch(`/offers/${it.offerId}/export-url`) as { roofMeasurementsPdf?: { download_url?: string; url?: string } }
+                                                if (!allowDownload()) return
                                                 url = res?.roofMeasurementsPdf?.download_url || res?.roofMeasurementsPdf?.url || null
                                               } catch {
                                                 url = null
                                               }
                                             }
-                                            if (url) downloadPdfWithRefresh(it.offerId, url, 'roofMeasurements')
+                                            if (url) await downloadPdfWithRefresh(it.offerId, url, 'roofMeasurements', allowDownload)
                                           }}
                                           className="btn-sun-secondary"
                                         >

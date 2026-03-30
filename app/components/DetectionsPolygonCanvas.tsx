@@ -12,6 +12,8 @@ export type RoomPolygon = {
   roofAngleDeg?: number
   /** Roof editor: e.g. 0_w, 1_w, 2_w, 4_w, 4.5_w */
   roofType?: string
+  /** Roof editor: overhang in metres (shown as Dachüberstand in cm in UI). */
+  roofOverhangM?: number
 }
 export type DoorRect = {
   bbox: [number, number, number, number]
@@ -49,6 +51,10 @@ type PolygonCanvasProps = {
   dimUnselectedRoomPolygons?: boolean
   /** tab=doors: desenează mai întâi poligoanele din `rooms` ca fundal (ex. Dachflächen + Dachfenster). */
   showRoomPolygonsUnderDoors?: boolean
+  /**
+   * Cu `showRoomPolygonsUnderDoors`: pe tab Dachfenster evidențiază mai clar suprafețele de acoperiș (contur + etichetă).
+   */
+  highlightRoofSurfaceUnderlay?: boolean
   className?: string
   /**
    * Când devine true după ce containerul era ascuns (ex. tab Dach cu display:none), forțează recalcul fit.
@@ -70,6 +76,23 @@ const DOOR_HIT_PADDING = 16
 const CLOSE_POLYGON_HIT_PX = 22
 /** Mișcare maximă în px ecran pentru a considera tap (vs. drag) pe uși în Select. */
 const DOOR_TAP_MAX_MOVE_PX = 8
+/**
+ * Zoom la wheel: trackpad-ul trimite multe evenimente cu deltaY mic — evităm factori fixi 0.9/1.1 per eveniment.
+ * deltaMode LINE/PAGE e scalat la „pixeli efectivi”; exp(-dy·k) + clamp limitează salturile la rotița mouse.
+ */
+const WHEEL_ZOOM_SENSITIVITY = 0.00145
+const WHEEL_ZOOM_FACTOR_MIN = 0.93
+const WHEEL_ZOOM_FACTOR_MAX = 1.07
+
+function wheelEventToZoomFactor(e: WheelEvent): number {
+  let dy = e.deltaY
+  if (e.deltaMode === 1) dy *= 16
+  else if (e.deltaMode === 2) dy *= 120
+  let factor = Math.exp(-dy * WHEEL_ZOOM_SENSITIVITY)
+  if (factor < WHEEL_ZOOM_FACTOR_MIN) factor = WHEEL_ZOOM_FACTOR_MIN
+  if (factor > WHEEL_ZOOM_FACTOR_MAX) factor = WHEEL_ZOOM_FACTOR_MAX
+  return factor
+}
 
 function pointInPolygon(px: number, py: number, points: Point[]): boolean {
   if (points.length < 3) return false
@@ -135,6 +158,7 @@ export function DetectionsPolygonCanvas({
   onEditStart,
   dimUnselectedRoomPolygons = false,
   showRoomPolygonsUnderDoors = false,
+  highlightRoofSurfaceUnderlay = false,
   newDoorType = 'door',
   className = '',
   layoutActive = true,
@@ -173,6 +197,21 @@ export function DetectionsPolygonCanvas({
     const x = (cx - effective.offX) / effective.scale
     const y = (cy - effective.offY) / effective.scale
     if (x < 0 || x > imageWidth || y < 0 || y > imageHeight) return null
+    return [x, y]
+  }, [effective, imageWidth, imageHeight])
+
+  /**
+   * Coordonate pentru plasare (Add ușă/fereastră, poligon camere): acceptă doar click pe aria imaginii
+   * (nu pe marginile letterbox) și clamp la [0,w]×[0,h] ca marginea vizuală să nu dea null din cauza float-ului.
+   */
+  const toImageForPlacement = useCallback((cx: number, cy: number): Point | null => {
+    if (!effective) return null
+    const { offX, offY, scale } = effective
+    const drawW = imageWidth * scale
+    const drawH = imageHeight * scale
+    if (cx < offX || cx > offX + drawW || cy < offY || cy > offY + drawH) return null
+    const x = Math.min(Math.max((cx - offX) / scale, 0), imageWidth)
+    const y = Math.min(Math.max((cy - offY) / scale, 0), imageHeight)
     return [x, y]
   }, [effective, imageWidth, imageHeight])
 
@@ -224,9 +263,13 @@ export function DetectionsPolygonCanvas({
     const offX = (cw - imageWidth * scale) / 2
     const offY = (ch - imageHeight * scale) / 2
     setFit({ scale, offX, offY, cw, ch })
+  }, [imageWidth, imageHeight])
+
+  /** Zoom/pan nur bei neuem Plan/Bild zurücksetzen — nicht bei Canvas-Resize (Werkzeug-Zeilen ändern die Höhe). */
+  useEffect(() => {
     setUserZoom(1)
     setUserPan({ x: 0, y: 0 })
-  }, [imageWidth, imageHeight])
+  }, [imageUrl, imageWidth, imageHeight])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -236,6 +279,7 @@ export function DetectionsPolygonCanvas({
       const rect = canvas.getBoundingClientRect()
       const cw = rect.width
       const ch = rect.height
+      if (cw <= 0 || ch <= 0) return
       canvas.width = cw * dpr
       canvas.height = ch * dpr
       const ctx = canvas.getContext('2d')
@@ -244,7 +288,13 @@ export function DetectionsPolygonCanvas({
     }
     requestAnimationFrame(handleResize)
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    /** Flex-Layout (z. B. Footer unter dem Canvas bei Fenster/Türen) ändert die Canvas-Höhe ohne window-resize. */
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => requestAnimationFrame(handleResize)) : null
+    if (ro) ro.observe(canvas)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      ro?.disconnect()
+    }
   }, [imageWidth, imageHeight, recomputeFit, layoutActive])
 
   const draw = useCallback(() => {
@@ -364,7 +414,7 @@ export function DetectionsPolygonCanvas({
           const pts = room.points
           if (pts.length < 2) return
           ctx.fillStyle = underlayColors[i % underlayColors.length]
-          ctx.globalAlpha = 0.14
+          ctx.globalAlpha = highlightRoofSurfaceUnderlay ? 0.28 : 0.14
           ctx.beginPath()
           ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
           for (let k = 1; k < pts.length; k++) {
@@ -373,9 +423,40 @@ export function DetectionsPolygonCanvas({
           ctx.closePath()
           ctx.fill()
           ctx.globalAlpha = 1
-          ctx.strokeStyle = 'rgba(255,255,255,0.28)'
-          ctx.lineWidth = 1.25
+          ctx.strokeStyle = highlightRoofSurfaceUnderlay ? 'rgba(255,159,15,0.85)' : 'rgba(255,255,255,0.28)'
+          ctx.lineWidth = highlightRoofSurfaceUnderlay ? 2.25 : 1.25
           ctx.stroke()
+          if (highlightRoofSurfaceUnderlay && pts.length >= 3) {
+            let cx = 0
+            let cy = 0
+            pts.forEach((p) => {
+              cx += p[0]
+              cy += p[1]
+            })
+            cx /= pts.length
+            cy /= pts.length
+            const label =
+              (room.roomName ?? (room as { room_name?: string }).room_name ?? room.roomType ?? `S${i + 1}`).trim() ||
+              `S${i + 1}`
+            ctx.font = 'bold 12px sans-serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            const textW = ctx.measureText(label).width
+            const pad = 5
+            const boxW = textW + pad * 2
+            const boxH = 18
+            const lx = ox + cx * s - boxW / 2
+            const ly = oy + cy * s - boxH / 2
+            ctx.fillStyle = 'rgba(0,0,0,0.82)'
+            ctx.strokeStyle = 'rgba(255,159,15,0.65)'
+            ctx.lineWidth = 1.25
+            ctx.beginPath()
+            ctx.rect(lx, ly, boxW, boxH)
+            ctx.fill()
+            ctx.stroke()
+            ctx.fillStyle = '#FF9F0F'
+            ctx.fillText(label, ox + cx * s, oy + cy * s)
+          }
         })
       }
       doors.forEach((door, i) => {
@@ -442,6 +523,7 @@ export function DetectionsPolygonCanvas({
     imageLoaded,
     dimUnselectedRoomPolygons,
     showRoomPolygonsUnderDoors,
+    highlightRoofSurfaceUnderlay,
   ])
 
   useEffect(() => { draw() }, [draw])
@@ -457,16 +539,29 @@ export function DetectionsPolygonCanvas({
 
     if (tab === 'rooms') {
       if (tool === 'edit') {
-        for (let i = rooms.length - 1; i >= 0; i--) {
-          const pts = rooms[i].points
+        // Mai întâi vârfuri/muchii ale camerei selectate, ca să nu „fure” click-ul camerele vecine
+        // (cercurile de hit se suprapun când poligoanele sunt apropiate).
+        const hitRoomVerticesAndEdges = (i: number) => {
+          const pts = rooms[i]?.points
+          if (!pts?.length) return null
           for (let vi = 0; vi < pts.length; vi++) {
-            if (dist(pts[vi], [px, py]) <= hitR) return { kind: 'vertex', index: i, vertexIndex: vi }
+            if (dist(pts[vi], [px, py]) <= hitR) return { kind: 'vertex' as const, index: i, vertexIndex: vi }
           }
           for (let ei = 0; ei < pts.length; ei++) {
             const a = pts[ei]
             const b = pts[(ei + 1) % pts.length]
-            if (distToSegment(px, py, a, b) <= edgeR) return { kind: 'edge', index: i, edgeIndex: ei }
+            if (distToSegment(px, py, a, b) <= edgeR) return { kind: 'edge' as const, index: i, edgeIndex: ei }
           }
+          return null
+        }
+        if (selectedIndex != null && selectedIndex >= 0 && selectedIndex < rooms.length) {
+          const sel = hitRoomVerticesAndEdges(selectedIndex)
+          if (sel) return sel
+        }
+        for (let i = rooms.length - 1; i >= 0; i--) {
+          if (selectedIndex != null && i === selectedIndex) continue
+          const h = hitRoomVerticesAndEdges(i)
+          if (h) return h
         }
       }
       for (let i = rooms.length - 1; i >= 0; i--) {
@@ -493,7 +588,7 @@ export function DetectionsPolygonCanvas({
       }
     }
     return null
-  }, [effective, tab, rooms, doors, tool, toImage])
+  }, [effective, tab, rooms, doors, tool, toImage, selectedIndex])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -506,17 +601,20 @@ export function DetectionsPolygonCanvas({
 
     if (e.button !== 0) return
 
-    if (tool === 'add' && tab === 'rooms' && pt) {
-      if (newPoints && newPoints.length >= 3 && dist(newPoints[0], pt) * effective.scale <= CLOSE_POLYGON_HIT_PX) {
+    const placePt = tool === 'add' ? toImageForPlacement(cx, cy) : pt
+
+    if (tool === 'add' && tab === 'rooms') {
+      if (!placePt) return
+      if (newPoints && newPoints.length >= 3 && dist(newPoints[0], placePt) * effective.scale <= CLOSE_POLYGON_HIT_PX) {
         onCloseNewPolygon()
       } else {
-        onAddPoint(pt[0], pt[1])
+        onAddPoint(placePt[0], placePt[1])
       }
       return
     }
 
-    if (tool === 'add' && tab === 'doors' && pt) {
-      onAddPoint(pt[0], pt[1])
+    if (tool === 'add' && tab === 'doors') {
+      if (placePt) onAddPoint(placePt[0], placePt[1])
       return
     }
 
@@ -625,7 +723,7 @@ export function DetectionsPolygonCanvas({
     } else {
       onSelect(null)
     }
-  }, [effective, tool, tab, newPoints, userPan, hitTest, toImage, onSelect, onAddPoint, onCloseNewPolygon, onRemoveSelected, onInsertVertex, onRoomTypeLabelClick, onEditStart, rooms, doors])
+  }, [effective, tool, tab, newPoints, userPan, hitTest, toImage, toImageForPlacement, onSelect, onAddPoint, onCloseNewPolygon, onRemoveSelected, onInsertVertex, onRoomTypeLabelClick, onEditStart, rooms, doors])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -665,7 +763,8 @@ export function DetectionsPolygonCanvas({
     }
 
     if (tool === 'add' && tab === 'doors' && newPoints?.length === 1) {
-      setPreviewEndPoint(pt)
+      const preview = toImageForPlacement(cx, cy)
+      setPreviewEndPoint(preview)
     } else {
       setPreviewEndPoint(null)
     }
@@ -761,7 +860,7 @@ export function DetectionsPolygonCanvas({
         }
       }
     }
-  }, [panning, panStart, dragging, effective, tool, tab, newPoints, imageWidth, imageHeight, toImage, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onEditStart])
+  }, [panning, panStart, dragging, effective, tool, tab, newPoints, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onEditStart])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     const pendingTap = doorTapPendingRef.current
@@ -807,7 +906,7 @@ export function DetectionsPolygonCanvas({
     const cy = e.clientY - rect.top
     const imgX = (cx - effective.offX) / effective.scale
     const imgY = (cy - effective.offY) / effective.scale
-    const factor = e.deltaY > 0 ? 0.9 : 1.1
+    const factor = wheelEventToZoomFactor(e)
     const newZoom = Math.max(0.3, Math.min(5, userZoom * factor))
     const newOffX = cx - imgX * fit.scale * newZoom
     const newOffY = cy - imgY * fit.scale * newZoom
@@ -822,12 +921,21 @@ export function DetectionsPolygonCanvas({
     return () => canvas.removeEventListener('wheel', handleWheel)
   }, [handleWheel])
 
-  const cursor = tool === 'add' ? 'crosshair' : panning ? 'grabbing' : 'default'
+  const canvasCursor = (() => {
+    if (panning) return 'grabbing'
+    if (dragging?.kind === 'vertex' || dragging?.kind === 'edge' || dragging?.kind === 'poly') return 'move'
+    if (tool === 'add') return 'crosshair'
+    if (tool === 'remove') return 'default'
+    if (tool === 'edit') return 'default'
+    if (tool === 'select') return 'grab'
+    return 'default'
+  })()
+
   return (
     <canvas
       ref={canvasRef}
       className={className}
-      style={{ width: '100%', height: '100%', cursor }}
+      style={{ width: '100%', height: '100%', cursor: canvasCursor }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

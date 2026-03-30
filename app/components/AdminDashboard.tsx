@@ -308,6 +308,12 @@ export default function AdminDashboard() {
                 key={o.id}
                 onClick={() => {
                   setSelectedOfferId(o.id)
+                  if (typeof window !== 'undefined') {
+                    const url = new URL(window.location.href)
+                    url.searchParams.set('offerId', o.id)
+                    url.searchParams.delete('runId')
+                    window.history.pushState(null, '', url.toString())
+                  }
                   window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: o.id } }))
                 }}
                 role="button"
@@ -316,6 +322,12 @@ export default function AdminDashboard() {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
                     setSelectedOfferId(o.id)
+                    if (typeof window !== 'undefined') {
+                      const url = new URL(window.location.href)
+                      url.searchParams.set('offerId', o.id)
+                      url.searchParams.delete('runId')
+                      window.history.pushState(null, '', url.toString())
+                    }
                     window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: o.id } }))
                   }
                 }}

@@ -1,6 +1,7 @@
 import type { DoorRect, Point, RoomPolygon } from '../components/DetectionsPolygonCanvas'
 import {
   DEFAULT_ROOF_ANGLE,
+  DEFAULT_ROOF_OVERHANG_M,
   DEFAULT_ROOF_TYPE,
   type RoofTypeId,
 } from './roofTypeOptions'
@@ -20,17 +21,22 @@ export function normalizeRect(r: {
   roomType?: string
   roofAngleDeg?: number
   roofType?: string
+  roofOverhangM?: number
 }): RoomPolygon {
   let ang = typeof r.roofAngleDeg === 'number' && Number.isFinite(r.roofAngleDeg) ? r.roofAngleDeg : DEFAULT_ROOF_ANGLE
   ang = Math.max(0, Math.min(60, ang))
   const allowed = new Set(['0_w', '1_w', '2_w', '4_w', '4.5_w'])
   const rt = typeof r.roofType === 'string' && allowed.has(r.roofType) ? (r.roofType as RoofTypeId) : DEFAULT_ROOF_TYPE
+  let oh =
+    typeof r.roofOverhangM === 'number' && Number.isFinite(r.roofOverhangM) ? r.roofOverhangM : DEFAULT_ROOF_OVERHANG_M
+  oh = Math.max(0, Math.min(5, oh))
   return {
     points: r.points || [],
     roomName: r.roomName,
     roomType: r.roomType,
     roofAngleDeg: ang,
     roofType: rt,
+    roofOverhangM: oh,
   }
 }
 

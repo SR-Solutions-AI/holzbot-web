@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useCallback, useLayoutEffect } fr
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import { apiFetch } from '../lib/supabaseClient'
+import { inferOfferFlow } from '../lib/offerFlow'
 import { buildFormStepsFromJson, buildPriceSectionsFromFormStepsJson } from '../../lib/buildFormFromJson'
 import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
 import { type Field, formStepsDachstuhl } from '../dashboard/formConfig'
@@ -19,7 +20,18 @@ type Drafts = Record<string, Record<string, any>>
 type Errors = Record<string, string | undefined>
 
 // Timpul minim (în ms) pentru care afișăm animația de loading/progres
-const MIN_ANIMATION_TIME = 5000; 
+const MIN_ANIMATION_TIME = 5000;
+
+/** Ofertă doar acoperiș (Dachstuhl): meta, wizard_package sau tip ofertă slug. */
+function isRoofOnlyOfferFromMeta(
+  meta: { roof_only_offer?: boolean | null; wizard_package?: string | null } | null | undefined,
+  offerTypeSlug?: string | null,
+): boolean {
+  if (meta?.roof_only_offer === true) return true
+  if ((meta?.wizard_package ?? '').toString().toLowerCase() === 'dachstuhl') return true
+  if ((offerTypeSlug ?? '').toString().toLowerCase() === 'dachstuhl') return true
+  return false
+}
 
 /* ================== DATE ACOPERIȘ (grid 4x6) ================== */
 const ROOF_TYPES = [
@@ -117,7 +129,9 @@ const DE = {
     'Fotografii / randări': 'Fotos / Renderings',
     'Documentație suplimentară': 'Zusätzliche Dokumentation',
     'Choose File': 'Datei auswählen',
-    'no file selected': 'keine Datei ausgewählt'
+    'no file selected': 'keine Datei ausgewählt',
+
+    inaltimeEtaje: 'Raumhöhe',
   },
 
   optionsGlobal: {
@@ -244,6 +258,7 @@ function tStepLabel(key: string, fallback: string) {
   return fromJson ? fallback : (DE.steps as any)?.[key] ?? key
 }
 function tFieldLabel(stepKey: string, fieldName: string, fallback: string | undefined) {
+  if (fieldName === 'inaltimeEtaje') return 'Raumhöhe'
   const fromJson = typeof fallback === 'string' && fallback.trim()
   if (fromJson) return fallback
   const fb = fieldName ?? ''
@@ -295,7 +310,7 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
       if (fieldName === 'wintergartenTyp' && !asBool(form.hasWintergarden)) return true
       if (fieldName === 'balkonTyp' && !asBool(form.hasBalkone)) return true
     }
-    if (stepKey === 'ferestreUsi' && fieldName === 'garageDoorType' && !asBool(form.hasGarage)) return true
+    if (stepKey === 'ferestreUsi' && fieldName === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) return true
     if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'materialeFinisaj') && fieldName === 'tipAcoperis') return true
     if (stepKey === 'structuraCladirii' && fieldName === 'floorsNumber') return true
     if (!nivelOferta) return false
@@ -549,8 +564,6 @@ export default function StepWizard() {
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savingStepsRef = useRef<Set<string>>(new Set())
 
-  const saveDebounceRef = useRef<any>(null)
-  const lastSavedRef = useRef<string>('')
 
   const creatingRef = useRef(false)
   const [computing, setComputing] = useState(false)
@@ -595,10 +608,12 @@ export default function StepWizard() {
   const roofReviewApprovedRef = useRef(false)
   const [offerTypesBySlug, setOfferTypesBySlug] = useState<Record<string, string>>({})
   /** Ultima stare a checkbox-urilor Wintergarten/Balkone pe pasul Gebäudestruktur – ca debifarea să nu fie suprascrisă de effect. */
-  const structuraWinterBalkoneRef = useRef<{ hasWintergarden?: boolean; hasBalkone?: boolean; hasGarage?: boolean }>({})
+  const structuraWinterBalkoneRef = useRef<{ hasWintergarden?: boolean; hasBalkone?: boolean }>({})
   const stepsScrollContainerRef = useRef<HTMLDivElement>(null)
-  /** Pasul pentru care am rulat ultima încărcare – evită re-rularea effect-ului la fiecare re-render (Maximum update depth). */
-  const lastLoadedStepKeyRef = useRef<string | null>(null)
+  /** Invalidă GET /step în curs când se salvează sau se schimbă pasul/oferta – evită suprascrierea textului tastat. */
+  const stepLoadNonceRef = useRef(0)
+  /** Invalidă încărcarea ofertei când utilizatorul selectează altă ofertă înainte să termine request-urile. */
+  const offerSelectNonceRef = useRef(0)
   /** Sursă de adevăr pentru vizibilitatea pasului Wintergärten & Balkone – actualizat la toggle pe Gebäudestruktur. */
   const [winterBalkoneFlags, setWinterBalkoneFlags] = useState<{ hasWintergarden: boolean; hasBalkone: boolean }>({ hasWintergarden: false, hasBalkone: false })
 
@@ -611,7 +626,6 @@ export default function StepWizard() {
     else url.searchParams.delete('runId')
     window.history.replaceState(null, '', url.toString())
   }, [])
-
   useEffect(() => { offerIdRef.current = offerId }, [offerId])
 
   useEffect(() => {
@@ -636,7 +650,22 @@ export default function StepWizard() {
       const runFromUrl = url.searchParams.get('runId')
       if (!offerFromUrl) return
       if (runFromUrl) {
-        window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: offerFromUrl, runId: runFromUrl } }))
+        void apiFetch(`/offers/${encodeURIComponent(offerFromUrl)}`)
+          .then((o: any) => {
+            const meta = o?.meta ?? o?.offer?.meta
+            const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+            const flow = inferOfferFlow({ ...meta, offer_type_slug: slug })
+            window.dispatchEvent(
+              new CustomEvent('offer:compute-started', {
+                detail: { offerId: offerFromUrl, runId: runFromUrl, flow },
+              }),
+            )
+          })
+          .catch(() => {
+            window.dispatchEvent(
+              new CustomEvent('offer:compute-started', { detail: { offerId: offerFromUrl, runId: runFromUrl } }),
+            )
+          })
       } else {
         window.dispatchEvent(new CustomEvent('offer:selected', { detail: { offerId: offerFromUrl } }))
       }
@@ -654,11 +683,38 @@ export default function StepWizard() {
     if (!hasWG && !hasB) {
       steps = steps.filter((s: { key?: string }) => (s as any).key !== 'wintergaertenBalkone')
     }
-    const nivelRaw = (form.nivelOferta || form.sistemConstructiv?.nivelOferta || '').toString().trim().toLowerCase()
-    const isOnlyStructure = (nivelRaw.includes('rohbau') || nivelRaw.includes('tragwerk') || nivelRaw.includes('structură') || nivelRaw.includes('structura')) &&
-      !nivelRaw.includes('fenster') && !nivelRaw.includes('ferestre') && !nivelRaw.includes('completă') && !nivelRaw.includes('completa') && !nivelRaw.includes('schlüsselfertig')
-    const isStructurePlusWindows = (nivelRaw.includes('tragwerk') || nivelRaw.includes('structură') || nivelRaw.includes('structura')) &&
-      (nivelRaw.includes('fenster') || nivelRaw.includes('ferestre'))
+    // nivelOferta stă în drafts['sistemConstructiv'] după ce părăsim pasul — mergeStepForm nu păstrează ...prev, deci form pierde câmpurile celorlalte pași
+    const nivelRaw = (
+      form.nivelOferta ||
+      form.sistemConstructiv?.nivelOferta ||
+      form.materialeFinisaj?.nivelOferta ||
+      drafts.sistemConstructiv?.nivelOferta ||
+      drafts.materialeFinisaj?.nivelOferta ||
+      ''
+    )
+      .toString()
+      .trim()
+      .toLowerCase()
+    const hasOpeningsInScope = nivelRaw.includes('fenster') || nivelRaw.includes('ferestre')
+    const isFullHouse =
+      nivelRaw.includes('completă') ||
+      nivelRaw.includes('completa') ||
+      nivelRaw.includes('schlüsselfertig') ||
+      nivelRaw.includes('schlüsselfertiges haus')
+    const isOnlyStructure =
+      !hasOpeningsInScope &&
+      !isFullHouse &&
+      (nivelRaw.includes('rohbau') ||
+        nivelRaw.includes('tragwerk') ||
+        nivelRaw.includes('structură') ||
+        nivelRaw.includes('structura'))
+    const isStructurePlusWindows =
+      hasOpeningsInScope &&
+      !isFullHouse &&
+      (nivelRaw.includes('rohbau') ||
+        nivelRaw.includes('tragwerk') ||
+        nivelRaw.includes('structură') ||
+        nivelRaw.includes('structura'))
     if (isOnlyStructure || isStructurePlusWindows) {
       steps = steps.filter((s: { key?: string }) => {
         const key = (s as any).key
@@ -669,7 +725,16 @@ export default function StepWizard() {
       }
     }
     return steps
-  }, [dynamicSteps, winterBalkoneFlags.hasWintergarden, winterBalkoneFlags.hasBalkone, form.nivelOferta, form.sistemConstructiv])
+  }, [
+    dynamicSteps,
+    winterBalkoneFlags.hasWintergarden,
+    winterBalkoneFlags.hasBalkone,
+    form.nivelOferta,
+    form.sistemConstructiv,
+    form.materialeFinisaj,
+    drafts.sistemConstructiv,
+    drafts.materialeFinisaj,
+  ])
 
   // -- UseMemo hooks (safe to run even if visibleSteps is empty)
   const step = visibleSteps[idx]
@@ -873,11 +938,10 @@ export default function StepWizard() {
       if (creationId) lastProcessedCreationId.current = creationId
       pendingOfferTypeIdRef.current = offerTypeId ?? null
 
-      if (saveDebounceRef.current) {
-        clearTimeout(saveDebounceRef.current)
-        saveDebounceRef.current = null
-      }
-      lastSavedRef.current = ''
+      // Anulează încărcarea unei oferte selectate înainte (click rapid: ofertă veche → Neues Projekt).
+      offerSelectNonceRef.current += 1
+      stepLoadNonceRef.current += 1
+      updateRunUrl(null, null)
 
       setOfferId(null)
       offerIdRef.current = null
@@ -902,13 +966,19 @@ export default function StepWizard() {
 
     window.addEventListener('offer:new', handleNewProject)
     return () => window.removeEventListener('offer:new', handleNewProject)
-  }, [])
+  }, [updateRunUrl])
 
   // 2b. Compute Started Listener — pentru restaurare după refresh (dashboard dispatch)
   useEffect(() => {
     const onComputeStarted = (e: any) => {
       const detail = e?.detail as { offerId?: string; runId?: string }
       if (!detail?.offerId || !detail?.runId) return
+      // Blochează evenimente întârziate (ex. HistoryList: history API după „Neues Projekt”).
+      if (typeof window !== 'undefined') {
+        const fromUrl = new URL(window.location.href).searchParams.get('offerId')
+        if (fromUrl != null && fromUrl !== detail.offerId) return
+        if (fromUrl == null && offerIdRef.current !== detail.offerId) return
+      }
       detectionsReviewApprovedRef.current = false
       roofReviewApprovedRef.current = false
       setOfferId(detail.offerId)
@@ -920,8 +990,13 @@ export default function StepWizard() {
       setComputeFailed(false)
       void apiFetch(`/offers/${detail.offerId}`)
         .then((o: unknown) => {
-          const m = (o as { meta?: { roof_only_offer?: boolean } })?.meta
-          const ro = m?.roof_only_offer === true
+          const row = o as {
+            meta?: { roof_only_offer?: boolean; wizard_package?: string | null }
+            offer?: { meta?: { roof_only_offer?: boolean; wizard_package?: string | null }; offer_type_slug?: string | null }
+          }
+          const meta = row?.offer?.meta ?? row?.meta
+          const slug = row?.offer?.offer_type_slug ?? null
+          const ro = isRoofOnlyOfferFromMeta(meta, slug)
           roofOnlyOfferRef.current = ro
           setActiveRoofOnlyOffer(ro)
         })
@@ -948,6 +1023,12 @@ export default function StepWizard() {
       const detail = (e as CustomEvent).detail as { offerId?: string; pdfUrl?: string }
       if (!detail?.pdfUrl) return
       if (offerId && detail.offerId && offerId !== detail.offerId) return
+      if (detail.offerId) {
+        const fromUrl =
+          typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('offerId') : null
+        if (fromUrl != null && fromUrl !== detail.offerId) return
+        if (fromUrl == null && offerIdRef.current !== detail.offerId) return
+      }
 
       // Close editors immediately once final PDF is ready (avoid brief "editor flash" before viewer).
       setShowDetectionsReview(false)
@@ -958,8 +1039,15 @@ export default function StepWizard() {
       const now = Date.now()
       const elapsed = computeStartTime ? now - computeStartTime : MIN_ANIMATION_TIME
       const remainingTime = Math.max(0, MIN_ANIMATION_TIME - elapsed)
+      const oid = detail.offerId
 
       setTimeout(() => {
+        if (oid) {
+          const fromUrl =
+            typeof window !== 'undefined' ? new URL(window.location.href).searchParams.get('offerId') : null
+          if (fromUrl != null && fromUrl !== oid) return
+          if (fromUrl == null && offerIdRef.current !== oid) return
+        }
         setPdfUrl(detail.pdfUrl || null)
         setComputing(false)
         setComputeRunId(null)
@@ -1124,8 +1212,11 @@ export default function StepWizard() {
     const FIRST_CHECK_DELAY_MS = 4000
     let iv: ReturnType<typeof setInterval> | null = null
     const check = async () => {
+      const oid = offerId
       try {
+        if (offerIdRef.current !== oid) return
         const data = (await apiFetch(`/offers/${offerId}`)) as { offer?: { status?: string } }
+        if (offerIdRef.current !== oid) return
         const status = data?.offer?.status
         if (status === 'failed') {
           if (iv) clearInterval(iv)
@@ -1136,11 +1227,16 @@ export default function StepWizard() {
         }
         if (status === 'ready') {
           const exportRes = await apiFetch(`/offers/${offerId}/export-url`).catch(() => null) as { url?: string; download_url?: string; pdf?: string } | null
+          if (offerIdRef.current !== oid) return
+          if (typeof window !== 'undefined') {
+            const u = new URL(window.location.href).searchParams.get('offerId')
+            if (u && u !== oid) return
+          }
           const url = exportRes?.url || exportRes?.download_url || exportRes?.pdf
           if (iv) clearInterval(iv)
           iv = null
           if (url) {
-            window.dispatchEvent(new CustomEvent('offer:pdf-ready', { detail: { offerId, pdfUrl: url } }))
+            window.dispatchEvent(new CustomEvent('offer:pdf-ready', { detail: { offerId: oid, pdfUrl: url } }))
           } else {
             setComputeFailed(true)
             setComputing(false)
@@ -1165,11 +1261,19 @@ export default function StepWizard() {
     const onSel = async (e: any) => {
       const id = e.detail.offerId as string
       if (!id) {
+        offerSelectNonceRef.current += 1
         setSelectedPackage(null)
         setDrafts({})
         setForm({})
         return
       }
+      if (typeof window !== 'undefined') {
+        const u = new URL(window.location.href).searchParams.get('offerId')
+        if (u && u !== id) return
+      }
+      offerSelectNonceRef.current += 1
+      const selNonce = offerSelectNonceRef.current
+      stepLoadNonceRef.current += 1
       // Clean current wizard state before loading the newly selected offer
       setSelectedPackage(null)
       setDrafts({})
@@ -1189,17 +1293,44 @@ export default function StepWizard() {
       setOfferId(id)
       offerIdRef.current = id
       try {
-        const offerRow = (await apiFetch(`/offers/${id}`)) as { meta?: { roof_only_offer?: boolean }; offer?: { meta?: { roof_only_offer?: boolean } } }
-        const offerMeta = offerRow?.meta ?? offerRow?.offer?.meta
-        const ro = offerMeta?.roof_only_offer === true
+        const offerRow = (await apiFetch(`/offers/${id}`)) as {
+          meta?: { roof_only_offer?: boolean; wizard_package?: string | null }
+          offer?: {
+            meta?: { roof_only_offer?: boolean; wizard_package?: string | null }
+            offer_type_slug?: string | null
+          }
+        }
+        if (selNonce !== offerSelectNonceRef.current) return
+        if (typeof window !== 'undefined') {
+          const u = new URL(window.location.href).searchParams.get('offerId')
+          if (u && u !== id) return
+        }
+        const offerMeta = offerRow?.offer?.meta ?? offerRow?.meta
+        const slug = offerRow?.offer?.offer_type_slug ?? null
+        const ro = isRoofOnlyOfferFromMeta(offerMeta, slug)
         roofOnlyOfferRef.current = ro
         setActiveRoofOnlyOffer(ro)
       } catch {
+        if (selNonce !== offerSelectNonceRef.current) return
+        if (typeof window !== 'undefined') {
+          const u = new URL(window.location.href).searchParams.get('offerId')
+          if (u && u !== id) return
+        }
         roofOnlyOfferRef.current = false
         setActiveRoofOnlyOffer(false)
       }
+      if (selNonce !== offerSelectNonceRef.current) return
+      if (typeof window !== 'undefined') {
+        const u = new URL(window.location.href).searchParams.get('offerId')
+        if (u && u !== id) return
+      }
       try {
         const fresh = await fetchFreshPdfUrl(id)
+        if (selNonce !== offerSelectNonceRef.current) return
+        if (typeof window !== 'undefined') {
+          const u = new URL(window.location.href).searchParams.get('offerId')
+          if (u && u !== id) return
+        }
         if (fresh) {
           setPdfUrl(fresh)
           setComputing(false)
@@ -1208,6 +1339,11 @@ export default function StepWizard() {
         }
         try {
           const stepsData = await apiFetch(`/offers/${id}/steps`).catch(() => null)
+          if (selNonce !== offerSelectNonceRef.current) return
+          if (typeof window !== 'undefined') {
+            const u = new URL(window.location.href).searchParams.get('offerId')
+            if (u && u !== id) return
+          }
           if (stepsData && typeof stepsData === 'object') {
             setDrafts(stepsData)
           }
@@ -1215,6 +1351,11 @@ export default function StepWizard() {
           // Endpoint might not exist
         }
       } catch {
+        if (selNonce !== offerSelectNonceRef.current) return
+        if (typeof window !== 'undefined') {
+          const u = new URL(window.location.href).searchParams.get('offerId')
+          if (u && u !== id) return
+        }
         setPdfUrl(null)
       }
     }
@@ -1223,7 +1364,7 @@ export default function StepWizard() {
   }, [])
 
   // 6. Update Form State on Step Change (ca pe VPS)
-  // structuraCladirii + wintergaertenBalkone: folosim ref / prev pentru hasWintergarden/hasBalkone/hasGarage ca debifarea să persiste
+  // structuraCladirii + wintergaertenBalkone: folosim ref / prev pentru hasWintergarden/hasBalkone ca debifarea să persiste
   // și ca pe pasul Wintergärten & Balkone să apară doar secțiunile pentru opțiunile încă bifate.
   function mergeStepForm(key: string, loaded: Record<string, any>, prev: Record<string, any>): Record<string, any> {
     if (!loaded || typeof loaded !== 'object') return loaded
@@ -1234,14 +1375,12 @@ export default function StepWizard() {
         ...loaded,
         hasWintergarden: r.hasWintergarden ?? prev.hasWintergarden ?? loaded.hasWintergarden,
         hasBalkone: r.hasBalkone ?? prev.hasBalkone ?? loaded.hasBalkone,
-        hasGarage: r.hasGarage ?? prev.hasGarage ?? loaded.hasGarage,
       }
     }
     return {
       ...loaded,
       hasWintergarden: loaded.hasWintergarden ?? prev.hasWintergarden,
       hasBalkone: loaded.hasBalkone ?? prev.hasBalkone,
-      hasGarage: loaded.hasGarage ?? prev.hasGarage,
     }
   }
 
@@ -1249,8 +1388,8 @@ export default function StepWizard() {
   useEffect(() => {
     const key = visibleSteps[idx]?.key
     if (visibleSteps.length === 0 || !key) return
-    if (lastLoadedStepKeyRef.current === key) return
-    lastLoadedStepKeyRef.current = key
+    stepLoadNonceRef.current += 1
+    const loadNonce = stepLoadNonceRef.current
 
     const draftData = drafts[key]
     const applyMerge = (prev: Record<string, any>, loaded: Record<string, any>) => {
@@ -1259,7 +1398,6 @@ export default function StepWizard() {
         structuraWinterBalkoneRef.current = {
           hasWintergarden: merged.hasWintergarden ?? structuraWinterBalkoneRef.current.hasWintergarden,
           hasBalkone: merged.hasBalkone ?? structuraWinterBalkoneRef.current.hasBalkone,
-          hasGarage: merged.hasGarage ?? structuraWinterBalkoneRef.current.hasGarage,
         }
         setWinterBalkoneFlags({
           hasWintergarden: merged.hasWintergarden === true,
@@ -1268,27 +1406,34 @@ export default function StepWizard() {
       }
       return merged
     }
+    /** După merge cu server/draft, păstrăm câmpurile deja editate în UI (prev câștigă la conflicte). */
+    const loadIntoForm = (prev: Record<string, any>, loaded: Record<string, any>) => {
+      const merged = applyMerge(prev, loaded)
+      return { ...merged, ...prev }
+    }
     if (draftData && Object.keys(draftData).length > 0) {
-      setForm(prev => applyMerge(prev, draftData))
+      setForm(prev => loadIntoForm(prev, draftData))
     } else if (offerId) {
       apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent(key)}`)
         .then((data: any) => {
+          if (loadNonce !== stepLoadNonceRef.current) return
           const stepData = data?.data
           if (stepData && Object.keys(stepData).length > 0) {
             setDrafts(prev => ({ ...prev, [key]: stepData }))
-            setForm(prev => applyMerge(prev, stepData))
+            setForm(prev => loadIntoForm(prev, stepData))
           } else {
             const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
-            setForm(prev => applyMerge(prev, defaultForStep))
+            setForm(prev => loadIntoForm(prev, defaultForStep))
           }
         })
         .catch(() => {
+          if (loadNonce !== stepLoadNonceRef.current) return
           const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
-          setForm(prev => applyMerge(prev, defaultForStep))
+          setForm(prev => loadIntoForm(prev, defaultForStep))
         })
     } else {
       const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
-      setForm(prev => applyMerge(prev, defaultForStep))
+      setForm(prev => loadIntoForm(prev, defaultForStep))
     }
     setErrors({})
     setShowErrors(false)
@@ -1363,6 +1508,7 @@ export default function StepWizard() {
       const id = await ensureOffer()
       await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: dataObj }) })
       setDrafts(prev => ({ ...prev, [stepKey]: dataObj }))
+      stepLoadNonceRef.current += 1
       await maybeUpdateOfferTitle(id)
       if (stepKey === 'dateGenerale') {
         if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
@@ -1381,13 +1527,17 @@ export default function StepWizard() {
     }
   }
 
-  function scheduleAutosave(stepKey: string, dataObj: Record<string, any>, delay = 500) {
-    if (showErrors && Object.values(errors).some(Boolean)) return
-    const s = JSON.stringify(dataObj || {})
-    if (s === lastSavedRef.current) return
-    lastSavedRef.current = s
-    if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current)
-    saveDebounceRef.current = setTimeout(() => saveStepLive(stepKey, dataObj), delay)
+  /** Actualizare formular în memorie; salvare pe server doar la „Weiter” (onContinue). */
+  function applyFormUpdate(
+    _stepKey: string,
+    v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)
+  ) {
+    ensureOffer().catch(() => {})
+    if (typeof v === 'function') {
+      setForm(v as (p: Record<string, any>) => Record<string, any>)
+    } else {
+      setForm(v)
+    }
   }
 
   function validateCurrentStep(): Errors {
@@ -1439,15 +1589,6 @@ export default function StepWizard() {
 
   async function onContinue() {
     if (!step) return
-    if (saveDebounceRef.current) {
-      clearTimeout(saveDebounceRef.current)
-      saveDebounceRef.current = null
-    }
-    if (offerId) {
-      try {
-        await saveStepLive(step.key, form)
-      } catch (_) {}
-    }
     try {
       setSaving(true)
       setValidationError(null)
@@ -1465,11 +1606,9 @@ export default function StepWizard() {
       stashDraft()
 
       if (step.key !== 'upload') {
-        const id = await ensureOffer()
-        const dataToSave = form
-        await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: step.key, data: dataToSave }) })
-        setDrafts(prev => ({ ...prev, [step.key]: dataToSave }))
-        await maybeUpdateOfferTitle(id)
+        try {
+          await saveStepLive(step.key, form)
+        } catch (_) {}
       }
 
       if (!isLast) {
@@ -1544,7 +1683,11 @@ export default function StepWizard() {
       setComputeStartTime(Date.now())
       setComputeRunId(run_id)
       updateRunUrl(id, run_id)
-      window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId: id, runId: run_id } }))
+      window.dispatchEvent(
+        new CustomEvent('offer:compute-started', {
+          detail: { offerId: id, runId: run_id, flow: roofOnly ? 'dachstuhl' : 'neubau' },
+        }),
+      )
       window.dispatchEvent(new Event('offers:refresh'))
     } catch (err: any) {
       console.error('Finalize failed:', err)
@@ -1730,7 +1873,7 @@ export default function StepWizard() {
               offerId={offerId ?? undefined}
               images={reviewImages.length > 0 ? reviewImages : planReviewImages}
               roofImages={roofReviewImages.length > 0 ? roofReviewImages : undefined}
-              roofOnlyOffer={activeRoofOnlyOffer}
+              roofOnlyOffer={activeRoofOnlyOffer || selectedPackage === 'dachstuhl'}
               onConfirm={async () => {
                 detectionsReviewApprovedRef.current = true
                 roofReviewApprovedRef.current = true
@@ -1850,7 +1993,7 @@ export default function StepWizard() {
               {step.key === 'client' && (!step.fields || step.fields.length === 0) ? (
                 <ClientStep
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('client', v) }}
+                  setForm={(v) => applyFormUpdate('client', v)}
                   errors={visibleErrors}
                   onEnter={onContinue}
                 />
@@ -1860,7 +2003,7 @@ export default function StepWizard() {
                     stepKey={step.key}
                     fields={step.fields}
                     form={form}
-                    setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('client', v) }}
+                    setForm={(v) => applyFormUpdate('client', v)}
                     onUpload={onUpload}
                     ensureOffer={ensureOffer}
                     errors={visibleErrors}
@@ -1875,19 +2018,17 @@ export default function StepWizard() {
               ) : step.key === 'structuraCladirii' ? (
                 <BuildingStructureStep
                   form={form}
-                  setForm={(v, shouldAutosave = false) => {
+                  setForm={(v) => {
                     ensureOffer().catch(() => {})
                     const syncWinterBalkone = (next: Record<string, any>) => {
                       if (
                         typeof next.hasWintergarden !== 'undefined' ||
-                        typeof next.hasBalkone !== 'undefined' ||
-                        typeof next.hasGarage !== 'undefined'
+                        typeof next.hasBalkone !== 'undefined'
                       ) {
                         structuraWinterBalkoneRef.current = {
                           ...structuraWinterBalkoneRef.current,
                           ...(typeof next.hasWintergarden !== 'undefined' && { hasWintergarden: next.hasWintergarden }),
                           ...(typeof next.hasBalkone !== 'undefined' && { hasBalkone: next.hasBalkone }),
-                          ...(typeof next.hasGarage !== 'undefined' && { hasGarage: next.hasGarage }),
                         }
                         setWinterBalkoneFlags(prev => ({
                           hasWintergarden: typeof next.hasWintergarden !== 'undefined' ? next.hasWintergarden === true : prev.hasWintergarden,
@@ -1905,10 +2046,8 @@ export default function StepWizard() {
                       syncWinterBalkone(v)
                       setForm(v)
                     }
-                    if (shouldAutosave) scheduleAutosave('structuraCladirii', typeof v === 'function' ? form : v)
                   }}
                   errors={visibleErrors}
-                  onBlur={() => scheduleAutosave('structuraCladirii', form)}
                   hiddenKeysForm={hiddenKeysForm}
                   optionValueToPriceKey={optionValueToPriceKey}
                   customOptionsForm={customOptionsForm}
@@ -1918,7 +2057,7 @@ export default function StepWizard() {
               ) : step.key === 'wandaufbau' ? (
                 <WandaufbauStep
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
                   drafts={drafts}
                   optionValueToPriceKey={optionValueToPriceKey}
@@ -1931,7 +2070,7 @@ export default function StepWizard() {
               ) : step.key === 'wintergaertenBalkone' ? (
                 <WintergaertenBalkoneStep
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
                   optionValueToPriceKey={optionValueToPriceKey}
                   customOptionsForm={customOptionsForm}
@@ -1943,7 +2082,7 @@ export default function StepWizard() {
               ) : step.key === 'materialeFinisaj' ? (
                 <MaterialeFinisajStep
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
                   drafts={drafts}
                   customOptionsForm={customOptionsForm}
@@ -1956,7 +2095,7 @@ export default function StepWizard() {
               ) : step.key === 'bodenDeckeBelag' ? (
                 <BodenDeckeBelagStep
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
                   drafts={drafts}
                   tOption={tOption}
@@ -1969,7 +2108,7 @@ export default function StepWizard() {
               ) : step.key === 'projektdaten' ? (
                 <ProjektdatenStepContent
                   form={form}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave('projektdaten', v) }}
+                  setForm={(v) => applyFormUpdate('projektdaten', v)}
                   errors={visibleErrors}
                   onEnter={onContinue}
                   preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
@@ -1980,7 +2119,7 @@ export default function StepWizard() {
                 <DachOnlyDaemmungStepContent
                   form={form}
                   drafts={drafts}
-                  setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                  setForm={(v) => applyFormUpdate(step.key, v)}
                   fields={step.fields}
                   onUpload={onUpload}
                   ensureOffer={ensureOffer}
@@ -1998,7 +2137,7 @@ export default function StepWizard() {
                     stepKey={step.key}
                     fields={step.fields}
                     form={form}
-                    setForm={(v) => { ensureOffer().catch(() => {}); setForm(v); scheduleAutosave(step.key, v) }}
+                    setForm={(v) => applyFormUpdate(step.key, v)}
                     onUpload={onUpload}
                     ensureOffer={ensureOffer}
                     errors={visibleErrors}
@@ -2016,7 +2155,7 @@ export default function StepWizard() {
                     stepKey={step.key} 
                     fields={step.fields} 
                     form={form} 
-                    setForm={(v) => { setForm(v) }} 
+                    setForm={(v) => setForm(v)} 
                     onUpload={onUpload} 
                     ensureOffer={ensureOffer}
                     customOptionsForm={customOptionsForm} 
@@ -2127,7 +2266,7 @@ export default function StepWizard() {
   )
 }
 
-function ClientStep({ form, setForm, errors, onEnter }:{ form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; onEnter: () => void }) {
+function ClientStep({ form, setForm, errors, onEnter }:{ form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; onEnter: () => void }) {
   const fields = [
     { key: 'nume', label: 'Vor- und Nachname', placeholder: 'z.B. Max Mustermann' },
     { key: 'telefon', label: 'Telefonnummer', placeholder: 'z.B. +49 123 456789' },
@@ -2149,8 +2288,7 @@ function ClientStep({ form, setForm, errors, onEnter }:{ form: Record<string, an
               placeholder={f.placeholder}
               onChange={(e) => {
                 const v = e.target.value
-                const next = { ...form, [f.key]: v }
-                setForm(next)
+                setForm(prev => ({ ...prev, [f.key]: v }))
               }}
               onKeyDown={(e) => handleInputEnter(e, onEnter)}
             />
@@ -2173,7 +2311,7 @@ function ProjektdatenStepContent({
   paramLabelOverrides = {},
 }: {
   form: Record<string, any>
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   errors: Errors
   onEnter: () => void
   preisdatenbankOptionsByTag?: Record<string, string[]>
@@ -2191,7 +2329,7 @@ function ProjektdatenStepContent({
         <div className={errors.projektumfang ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
           <SelectSun
             value={form.projektumfang ?? ''}
-            onChange={(v) => setForm({ ...form, projektumfang: v })}
+            onChange={(v) => setForm(prev => ({ ...prev, projektumfang: v }))}
             options={['Dachstuhl', 'Dachdeckung', 'Dachstuhl + Dachdeckung']}
             placeholder="Wählen Sie eine Option"
           />
@@ -2203,7 +2341,7 @@ function ProjektdatenStepContent({
         <div className={errors.nutzungDachraum ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
           <SelectSun
             value={form.nutzungDachraum ?? ''}
-            onChange={(v) => setForm({ ...form, nutzungDachraum: v })}
+            onChange={(v) => setForm(prev => ({ ...prev, nutzungDachraum: v }))}
             options={['Nicht ausgebaut', 'Wohnraum / ausgebaut']}
             placeholder="Wählen Sie eine Option"
           />
@@ -2216,7 +2354,7 @@ function ProjektdatenStepContent({
           <div className={errors.deckenInnenausbau ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
               value={form.deckenInnenausbau ?? ''}
-              onChange={(v) => setForm({ ...form, deckenInnenausbau: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, deckenInnenausbau: v }))}
               options={deckenInnenausbauOptions}
               displayFor={displayDeckenInnenausbau}
               placeholder="Wählen Sie eine Option"
@@ -2246,7 +2384,7 @@ function DachOnlyDaemmungStepContent({
 }: {
   form: Record<string, any>
   drafts: Drafts
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   fields: Field[]
   onUpload: (name: string, file: File | null) => void
   ensureOffer: () => Promise<string>
@@ -2317,7 +2455,7 @@ function WandaufbauStep({
   preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   errors: Errors
   drafts: Drafts
   optionValueToPriceKey?: Record<string, Record<string, string>>
@@ -2348,7 +2486,7 @@ function WandaufbauStep({
             <span className="wiz-label text-sun/90">Außenwände – Keller</span>
             <SelectSun
               value={form.außenwandeBeci || ''}
-              onChange={(v) => setForm({ ...form, außenwandeBeci: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, außenwandeBeci: v }))}
               options={außenOptions}
               displayFor={displayAußen}
             />
@@ -2357,7 +2495,7 @@ function WandaufbauStep({
             <span className="wiz-label text-sun/90">Innenwände – Keller</span>
             <SelectSun
               value={form.innenwandeBeci || ''}
-              onChange={(v) => setForm({ ...form, innenwandeBeci: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, innenwandeBeci: v }))}
               options={innenOptions}
               displayFor={displayInnen}
             />
@@ -2373,7 +2511,7 @@ function WandaufbauStep({
               <span className="wiz-label text-sun/90">Außenwände – {floorLabel}</span>
               <SelectSun
                 value={form[`außenwande_${floorKey}`] || ''}
-                onChange={(v) => setForm({ ...form, [`außenwande_${floorKey}`]: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, [`außenwande_${floorKey}`]: v }))}
                 options={außenOptions}
                 displayFor={displayAußen}
               />
@@ -2382,7 +2520,7 @@ function WandaufbauStep({
               <span className="wiz-label text-sun/90">Innenwände – {floorLabel}</span>
               <SelectSun
                 value={form[`innenwande_${floorKey}`] || ''}
-                onChange={(v) => setForm({ ...form, [`innenwande_${floorKey}`]: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, [`innenwande_${floorKey}`]: v }))}
                 options={innenOptions}
                 displayFor={displayInnen}
               />
@@ -2396,7 +2534,7 @@ function WandaufbauStep({
             <span className="wiz-label text-sun/90">Außenwände – Dachgeschoss</span>
             <SelectSun
               value={form.außenwandeMansarda || ''}
-              onChange={(v) => setForm({ ...form, außenwandeMansarda: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, außenwandeMansarda: v }))}
               options={außenOptions}
               displayFor={displayAußen}
             />
@@ -2405,7 +2543,7 @@ function WandaufbauStep({
             <span className="wiz-label text-sun/90">Innenwände – Dachgeschoss</span>
             <SelectSun
               value={form.innenwandeMansarda || ''}
-              onChange={(v) => setForm({ ...form, innenwandeMansarda: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, innenwandeMansarda: v }))}
               options={innenOptions}
               displayFor={displayInnen}
             />
@@ -2431,7 +2569,7 @@ function WintergaertenBalkoneStep({
   preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   errors: Errors
   optionValueToPriceKey?: Record<string, Record<string, string>>
   customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>
@@ -2453,7 +2591,7 @@ function WintergaertenBalkoneStep({
           <span className="wiz-label text-sun/90 font-medium">Wintergärten</span>
           <SelectSun
             value={form.wintergartenTyp || ''}
-            onChange={(v) => setForm({ ...form, wintergartenTyp: v })}
+            onChange={(v) => setForm(prev => ({ ...prev, wintergartenTyp: v }))}
             options={wintergartenOptions}
             displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['wintergarten_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'wintergartenTyp', opt)}
           />
@@ -2464,7 +2602,7 @@ function WintergaertenBalkoneStep({
           <span className="wiz-label text-sun/90 font-medium">Balkone</span>
           <SelectSun
             value={form.balkonTyp || ''}
-            onChange={(v) => setForm({ ...form, balkonTyp: v })}
+            onChange={(v) => setForm(prev => ({ ...prev, balkonTyp: v }))}
             options={balkonOptions}
             displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['balkon_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'balkonTyp', opt)}
           />
@@ -2494,7 +2632,7 @@ function BodenDeckeBelagStep({
   preisdatenbankOptionsByTag = {},
 }: {
   form: Record<string, any>
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   errors: Errors
   drafts: Drafts
   tOption: (stepKey: string, fieldName: string, opt: string) => string
@@ -2530,7 +2668,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Bodenbelag</span>
               <SelectSun
                 value={form.bodenbelagBeci || ''}
-                onChange={(v) => setForm({ ...form, bodenbelagBeci: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagBeci: v }))}
                 options={bodenbelagOptions}
                 displayFor={displayBodenbelag}
               />
@@ -2539,7 +2677,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Deckenaufbau</span>
               <SelectSun
                 value={form.deckenaufbauBeci || ''}
-                onChange={(v) => setForm({ ...form, deckenaufbauBeci: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauBeci: v }))}
                 options={deckenaufbauOptions}
                 displayFor={displayDeckenaufbau}
               />
@@ -2561,7 +2699,7 @@ function BodenDeckeBelagStep({
                   <span className="text-xs text-sun/70">Bodenaufbau</span>
                   <SelectSun
                     value={form[`bodenaufbau_${floorKey}`] || ''}
-                    onChange={(v) => setForm({ ...form, [`bodenaufbau_${floorKey}`]: v })}
+                    onChange={(v) => setForm(prev => ({ ...prev, [`bodenaufbau_${floorKey}`]: v }))}
                     options={bodenaufbauOptions}
                     displayFor={displayBodenaufbau}
                   />
@@ -2571,7 +2709,7 @@ function BodenDeckeBelagStep({
                 <span className="text-xs text-sun/70">Bodenbelag</span>
                 <SelectSun
                   value={form[`bodenbelag_${floorKey}`] || ''}
-                  onChange={(v) => setForm({ ...form, [`bodenbelag_${floorKey}`]: v })}
+                  onChange={(v) => setForm(prev => ({ ...prev, [`bodenbelag_${floorKey}`]: v }))}
                   options={bodenbelagOptions}
                   displayFor={displayBodenbelag}
                 />
@@ -2580,7 +2718,7 @@ function BodenDeckeBelagStep({
                 <span className="text-xs text-sun/70">Deckenaufbau</span>
                 <SelectSun
                   value={form[`deckenaufbau_${floorKey}`] || ''}
-                  onChange={(v) => setForm({ ...form, [`deckenaufbau_${floorKey}`]: v })}
+                  onChange={(v) => setForm(prev => ({ ...prev, [`deckenaufbau_${floorKey}`]: v }))}
                   options={deckenaufbauOptions}
                   displayFor={displayDeckenaufbau}
                 />
@@ -2597,7 +2735,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Bodenaufbau</span>
               <SelectSun
                 value={form.bodenaufbauMansarda || ''}
-                onChange={(v) => setForm({ ...form, bodenaufbauMansarda: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauMansarda: v }))}
                 options={bodenaufbauOptions}
                 displayFor={displayBodenaufbau}
               />
@@ -2606,7 +2744,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Bodenbelag</span>
               <SelectSun
                 value={form.bodenbelagMansarda || ''}
-                onChange={(v) => setForm({ ...form, bodenbelagMansarda: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagMansarda: v }))}
                 options={bodenbelagOptions}
                 displayFor={displayBodenbelag}
               />
@@ -2615,7 +2753,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Deckenaufbau</span>
               <SelectSun
                 value={form.deckenaufbauMansarda || ''}
-                onChange={(v) => setForm({ ...form, deckenaufbauMansarda: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauMansarda: v }))}
                 options={deckenaufbauOptions}
                 displayFor={displayDeckenaufbau}
               />
@@ -2631,7 +2769,7 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Bodenaufbau</span>
               <SelectSun
                 value={form.bodenaufbauPod || ''}
-                onChange={(v) => setForm({ ...form, bodenaufbauPod: v })}
+                onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauPod: v }))}
                 options={bodenaufbauOptions}
                 displayFor={displayBodenaufbau}
               />
@@ -2640,9 +2778,10 @@ function BodenDeckeBelagStep({
               <span className="text-xs text-sun/70">Bodenbelag (wenn ausgebaut)</span>
               <SelectSun
                 value={form.bodenbelagPod || ''}
-                onChange={(v) => setForm({ ...form, bodenbelagPod: v })}
-                options={['', ...bodenbelagOptions]}
-                displayFor={(opt) => opt === '' ? '—' : displayBodenbelag(opt)}
+                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagPod: v }))}
+                options={bodenbelagOptions}
+                placeholder="— auswählen —"
+                displayFor={displayBodenbelag}
               />
             </label>
           </div>
@@ -2652,7 +2791,7 @@ function BodenDeckeBelagStep({
   )
 }
 
-function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>) => void; errors: Errors; drafts: Drafts; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
+function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; drafts: Drafts; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
   const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
@@ -2680,7 +2819,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
           <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
           <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm({ ...form, finisajInteriorBeci: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
+            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorBeci: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
           </div>
         </label>
       )}
@@ -2691,11 +2830,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
           <div key={floorKey} className="flex gap-4 items-start">
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Innenausbau - {floorLabel}</span>
-              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`finisajInterior_${floorKey}`]: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
+              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInterior_${floorKey}`]: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
             </label>
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
-              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm({ ...form, [`fatada_${floorKey}`]: v })} options={finishOptionsExterior} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
+              <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`fatada_${floorKey}`]: v }))} options={finishOptionsExterior} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
             </label>
           </div>
         )
@@ -2704,11 +2843,11 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Innenausbau - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm({ ...form, finisajInteriorMansarda: v })} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
+            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorMansarda: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
           </label>
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
-            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm({ ...form, fatadaMansarda: v })} options={finishOptionsExterior} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
+            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, fatadaMansarda: v }))} options={finishOptionsExterior} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
           </label>
         </div>
       )}
@@ -2728,7 +2867,7 @@ const FOUNDATION_OPTIONS = ['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt 
 const FLOOR_HEIGHT_OPTIONS = ['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)'] as const
 const STAIR_TYPE_OPTIONS = ['Standard', 'Holz', 'Beton', 'Metall', 'Sonder'] as const
 
-function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any>, shouldAutosave?: boolean) => void; errors: Errors; onBlur?: () => void; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
+function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
   const addFloorBtnRef = useRef<HTMLButtonElement>(null)
   const [addFloorPos, setAddFloorPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 })
@@ -2745,18 +2884,35 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
   const basementUse = tipFundatieBeci.includes('mit einfachem Ausbau')
   useEffect(() => {
     if (foundationOptions.length > 0 && !foundationOptions.includes(tipFundatieBeci)) {
-      setForm({ ...form, tipFundatieBeci: foundationOptions[0] })
+      setForm(prev => ({ ...prev, tipFundatieBeci: foundationOptions[0] }))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when hidden options change; form used only for merge
   }, [foundationOptions.length, foundationOptions.join(','), tipFundatieBeci])
   useEffect(() => {
     if (floorHeightOptions.length > 0 && !floorHeightOptions.includes(inaltimeEtaje)) {
-      setForm({ ...form, inaltimeEtaje: floorHeightOptions[0] })
+      setForm(prev => ({ ...prev, inaltimeEtaje: floorHeightOptions[0] }))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when hidden options change
   }, [floorHeightOptions.length, floorHeightOptions.join(','), inaltimeEtaje])
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
-  const hasFloorAboveGround = listaEtaje.length > 0
+  const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
+  const stairOptsEffective = stairTypeOptions.length > 0 ? stairTypeOptions : Array.from(STAIR_TYPE_OPTIONS)
+  useEffect(() => {
+    if (!hasFloorAboveGround) return
+    const def = stairOptsEffective[0] ?? 'Standard'
+    if (form.treppeTyp == null || String(form.treppeTyp).trim() === '') {
+      setForm((prev: Record<string, any>) => ({ ...prev, treppeTyp: def }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- default treppe when field becomes visible
+  }, [hasFloorAboveGround, stairOptsEffective.join(',')])
+  useEffect(() => {
+    if (!hasFloorAboveGround || stairOptsEffective.length === 0) return
+    const cur = form.treppeTyp != null ? String(form.treppeTyp) : ''
+    if (cur && !stairOptsEffective.includes(cur)) {
+      setForm((prev: Record<string, any>) => ({ ...prev, treppeTyp: stairOptsEffective[0] }))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- resync when DB option list changes
+  }, [hasFloorAboveGround, stairOptsEffective.join(','), form.treppeTyp])
   const hasPod = listaEtaje.some((e: string) => e === 'pod')
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const mansardaType = listaEtaje.find((e: string) => e.startsWith('mansarda'))?.split('_')[1] ?? null
@@ -2876,7 +3032,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
   }, [showAddFloorDropdown])
 
   const handleAddFloor = (floorType: string) => {
-    setForm({ ...form, listaEtaje: [...listaEtaje, floorType] })
+    setForm(prev => ({ ...prev, listaEtaje: [...listaEtaje, floorType] }))
     setShowAddFloorDropdown(false)
   }
 
@@ -2903,11 +3059,11 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
 
       <div className="flex-1 min-w-0 relative z-10 space-y-4 !pb-0 !mb-0">
         <label className="flex flex-col gap-1" data-field="inaltimeEtaje">
-          <span className="wiz-label text-sun/90">Geschosshöhe</span>
+          <span className="wiz-label text-sun/90">{tFieldLabel('structuraCladirii', 'inaltimeEtaje', undefined)}</span>
           <div className={errors.inaltimeEtaje ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
               value={inaltimeEtaje}
-              onChange={(v) => setForm({ ...form, inaltimeEtaje: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, inaltimeEtaje: v }))}
               options={floorHeightOptions}
               placeholder="Wählen Sie eine Option"
               displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['floor_height']?.[opt] ?? ''] ?? opt}
@@ -2921,7 +3077,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
           <div className={errors.tipFundatieBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
               value={foundationOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (foundationOptions[0] ?? '')}
-              onChange={(v) => setForm({ ...form, tipFundatieBeci: v })}
+              onChange={(v) => setForm(prev => ({ ...prev, tipFundatieBeci: v }))}
               options={foundationOptions}
               placeholder="Wählen Sie eine Option"
               displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['foundation_type']?.[opt] ?? ''] ?? opt}
@@ -2935,7 +3091,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
             type="checkbox"
             className="sun-checkbox"
             checked={pilons}
-            onChange={(e) => setForm({ ...form, pilons: e.target.checked })}
+            onChange={(e) => setForm(prev => ({ ...prev, pilons: e.target.checked }))}
           />
           <span className="text-sm font-medium text-sun/90">Pfahlgründung erforderlich</span>
           {errors.pilons && <span className="ml-2 text-xs text-orange-400">{errors.pilons}</span>}
@@ -2954,10 +3110,10 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
                       const newLista = [...listaEtaje]
                       if (v === 'pod' || v.startsWith('mansarda')) {
                         newLista[idx] = v
-                        setForm({ ...form, listaEtaje: newLista.slice(0, idx + 1) })
+                        setForm(prev => ({ ...prev, listaEtaje: newLista.slice(0, idx + 1) }))
                       } else {
                         newLista[idx] = v
-                        setForm({ ...form, listaEtaje: newLista })
+                        setForm(prev => ({ ...prev, listaEtaje: newLista }))
                       }
                     }}
                     options={['intermediar', 'pod', 'mansarda_ohne', 'mansarda_mit']}
@@ -2973,7 +3129,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
                 </div>
                 <button
                   type="button"
-                  onClick={() => setForm({ ...form, listaEtaje: listaEtaje.filter((_: any, i: number) => i !== idx) })}
+                  onClick={() => setForm(prev => ({ ...prev, listaEtaje: listaEtaje.filter((_: any, i: number) => i !== idx) }))}
                   className="px-2 py-1 text-orange-400 hover:text-orange-300 text-sm font-bold"
                 >
                   ×
@@ -2989,7 +3145,7 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
                     max={300}
                     step={1}
                     value={form[`inaltimePeretiMansarda_${idx}`] ?? ''}
-                    onChange={(e) => setForm({ ...form, [`inaltimePeretiMansarda_${idx}`]: parseFloat(e.target.value) || 0 })}
+                    onChange={(e) => setForm(prev => ({ ...prev, [`inaltimePeretiMansarda_${idx}`]: parseFloat(e.target.value) || 0 }))}
                     placeholder="z.B. 150"
                   />
                 </label>
@@ -3035,9 +3191,9 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
             <span className="wiz-label text-sun/90">Treppentyp (Preis pro Stück)</span>
             <div className={errors.treppeTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
               <SelectSun
-                value={String(form.treppeTyp || (stairTypeOptions[0] ?? STAIR_TYPE_OPTIONS[0]))}
-                onChange={(v) => setForm({ ...form, treppeTyp: v })}
-                options={stairTypeOptions.length > 0 ? stairTypeOptions : Array.from(STAIR_TYPE_OPTIONS)}
+                value={String(form.treppeTyp || (stairOptsEffective[0] ?? STAIR_TYPE_OPTIONS[0]))}
+                onChange={(v) => setForm(prev => ({ ...prev, treppeTyp: v }))}
+                options={stairOptsEffective}
                 placeholder="Wählen Sie eine Option"
                 displayFor={(opt) => {
                   const key = optionValueToPriceKey['stairs_type']?.[opt]
@@ -3070,16 +3226,6 @@ function BuildingStructureStep({ form, setForm, errors, onBlur, hiddenKeysForm =
             />
             <span className="text-sm font-medium text-sun/90">Balkone vorhanden</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-garage" data-field="hasGarage">
-            <input
-              id="struct-has-garage"
-              type="checkbox"
-              className="sun-checkbox cursor-pointer"
-              checked={form.hasGarage === true}
-              onChange={(e) => setForm((prev: Record<string, any>) => ({ ...prev, hasGarage: e.target.checked }))}
-            />
-            <span className="text-sm font-medium text-sun/90">Garage / Carport vorhanden</span>
-          </label>
         </div>
         </div>
       </div>
@@ -3095,7 +3241,7 @@ function DynamicFields({
   stepKey: string
   fields: Field[]
   form: Record<string, any>
-  setForm: (v: Record<string, any>) => void
+  setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
   onUpload: (name: string, file: File | null) => void
   ensureOffer: () => Promise<string>
   errors: Errors
@@ -3126,7 +3272,7 @@ function DynamicFields({
         if (stepKey === 'daemmungDachdeckung' && f.name === 'dachfensterTyp' && !asBool(form.dachfensterImDach)) {
           return null
         }
-        if (stepKey === 'ferestreUsi' && f.name === 'garageDoorType' && !asBool(form.hasGarage)) {
+        if (stepKey === 'ferestreUsi' && f.name === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) {
           return null
         }
         if (f.type === 'upload') {
@@ -3136,7 +3282,7 @@ function DynamicFields({
                     stepKey={stepKey} 
                     field={f as Extract<Field, { type: 'upload' }>}
                     files={form[f.name] || []}
-                    onChange={(newFiles) => setForm({ ...form, [f.name]: newFiles })}
+                    onChange={(newFiles) => setForm(prev => ({ ...prev, [f.name]: newFiles }))}
                  />
              )
         }
@@ -3165,20 +3311,26 @@ function DynamicFields({
               <div className={hasErr ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
                 <SelectSun
                   value={selectValue}
-                  onChange={async v => {
-                    const next = { ...form, [f.name]: v }
-                    setForm(next)
-                    const id = await ensureOffer()
-                    await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
-                    window.dispatchEvent(new Event('offers:refresh'))
+                  onChange={(v) => {
+                    ensureOffer().catch(() => {})
+                    setForm(prev => ({ ...prev, [f.name]: v }))
                   }}
                   options={
                     (() => {
                       const tag = (f as any).tag || FIELD_TAG_FALLBACK_BY_NAME[f.name]
                       const fromPreisdatenbank = tag && preisdatenbankOptionsByTag[tag]
-                      if (fromPreisdatenbank && fromPreisdatenbank.length > 0) return fromPreisdatenbank
+                      const schemaOptions = (((f as any).options ?? []) as string[]).filter((o) => o != null && String(o).trim() !== '')
+                      if (fromPreisdatenbank && fromPreisdatenbank.length > 0) {
+                        if (schemaOptions.length > 0) {
+                          const allowed = new Set(schemaOptions.map(String))
+                          const filtered = fromPreisdatenbank.filter((o: string) => allowed.has(String(o)))
+                          if (filtered.length > 0) return filtered
+                          return schemaOptions
+                        }
+                        return fromPreisdatenbank
+                      }
                       return [
-                        ...((f as any).options ?? []).filter((opt: string) => {
+                        ...schemaOptions.filter((opt: string) => {
                           const priceKey = tag && optionValueToPriceKey[tag]?.[opt]
                           return !priceKey || !hiddenKeysForm.has(priceKey)
                         }),
@@ -3217,16 +3369,21 @@ function DynamicFields({
                 type="checkbox"
                 className="sun-checkbox"
                 checked={asBool(form[f.name])}
-                onChange={async e => {
+                onChange={(e) => {
                   const checked = e.target.checked
-                  const next: Record<string, any> = { ...form, [f.name]: checked }
-                  if (f.name === 'dachfensterImDach') {
-                    if (!checked) next.dachfensterTyp = ''
-                    else if (!form.dachfensterTyp) next.dachfensterTyp = 'Standard'
-                  }
-                  setForm(next)
-                  const id = await ensureOffer()
-                  await apiFetch(`/offers/${id}/step`, { method: 'POST', body: JSON.stringify({ step_key: stepKey, data: next }) })
+                  ensureOffer().catch(() => {})
+                  setForm(prev => {
+                    const next: Record<string, any> = { ...prev, [f.name]: checked }
+                    if (f.name === 'dachfensterImDach') {
+                      if (!checked) next.dachfensterTyp = ''
+                      else if (!prev.dachfensterTyp) next.dachfensterTyp = 'Standard'
+                    }
+                    if (f.name === 'garagentorGewuenscht') {
+                      if (!checked) next.garageDoorType = ''
+                      else if (!prev.garageDoorType) next.garageDoorType = 'Sektionaltor Standard'
+                    }
+                    return next
+                  })
                 }}
                 onKeyDown={(e) => handleInputEnter(e, onEnter)}
               />
@@ -3249,8 +3406,7 @@ function DynamicFields({
           onChange: (e: any) => {
             const raw = e.target.value
             const val = f.type === 'number' ? (raw === '' ? '' : Number(raw)) : raw
-            const next = { ...form, [f.name]: val }
-            setForm(next)
+            setForm(prev => ({ ...prev, [f.name]: val }))
           },
           onKeyDown: (e: React.KeyboardEvent) => handleInputEnter(e, onEnter)
         }
