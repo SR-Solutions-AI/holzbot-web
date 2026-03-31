@@ -237,6 +237,8 @@ export function DetectionsReviewEditor({
   const skipNextPushRef = useRef(false)
   const plansDataRef = useRef<PlanData[]>(plansData)
   const roofEditorRef = useRef<RoofReviewEditorHandle>(null)
+  /** Popup „Neues Fenster – Höhe“: focus + Enter = Speichern */
+  const newWindowHeightInputRef = useRef<HTMLInputElement>(null)
   const [roofDimsToolbarSlotEl, setRoofDimsToolbarSlotEl] = useState<HTMLDivElement | null>(null)
   useEffect(() => {
     plansDataRef.current = plansData
@@ -694,6 +696,16 @@ export function DetectionsReviewEditor({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [handleUndo])
+
+  useEffect(() => {
+    if (!pendingNewDoorBbox) return
+    const id = window.requestAnimationFrame(() => {
+      const el = newWindowHeightInputRef.current
+      el?.focus()
+      el?.select()
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [pendingNewDoorBbox])
 
   const handleConfirmNewWindowHeight = useCallback(() => {
     if (!pendingNewDoorBbox || planIndexClamped >= plansData.length) return
@@ -1218,12 +1230,18 @@ export function DetectionsReviewEditor({
                               Neues Fenster – Höhe (cm)
                             </span>
                             <input
+                              ref={newWindowHeightInputRef}
                               type="number"
                               min={1}
                               step={1}
                               placeholder="Höhe (cm)"
                               value={newDoorDims.height}
                               onChange={(e) => setNewDoorDims((prev) => ({ ...prev, height: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return
+                                e.preventDefault()
+                                handleConfirmNewWindowHeight()
+                              }}
                               className="w-full max-w-[200px] rounded-md bg-black/40 border border-white/20 text-white px-2 py-1 text-sm"
                             />
                             <button
