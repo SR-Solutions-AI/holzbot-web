@@ -14,6 +14,7 @@ type CompanyInfo = {
   fax: string
   website: string
   logoUrl: string
+  offerPrefix: string
   handlerName: string
   footerLeft: string
   footerMid: string
@@ -56,6 +57,7 @@ function OfferPdfPreview({
 
 export default function OfferCustomizationPage() {
   const router = useRouter()
+  const currentOfferIdRef = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo>({
@@ -66,6 +68,7 @@ export default function OfferCustomizationPage() {
     fax: '',
     website: '',
     logoUrl: '',
+    offerPrefix: '',
     handlerName: '',
     footerLeft: '',
     footerMid: '',
@@ -89,11 +92,10 @@ export default function OfferCustomizationPage() {
       try {
         const me = await apiFetch('/me') as { user?: { role?: string; can_manage_org?: boolean } }
         const role = me?.user?.role
-        const canManageOrg = me?.user?.can_manage_org === true
-        const canSeeOrgSettings = role === 'org_leader' || canManageOrg
+        const canSeeOfferCustomization = role !== 'admin'
         if (!cancelled) {
-          setIsAdmin(canSeeOrgSettings)
-          if (!canSeeOrgSettings) {
+          setIsAdmin(canSeeOfferCustomization)
+          if (!canSeeOfferCustomization) {
             router.replace('/dashboard')
             return
           }
@@ -109,6 +111,7 @@ export default function OfferCustomizationPage() {
             fax: (config as CompanyInfo).fax ?? '',
             website: (config as CompanyInfo).website ?? '',
             logoUrl: (config as CompanyInfo).logoUrl ?? '',
+            offerPrefix: (config as CompanyInfo).offerPrefix ?? '',
             handlerName: (config as CompanyInfo).handlerName ?? '',
             footerLeft: (config as CompanyInfo).footerLeft ?? '',
             footerMid: (config as CompanyInfo).footerMid ?? '',
@@ -141,6 +144,7 @@ export default function OfferCustomizationPage() {
           phone: companyInfo.phone.trim(),
           fax: companyInfo.fax.trim(),
           website: companyInfo.website.trim(),
+          offerPrefix: companyInfo.offerPrefix.trim(),
           handlerName: companyInfo.handlerName.trim(),
           section1Title: companyInfo.section1Title.trim(),
           section1Content: companyInfo.section1Content,
@@ -189,6 +193,18 @@ export default function OfferCustomizationPage() {
   }
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = sessionStorage.getItem('holzbot_dashboard_offer')
+      if (!raw) return
+      const data = JSON.parse(raw) as { offerId?: string | null }
+      currentOfferIdRef.current = data?.offerId ? String(data.offerId) : null
+    } catch {
+      currentOfferIdRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
     if (!ready || !isAdmin) return
     const controller = new AbortController()
     const timeoutId = window.setTimeout(async () => {
@@ -209,7 +225,10 @@ export default function OfferCustomizationPage() {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           credentials: 'include',
-          body: JSON.stringify(companyInfo),
+          body: JSON.stringify({
+            ...companyInfo,
+            offerId: currentOfferIdRef.current,
+          }),
           signal: controller.signal,
         })
 
@@ -336,6 +355,16 @@ export default function OfferCustomizationPage() {
                   <div>
                     <label className="text-sm font-medium text-sun/90">Website</label>
                     <input type="url" value={companyInfo.website} onChange={(e) => setCompanyInfo((p) => ({ ...p, website: e.target.value }))} className="sun-input w-full mt-1" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-sun/90">Angebotskürzel</label>
+                    <input
+                      type="text"
+                      value={companyInfo.offerPrefix}
+                      onChange={(e) => setCompanyInfo((p) => ({ ...p, offerPrefix: e.target.value.toUpperCase() }))}
+                      className="sun-input w-full mt-1"
+                      placeholder="z. B. EDER"
+                    />
                   </div>
                   <div>
                     <label className="text-sm font-medium text-sun/90">Bearbeiter</label>

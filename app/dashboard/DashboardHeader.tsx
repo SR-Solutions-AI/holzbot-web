@@ -23,19 +23,31 @@ export default function DashboardHeader() {
   const canSeeOrgSettings =
     (me?.user as any)?.role === 'org_leader' || (me?.user as any)?.can_manage_org === true
   const isSiteAdmin = (me?.user as any)?.role === 'admin'
+  const canSeeOfferCustomization = !isSiteAdmin
   // ADMIN vede doar interfața admin; USER și ORGANIZATION LEADER văd Preisdatenbank
   const canSeePreisdatenbank = !isSiteAdmin
 
   // --- FUNCTIA DE LOGOUT (FIXED) ---
   const handleLogout = async () => {
-    // 1. Încercăm să dăm sign out la Supabase
+    const clearClientAuthState = () => {
+      try { sessionStorage.removeItem('holzbot_dashboard_offer') } catch {}
+      try { sessionStorage.removeItem('holzbot_dashboard_running') } catch {}
+      try {
+        const keys: string[] = []
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (key && key.startsWith('sb-')) keys.push(key)
+        }
+        for (const key of keys) localStorage.removeItem(key)
+      } catch {}
+    }
+
     try {
-        await supabase.auth.signOut()
+        await supabase.auth.signOut({ scope: 'global' })
     } catch (e) {
         console.error("Eroare la sign out:", e)
     } finally {
-        // 2. IMPORTANT: Folosim window.location.href in loc de router.push
-        // Asta forteaza un refresh complet al paginii și curăță memoria
+        clearClientAuthState()
         window.location.href = '/'
     }
   }
@@ -176,7 +188,7 @@ export default function DashboardHeader() {
                           <span className="leading-snug">Organisationseinstellungen</span>
                         </Link>
                       )}
-                      {canSeeOrgSettings && (
+                      {canSeeOfferCustomization && (
                         <Link
                           href="/dashboard/settings/angebotsanpassung"
                           onClick={() => setSettingsOpen(false)}

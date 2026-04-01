@@ -67,7 +67,7 @@ function RoleDropdown({
     return () => document.removeEventListener('click', handleClickOutside)
   }, [open])
 
-  const label = value === 'org_leader' ? 'Organization Leader' : 'User'
+  const label = value === 'org_leader' ? 'Administrator' : 'Mitarbeiter'
 
   return (
     <div ref={triggerRef} className="relative" id={id}>
@@ -104,7 +104,7 @@ function RoleDropdown({
                   }`}
                 >
                   {isSelected ? <Check size={16} className="shrink-0" /> : <span className="w-5" />}
-                  {opt === 'org_leader' ? 'Organization Leader' : 'User'}
+                  {opt === 'org_leader' ? 'Administrator' : 'Mitarbeiter'}
                 </button>
               )
             })}
@@ -135,6 +135,7 @@ export default function OrganisationSettingsPage() {
   const [editSaving, setEditSaving] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleteSaving, setDeleteSaving] = useState(false)
+  const [memberActionError, setMemberActionError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -228,13 +229,14 @@ export default function OrganisationSettingsPage() {
   }
 
   const handleDeleteMember = async (id: string) => {
+    setMemberActionError(null)
     setDeleteSaving(true)
     try {
       await apiFetch(`/organisation/members/${id}`, { method: 'DELETE' })
       setMembers((prev) => prev.filter((m) => m.id !== id))
       setDeleteConfirmId(null)
-    } catch {
-      // ignore
+    } catch (error: unknown) {
+      setMemberActionError(getErrorMessage(error, 'Benutzer konnte nicht gelöscht werden.'))
     } finally {
       setDeleteSaving(false)
     }
@@ -282,11 +284,28 @@ export default function OrganisationSettingsPage() {
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-6">
               <h2 className="text-xl font-bold text-[#FF9F0F] mb-1">Benutzer der Organisation</h2>
               <p className="text-white/80 text-sm mb-4">E-Mail, Name und Rolle verwalten. Admins können alle Einstellungen ändern.</p>
+              {memberActionError && (
+                <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  {memberActionError}
+                </div>
+              )}
               {membersLoading ? (
                 <div className="flex items-center gap-2 text-sand/80"><Loader2 size={18} className="animate-spin" /> Laden…</div>
               ) : (
                 <div className="space-y-3">
-                  {members.map((m) => (
+                  {members.map((m) => {
+                    const isAdminMember = m.role === 'org_leader' || m.role === 'admin'
+                    const adminCount = members.filter((member) => member.role === 'org_leader' || member.role === 'admin').length
+                    const deleteBlockedBecauseLastMember = members.length <= 1
+                    const deleteBlockedBecauseLastAdmin = isAdminMember && adminCount <= 1
+                    const deleteDisabled = deleteBlockedBecauseLastMember || deleteBlockedBecauseLastAdmin
+                    const deleteTitle = deleteBlockedBecauseLastMember
+                      ? 'Das letzte verbleibende Konto kann nicht gelöscht werden.'
+                      : deleteBlockedBecauseLastAdmin
+                        ? 'Der letzte Administrator kann nicht gelöscht werden.'
+                        : 'Löschen'
+
+                    return (
                     <div key={m.id} className="flex items-center justify-between gap-4 py-2 border-b border-white/10 last:border-0">
                       {editingId === m.id ? (
                         <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -324,7 +343,7 @@ export default function OrganisationSettingsPage() {
                           <div className="min-w-0">
                             <div className="font-medium text-white truncate">{m.full_name || m.email || '—'}</div>
                             <div className="text-sm text-sand/70 truncate">{m.email}</div>
-                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{m.role === 'org_leader' || m.role === 'admin' ? 'Organization Leader' : 'User'}</span>
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{m.role === 'org_leader' || m.role === 'admin' ? 'Administrator' : 'Mitarbeiter'}</span>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <button
@@ -340,14 +359,25 @@ export default function OrganisationSettingsPage() {
                             >
                               <Pencil size={16} />
                             </button>
-                            <button type="button" onClick={() => setDeleteConfirmId(m.id)} className="p-2 rounded text-sand/70 hover:text-red-400" title="Löschen">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMemberActionError(null)
+                                if (deleteDisabled) return
+                                setDeleteConfirmId(m.id)
+                              }}
+                              disabled={deleteDisabled}
+                              className="p-2 rounded text-sand/70 hover:text-red-400 disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:text-sand/70"
+                              title={deleteTitle}
+                            >
                               <Trash2 size={16} />
                             </button>
                           </div>
                         </>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
 
                   {addOpen ? (
                     <div className="pt-4 border-t border-white/10 space-y-3">

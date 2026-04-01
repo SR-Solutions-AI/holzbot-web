@@ -12,7 +12,7 @@ type OfferListItem = {
   id: string
   title?: string | null
   status?: string | null
-  meta?: { referinta?: string | null; roof_only_offer?: boolean | null; wizard_package?: string | null } | null
+  meta?: { referinta?: string | null; offer_no?: string | null; roof_only_offer?: boolean | null; wizard_package?: string | null } | null
   created_at: string
   created_by?: string | null
   offer_type_slug?: string | null
@@ -550,12 +550,18 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
           </div>
         )}
         {items.map((it) => {
-          const rawDisplay = it?.meta?.referinta?.trim() || it?.title || DE.fallbackProject
+          const statusLower = (it.status || '').toLowerCase()
+          const isDraftStatus = statusLower === 'draft' || statusLower === 'entwurf'
+          const isRunningStatus = statusLower === 'processing' || statusLower === 'running' || statusLower === 'laufend'
+          const generatedOfferCode = (it?.meta?.offer_no || '').trim()
+          const rawDisplay =
+            (!isDraftStatus && !isRunningStatus && generatedOfferCode) ||
+            it?.meta?.referinta?.trim() ||
+            it?.title ||
+            DE.fallbackProject
           const display = translateText(rawDisplay)
           const canDelete = isAdmin || it.created_by === userId
           const isSelected = selected === it.id
-          const statusLower = (it.status || '').toLowerCase()
-          const isDraftStatus = statusLower === 'draft' || statusLower === 'entwurf'
 
           return (
             <div

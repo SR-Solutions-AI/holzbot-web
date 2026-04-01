@@ -23,8 +23,26 @@ export default function Header() {
         })
     }, [])
 
-    function handleLogout() {
-        supabase.auth.signOut().then(() => window.location.href = '/')
+    async function handleLogout() {
+        const clearClientAuthState = () => {
+            try { sessionStorage.removeItem('holzbot_dashboard_offer') } catch {}
+            try { sessionStorage.removeItem('holzbot_dashboard_running') } catch {}
+            try {
+                const keys: string[] = []
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i)
+                    if (key && key.startsWith('sb-')) keys.push(key)
+                }
+                for (const key of keys) localStorage.removeItem(key)
+            } catch {}
+        }
+
+        try {
+            await supabase.auth.signOut({ scope: 'global' })
+        } finally {
+            clearClientAuthState()
+            window.location.href = '/'
+        }
     }
 
     return (
