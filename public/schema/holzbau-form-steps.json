@@ -1001,9 +1001,9 @@
       "fields": [],
       "priceSections": [
         {
-          "title": "Innenausbau",
-          "subtitle": "Innenausbau pro m²",
-          "fieldTag": "interior_finish",
+          "title": "Innenausbau Innenwände",
+          "subtitle": "Innenwände pro m²",
+          "fieldTag": "interior_finish_interior_walls",
           "variables": [
             {
               "key": "interior_tencuiala",
@@ -1025,6 +1025,37 @@
             },
             {
               "key": "interior_mix",
+              "label": "Mix (€/m²)",
+              "unit": "€/m²",
+              "value": 45
+            }
+          ]
+        },
+        {
+          "title": "Innenausbau Außenwände",
+          "subtitle": "Außenwände innen pro m²",
+          "fieldTag": "interior_finish_exterior_walls",
+          "variables": [
+            {
+              "key": "interior_outer_tencuiala",
+              "label": "Putz (€/m²)",
+              "unit": "€/m²",
+              "value": 35
+            },
+            {
+              "key": "interior_outer_lemn",
+              "label": "Holz (€/m²)",
+              "unit": "€/m²",
+              "value": 55
+            },
+            {
+              "key": "interior_outer_fibrociment",
+              "label": "Faserzement (€/m²)",
+              "unit": "€/m²",
+              "value": 42
+            },
+            {
+              "key": "interior_outer_mix",
               "label": "Mix (€/m²)",
               "unit": "€/m²",
               "value": 45
@@ -2103,9 +2134,9 @@
         "title": "Materialien & Ausbaustufe",
         "subsections": [
           {
-            "title": "Innenausbau",
-            "subtitle": "Innenausbau pro m²",
-            "fieldTag": "interior_finish",
+            "title": "Innenausbau Innenwände",
+            "subtitle": "Innenwände pro m²",
+            "fieldTag": "interior_finish_interior_walls",
             "variables": [
               {
                 "key": "interior_tencuiala",
@@ -2127,6 +2158,37 @@
               },
               {
                 "key": "interior_mix",
+                "label": "Mix (€/m²)",
+                "unit": "€/m²",
+                "value": 45
+              }
+            ]
+          },
+          {
+            "title": "Innenausbau Außenwände",
+            "subtitle": "Außenwände innen pro m²",
+            "fieldTag": "interior_finish_exterior_walls",
+            "variables": [
+              {
+                "key": "interior_outer_tencuiala",
+                "label": "Putz (€/m²)",
+                "unit": "€/m²",
+                "value": 35
+              },
+              {
+                "key": "interior_outer_lemn",
+                "label": "Holz (€/m²)",
+                "unit": "€/m²",
+                "value": 55
+              },
+              {
+                "key": "interior_outer_fibrociment",
+                "label": "Faserzement (€/m²)",
+                "unit": "€/m²",
+                "value": 42
+              },
+              {
+                "key": "interior_outer_mix",
                 "label": "Mix (€/m²)",
                 "unit": "€/m²",
                 "value": 45

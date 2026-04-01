@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { apiFetch } from '../lib/supabaseClient'
 import { inferOfferFlow } from '../lib/offerFlow'
 import { buildFormStepsFromJson, buildPriceSectionsFromFormStepsJson } from '../../lib/buildFormFromJson'
+import { mergeSelectOptions } from '../../lib/mergeSelectOptions'
 import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
 import { type Field, formStepsDachstuhl } from '../dashboard/formConfig'
 import { CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, Loader2, AlertTriangle, X } from 'lucide-react'
@@ -278,6 +279,36 @@ function asBool(v: any): boolean {
     return s === 'true' || s === '1' || s === 'yes' || s === 'ja' || s === 'on'
   }
   return false
+}
+
+const STEP_FIELD_PREFIXES: Record<string, string[]> = {
+  wandaufbau: ['außenwande', 'innenwande'],
+  bodenDeckeBelag: ['bodenaufbau', 'bodenbelag', 'deckenaufbau'],
+  materialeFinisaj: ['finisajInterior', 'fatada'],
+}
+
+const STEP_FIELD_NAMES: Record<string, string[]> = {
+  projektdaten: ['projektumfang', 'nutzungDachraum', 'deckenInnenausbau'],
+  wintergaertenBalkone: ['wintergartenTyp', 'balkonTyp'],
+  structuraCladirii: ['tipFundatieBeci', 'inaltimeEtaje', 'listaEtaje', 'pilons', 'hasWintergarden', 'hasBalkone', 'treppeTyp', 'floorsNumber'],
+}
+
+function extractStepData(stepKey: string, source: Record<string, any>, fields: Field[] = []): Record<string, any> {
+  const out: Record<string, any> = {}
+  const fieldNames = new Set<string>((Array.isArray(fields) ? fields : []).map((f) => f.name).filter(Boolean))
+  for (const name of STEP_FIELD_NAMES[stepKey] ?? []) fieldNames.add(name)
+  const prefixes = STEP_FIELD_PREFIXES[stepKey] ?? []
+
+  for (const [key, value] of Object.entries(source ?? {})) {
+    const matchesField = fieldNames.has(key)
+    const matchesPrefix = prefixes.some((prefix) => key.startsWith(prefix))
+    const matchesMansardaHeight = stepKey === 'structuraCladirii' && key.startsWith('inaltimePeretiMansarda_')
+    if (matchesField || matchesPrefix || matchesMansardaHeight) {
+      out[key] = value
+    }
+  }
+
+  return out
 }
 
 /* ================= VALIDATORS ================= */
@@ -1393,7 +1424,7 @@ export default function StepWizard() {
 
     const draftData = drafts[key]
     const applyMerge = (prev: Record<string, any>, loaded: Record<string, any>) => {
-      const merged = mergeStepForm(key, loaded, prev)
+      const merged = mergeStepForm(key, extractStepData(key, loaded, step?.fields ?? []), prev)
       if (key === 'structuraCladirii') {
         structuraWinterBalkoneRef.current = {
           hasWintergarden: merged.hasWintergarden ?? structuraWinterBalkoneRef.current.hasWintergarden,
@@ -1419,8 +1450,9 @@ export default function StepWizard() {
           if (loadNonce !== stepLoadNonceRef.current) return
           const stepData = data?.data
           if (stepData && Object.keys(stepData).length > 0) {
-            setDrafts(prev => ({ ...prev, [key]: stepData }))
-            setForm(prev => loadIntoForm(prev, stepData))
+            const scopedStepData = extractStepData(key, stepData, step?.fields ?? [])
+            setDrafts(prev => ({ ...prev, [key]: scopedStepData }))
+            setForm(prev => loadIntoForm(prev, scopedStepData))
           } else {
             const defaultForStep = key === 'structuraCladirii' ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', inaltimeEtaje: 'Standard (2,50 m)' } : {}
             setForm(prev => loadIntoForm(prev, defaultForStep))
@@ -1496,7 +1528,10 @@ export default function StepWizard() {
   function stashDraft(next?: Partial<Record<string, any>>) {
     if(!step) return
     const key = step.key
-    const updated = { ...(drafts[key] ?? {}), ...(next ?? form) }
+    const updated = {
+      ...(drafts[key] ?? {}),
+      ...extractStepData(key, next ?? form, step.fields),
+    }
     setDrafts(prev => ({ ...prev, [key]: updated }))
   }
 
@@ -1607,7 +1642,7 @@ export default function StepWizard() {
 
       if (step.key !== 'upload') {
         try {
-          await saveStepLive(step.key, form)
+          await saveStepLive(step.key, extractStepData(step.key, form, step.fields))
         } catch (_) {}
       }
 
@@ -2801,14 +2836,18 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const totalFloors = 1 + etajeIntermediare
   const INTERIOR_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_tencuiala', 'Lemn': 'interior_lemn', 'Fibrociment': 'interior_fibrociment', 'Mix': 'interior_mix' }
+  const INTERIOR_OUTER_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_outer_tencuiala', 'Lemn': 'interior_outer_lemn', 'Fibrociment': 'interior_outer_fibrociment', 'Mix': 'interior_outer_mix' }
   const EXTERIOR_FACADE_KEY: Record<string, string> = { 'Tencuială': 'exterior_tencuiala', 'Lemn': 'exterior_lemn', 'Fibrociment': 'exterior_fibrociment', 'Mix': 'exterior_mix' }
-  const finishOptionsInterior = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish']])
+  const finishOptionsInteriorInner = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_interior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_interior_walls'], preisdatenbankOptionsByTag['interior_finish']])
+  const finishOptionsInteriorOuter = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_exterior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_exterior_walls'], preisdatenbankOptionsByTag['interior_finish']])
   const finishOptionsExterior = useMemo(() => [...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])], [preisdatenbankOptionsByTag['exterior_facade']])
   const displayFinish = (fieldName: string, opt: string) => {
     const isExterior = fieldName.startsWith('fatada')
-    const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : INTERIOR_FINISH_KEY[opt]
+    const isInteriorOuter = fieldName.startsWith('finisajInteriorAussen')
+    const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : isInteriorOuter ? INTERIOR_OUTER_FINISH_KEY[opt] : INTERIOR_FINISH_KEY[opt]
     if (key && paramLabelOverrides[key]) return paramLabelOverrides[key]
-    const pk = optionValueToPriceKey[isExterior ? 'exterior_facade' : 'interior_finish']?.[opt]
+    const tag = isExterior ? 'exterior_facade' : isInteriorOuter ? 'interior_finish_exterior_walls' : 'interior_finish_interior_walls'
+    const pk = optionValueToPriceKey[tag]?.[opt] ?? (!isExterior && !isInteriorOuter ? optionValueToPriceKey['interior_finish']?.[opt] : undefined)
     if (pk && paramLabelOverrides[pk]) return paramLabelOverrides[pk]
     return tOption('materialeFinisaj', fieldName, opt) || opt
   }
@@ -2819,7 +2858,7 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
           <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
           <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorBeci: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
+            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorBeci: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
           </div>
         </label>
       )}
@@ -2827,10 +2866,14 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
         const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
         return (
-          <div key={floorKey} className="flex gap-4 items-start">
+          <div key={floorKey} className="grid gap-4 md:grid-cols-3 items-start">
             <label className="flex flex-col gap-1 flex-1">
-              <span className="wiz-label text-sun/90">Innenausbau - {floorLabel}</span>
-              <SelectSun value={form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInterior_${floorKey}`]: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish(`finisajInterior_${floorKey}`, opt)} />
+              <span className="wiz-label text-sun/90">Innenausbau Innenwände - {floorLabel}</span>
+              <SelectSun value={form[`finisajInteriorInnen_${floorKey}`] || form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInteriorInnen_${floorKey}`]: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish(`finisajInteriorInnen_${floorKey}`, opt)} />
+            </label>
+            <label className="flex flex-col gap-1 flex-1">
+              <span className="wiz-label text-sun/90">Innenausbau Außenwände - {floorLabel}</span>
+              <SelectSun value={form[`finisajInteriorAussen_${floorKey}`] || form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInteriorAussen_${floorKey}`]: v }))} options={finishOptionsInteriorOuter} displayFor={(opt) => displayFinish(`finisajInteriorAussen_${floorKey}`, opt)} />
             </label>
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
@@ -2840,10 +2883,14 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
         )
       })}
       {hasMansarda && (
-        <div className="flex gap-4 items-start">
+        <div className="grid gap-4 md:grid-cols-3 items-start">
           <label className="flex flex-col gap-1 flex-1">
-            <span className="wiz-label text-sun/90">Innenausbau - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorMansarda: v }))} options={finishOptionsInterior} displayFor={(opt) => displayFinish('finisajInteriorMansarda', opt)} />
+            <span className="wiz-label text-sun/90">Innenausbau Innenwände - Dachgeschoss</span>
+            <SelectSun value={form.finisajInteriorInnenMansarda || form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorInnenMansarda: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish('finisajInteriorInnenMansarda', opt)} />
+          </label>
+          <label className="flex flex-col gap-1 flex-1">
+            <span className="wiz-label text-sun/90">Innenausbau Außenwände - Dachgeschoss</span>
+            <SelectSun value={form.finisajInteriorAussenMansarda || form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorAussenMansarda: v }))} options={finishOptionsInteriorOuter} displayFor={(opt) => displayFinish('finisajInteriorAussenMansarda', opt)} />
           </label>
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
@@ -3320,22 +3367,14 @@ function DynamicFields({
                       const tag = (f as any).tag || FIELD_TAG_FALLBACK_BY_NAME[f.name]
                       const fromPreisdatenbank = tag && preisdatenbankOptionsByTag[tag]
                       const schemaOptions = (((f as any).options ?? []) as string[]).filter((o) => o != null && String(o).trim() !== '')
-                      if (fromPreisdatenbank && fromPreisdatenbank.length > 0) {
-                        if (schemaOptions.length > 0) {
-                          const allowed = new Set(schemaOptions.map(String))
-                          const filtered = fromPreisdatenbank.filter((o: string) => allowed.has(String(o)))
-                          if (filtered.length > 0) return filtered
-                          return schemaOptions
-                        }
-                        return fromPreisdatenbank
-                      }
-                      return [
-                        ...schemaOptions.filter((opt: string) => {
-                          const priceKey = tag && optionValueToPriceKey[tag]?.[opt]
-                          return !priceKey || !hiddenKeysForm.has(priceKey)
-                        }),
-                        ...((customOptionsForm[tag] || []).map((o: { label: string; value: string }) => o.label)),
-                      ]
+                      return mergeSelectOptions({
+                        tag,
+                        schemaOptions,
+                        preisdatenbankOptions: fromPreisdatenbank || [],
+                        customOptions: customOptionsForm[tag] || [],
+                        hiddenKeys: hiddenKeysForm,
+                        optionValueToPriceKey,
+                      })
                     })()
                   }
                   placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}

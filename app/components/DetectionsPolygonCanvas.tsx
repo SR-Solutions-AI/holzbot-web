@@ -33,7 +33,7 @@ type PolygonCanvasProps = {
   tool: 'select' | 'add' | 'remove' | 'edit'
   selectedIndex: number | null
   newPoints: Point[] | null
-  newDoorType?: 'door' | 'window' | 'garage_door' | 'stairs'
+  newDoorType?: 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
   onSelect: (index: number | null) => void
   onAddPoint: (x: number, y: number) => void
   onCloseNewPolygon: () => void
@@ -314,12 +314,13 @@ export function DetectionsPolygonCanvas({
 
     const roomColors = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
     // Clasificare identică cu LiveFeed (detections_review_doors.png): doors_types.json (Gemini) + euristică aspect în backend.
-    // Culori: ușă = verde, geam = albastru, garaj = portocaliu, scări = gri (ca în raster_api.py _COLOR_DOOR_* / _COLOR_WINDOW_*).
-    const doorColors: Record<string, string> = { door: '#22c55e', window: '#3b82f6', garage_door: '#9333ea', stairs: '#ea580c' }
-    const doorStrokeColors: Record<string, string> = { door: '#16a34a', window: '#2563eb', garage_door: '#7e22ce', stairs: '#c2410c' }
+    // Culori: ușă = verde, geam = albastru, schiebetür = turcoaz, garaj = mov, scări = portocaliu.
+    const doorColors: Record<string, string> = { door: '#22c55e', window: '#3b82f6', sliding_door: '#14b8a6', garage_door: '#9333ea', stairs: '#ea580c' }
+    const doorStrokeColors: Record<string, string> = { door: '#16a34a', window: '#2563eb', sliding_door: '#0f766e', garage_door: '#7e22ce', stairs: '#c2410c' }
     const getDoorStyle = (type: string | undefined) => {
       const t = (type || 'door').toLowerCase().trim()
       if (t === 'window' || t === 'fenster' || t === 'geam') return { fill: doorColors.window, stroke: doorStrokeColors.window }
+      if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return { fill: doorColors.sliding_door, stroke: doorStrokeColors.sliding_door }
       if (t === 'garage_door' || t === 'garagentor') return { fill: doorColors.garage_door, stroke: doorStrokeColors.garage_door }
       if (t === 'stairs' || t === 'treppe') return { fill: doorColors.stairs, stroke: doorStrokeColors.stairs }
       return { fill: doorColors.door, stroke: doorStrokeColors.door }

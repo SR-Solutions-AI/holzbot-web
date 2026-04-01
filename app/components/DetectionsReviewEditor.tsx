@@ -31,10 +31,11 @@ import { apiFetch } from '../lib/supabaseClient'
 /** Unire vârfuri consecutive foarte apropiate (în px imagine) – la randarea poligoanelor prima dată. */
 const MERGE_VERTEX_DIST_PX = 14
 
-/** Tip canonic pentru uși/ferestre: door | window | garage_door | stairs (pentru culori distincte în editor). */
+/** Tip canonic pentru uși/ferestre: door | window | sliding_door | garage_door | stairs. */
 function normalizeDoorType(type: string | undefined): string {
   const t = (type || 'door').toLowerCase().trim()
   if (t === 'window' || t === 'fenster' || t === 'geam') return 'window'
+  if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return 'sliding_door'
   if (t === 'garage_door' || t === 'garagentor') return 'garage_door'
   if (t === 'stairs' || t === 'treppe') return 'stairs'
   return 'door'
@@ -65,7 +66,7 @@ type PlanData = {
   doors: DoorRect[]
 }
 
-type DoorType = 'door' | 'window' | 'garage_door' | 'stairs'
+type DoorType = 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
 const round2 = (v: number) => Math.round(v * 100) / 100
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const isTooManyRequestsError = (err: unknown) => {
@@ -84,7 +85,10 @@ function computeOpeningWidthMeters(door: DoorRect, metersPerPixel: number | null
   const widthPx = Math.abs(x2 - x1)
   const heightPx = Math.abs(y2 - y1)
   const normalizedType = normalizeDoorType(door.type) as DoorType
-  const pxValue = normalizedType === 'window' ? Math.max(widthPx, heightPx) : Math.min(widthPx, heightPx)
+  const pxValue =
+    normalizedType === 'window' || normalizedType === 'sliding_door'
+      ? Math.max(widthPx, heightPx)
+      : Math.min(widthPx, heightPx)
   if (!metersPerPixel || metersPerPixel <= 0) return null
   return round2(pxValue * metersPerPixel)
 }
@@ -134,7 +138,11 @@ function computeWindowHeightMeters(widthMeters: number): number {
 function computeOpeningHeightMeters(door: DoorRect, widthMeters: number | null): number | null {
   if (widthMeters == null) return null
   const normalizedType = normalizeDoorType(door.type) as DoorType
-  return round2(normalizedType === 'window' ? computeWindowHeightMeters(widthMeters) : 2.0)
+  return round2(
+    normalizedType === 'window' || normalizedType === 'sliding_door'
+      ? computeWindowHeightMeters(widthMeters)
+      : 2.0,
+  )
 }
 
 /** Typische Geschoss-/Wandhöhe für Garagentor, wenn der Plan keinen eigenen Wert liefert. */
@@ -163,6 +171,14 @@ function computeAutoOpeningMetersFromBbox(
       width_m = w != null ? Math.max(0.01, w) : Math.max(0.01, round2(minPx * metersPerPixel))
     }
     return { width_m, height_m: DEFAULT_WALL_HEIGHT_M }
+  }
+
+  if (type === 'sliding_door') {
+    const width_m =
+      metersPerPixel && metersPerPixel > 0
+        ? Math.max(0.01, round2(maxPx * metersPerPixel))
+        : 2.4
+    return { width_m, height_m: 2.0 }
   }
 
   if (!metersPerPixel || metersPerPixel <= 0) {
@@ -229,6 +245,7 @@ export function DetectionsReviewEditor({
   const [newDoorType, setNewDoorType] = useState<DoorType>('door')
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [pendingNewDoorBbox, setPendingNewDoorBbox] = useState<[number, number, number, number] | null>(null)
+  const [pendingNewDoorType, setPendingNewDoorType] = useState<'window' | 'sliding_door' | null>(null)
   const [roomTypePopoverIndex, setRoomTypePopoverIndex] = useState<number | null>(null)
   const [newDoorDims, setNewDoorDims] = useState<{ width: string; height: string }>({ width: '', height: '' })
   const [isConfirming, setIsConfirming] = useState(false)
@@ -557,7 +574,7 @@ export function DetectionsReviewEditor({
     setRoomTypePopoverIndex(roomIndex)
   }, [])
 
-  const handlePickDoorType = useCallback((doorType: 'door' | 'window' | 'garage_door' | 'stairs') => {
+  const handlePickDoorType = useCallback((doorType: DoorType) => {
     if (selectedPolygonIndex === null || planIndexClamped >= plansData.length) return
     const plan = plansData[planIndexClamped]
     if (!plan || getTabForPlan(planIndexClamped) !== 'doors' || selectedPolygonIndex >= plan.doors.length) return
@@ -567,8 +584,8 @@ export function DetectionsReviewEditor({
     const next = plan.doors.map((d, i) => {
       if (i !== idx) return d
       let out: DoorRect = { ...d, type: doorType }
-      if (doorType === 'window' && prevType !== 'window') {
-        out = { ...out, height_m: 1, dimensionsEdited: true }
+      if ((doorType === 'window' || doorType === 'sliding_door') && prevType !== doorType) {
+        out = { ...out, height_m: doorType === 'sliding_door' ? 2.0 : 1, dimensionsEdited: true }
       }
       return out
     })
@@ -625,6 +642,7 @@ export function DetectionsReviewEditor({
 
     if (newDoorType === 'window') {
       setPendingNewDoorBbox(bbox)
+      setPendingNewDoorType(newDoorType)
       setNewDoorDims({ width: '', height: '' })
       return
     }
@@ -725,15 +743,16 @@ export function DetectionsReviewEditor({
       ...plan.doors,
       {
         bbox: pendingNewDoorBbox,
-        type: 'window',
+        type: pendingNewDoorType ?? 'window',
         width_m,
         height_m: height,
         dimensionsEdited: true,
       },
     ])
     setPendingNewDoorBbox(null)
+    setPendingNewDoorType(null)
     setNewDoorDims({ width: '', height: '' })
-  }, [pendingNewDoorBbox, planIndexClamped, plansData, newDoorDims, pushHistory, setDoors])
+  }, [pendingNewDoorBbox, pendingNewDoorType, planIndexClamped, plansData, newDoorDims, pushHistory, setDoors])
 
   /** Kurze Hinweise; bei Türen/Fenstern kein langer Edit-Text. */
   const toolHint =
@@ -985,6 +1004,13 @@ export function DetectionsReviewEditor({
           </button>
           <button
             type="button"
+            onClick={() => setNewDoorType('sliding_door')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${newDoorType === 'sliding_door' ? 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Schiebetür
+          </button>
+          <button
+            type="button"
             onClick={() => setNewDoorType('garage_door')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${newDoorType === 'garage_door' ? 'bg-purple-500/30 text-purple-200 border border-purple-400/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
           >
@@ -1002,13 +1028,14 @@ export function DetectionsReviewEditor({
       {tool === 'select' && activeTab === 'doors' && selectedPolygonIndex !== null && plansData[planIndexClamped]?.doors[selectedPolygonIndex] && (
         <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
           <span className="text-sand/70 text-xs">Typ:</span>
-          {(['door', 'window', 'garage_door', 'stairs'] as const).map((doorType) => {
-            const labels = { door: 'Tür', window: 'Fenster', garage_door: 'Garagentor', stairs: 'Treppe' }
+          {(['door', 'window', 'sliding_door', 'garage_door', 'stairs'] as const).map((doorType) => {
+            const labels = { door: 'Tür', window: 'Fenster', sliding_door: 'Schiebetür', garage_door: 'Garagentor', stairs: 'Treppe' }
             const current = plansData[planIndexClamped]?.doors[selectedPolygonIndex]?.type ?? 'door'
             const isActive = normalizeDoorType(current) === doorType
             const activeClasses: Record<string, string> = {
               door: 'bg-[#22c55e]/30 text-green-300 border border-green-400/50',
               window: 'bg-blue-500/30 text-blue-200 border border-blue-400/50',
+              sliding_door: 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50',
               garage_door: 'bg-purple-500/30 text-purple-200 border border-purple-400/50',
               stairs: 'bg-orange-600/30 text-orange-200 border border-orange-500/50',
             }
@@ -1227,7 +1254,7 @@ export function DetectionsReviewEditor({
                         ) : pendingNewDoorBbox ? (
                           <>
                             <span className="text-white text-sm font-medium w-full text-center">
-                              Neues Fenster – Höhe (cm)
+                              {pendingNewDoorType === 'sliding_door' ? 'Neue Schiebetür – Höhe (cm)' : 'Neues Fenster – Höhe (cm)'}
                             </span>
                             <input
                               ref={newWindowHeightInputRef}
@@ -1306,9 +1333,9 @@ export function DetectionsReviewEditor({
                         const [x1, y1, x2, y2] = d.bbox
                         const corners: Point[] = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                         corners[vertexIndex] = [x, y]
-                        let nx1 = Math.min(...corners.map((c) => c[0]))
+                        const nx1 = Math.min(...corners.map((c) => c[0]))
                         let nx2 = Math.max(...corners.map((c) => c[0]))
-                        let ny1 = Math.min(...corners.map((c) => c[1]))
+                        const ny1 = Math.min(...corners.map((c) => c[1]))
                         let ny2 = Math.max(...corners.map((c) => c[1]))
                         const minPx = 1
                         if (nx2 - nx1 < minPx) nx2 = nx1 + minPx
@@ -1353,7 +1380,7 @@ export function DetectionsReviewEditor({
                 {!roofOnlyOffer && planTab === 'doors' && (
                   <div className="shrink-0 rounded-xl border border-[#FF9F0F]/40 bg-black/25 p-2">
                     <p className="text-sand/80 text-xs font-normal leading-snug text-center">
-                      Maße aus Planmaßstab. Fenster: Höhe beim Anlegen eingeben.
+                      Maße aus Planmaßstab. Fenster: Höhe beim Anlegen eingeben. Schiebetüren: Höhe fix 2,00 m, Breite aus der langen Seite.
                     </p>
                   </div>
                 )}

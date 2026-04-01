@@ -718,6 +718,18 @@
           "tag": "door_material_exterior"
         },
         {
+          "type": "select",
+          "name": "slidingDoorType",
+          "label": "Schiebetür (Preis pro m²)",
+          "options": [
+            "Standard",
+            "Hebeschiebetür",
+            "Panorama",
+            "Aluminium Premium"
+          ],
+          "tag": "sliding_door_type"
+        },
+        {
           "type": "bool",
           "name": "garagentorGewuenscht",
           "label": "Garagentor gewünscht (Preis pro Stück)",
@@ -824,6 +836,37 @@
               "label": "Kunststoff (€/Stück)",
               "unit": "€/Stück",
               "value": 1600
+            }
+          ]
+        },
+        {
+          "title": "Schiebetüren",
+          "subtitle": "Preis pro m² je nach gewählter Schiebetür (Anzahl/Fläche aus Editor)",
+          "fieldTag": "sliding_door_type",
+          "variables": [
+            {
+              "key": "sliding_door_standard_price",
+              "label": "Standard (€/m²)",
+              "unit": "€/m²",
+              "value": 690
+            },
+            {
+              "key": "sliding_door_hebeschiebetuer_price",
+              "label": "Hebeschiebetür (€/m²)",
+              "unit": "€/m²",
+              "value": 880
+            },
+            {
+              "key": "sliding_door_panorama_price",
+              "label": "Panorama (€/m²)",
+              "unit": "€/m²",
+              "value": 1040
+            },
+            {
+              "key": "sliding_door_aluminium_premium_price",
+              "label": "Aluminium Premium (€/m²)",
+              "unit": "€/m²",
+              "value": 980
             }
           ]
         },
@@ -1001,9 +1044,9 @@
       "fields": [],
       "priceSections": [
         {
-          "title": "Innenausbau",
-          "subtitle": "Innenausbau pro m²",
-          "fieldTag": "interior_finish",
+          "title": "Innenausbau Innenwände",
+          "subtitle": "Innenwände pro m²",
+          "fieldTag": "interior_finish_interior_walls",
           "variables": [
             {
               "key": "interior_tencuiala",
@@ -1025,6 +1068,37 @@
             },
             {
               "key": "interior_mix",
+              "label": "Mix (€/m²)",
+              "unit": "€/m²",
+              "value": 45
+            }
+          ]
+        },
+        {
+          "title": "Innenausbau Außenwände",
+          "subtitle": "Außenwände innen pro m²",
+          "fieldTag": "interior_finish_exterior_walls",
+          "variables": [
+            {
+              "key": "interior_outer_tencuiala",
+              "label": "Putz (€/m²)",
+              "unit": "€/m²",
+              "value": 35
+            },
+            {
+              "key": "interior_outer_lemn",
+              "label": "Holz (€/m²)",
+              "unit": "€/m²",
+              "value": 55
+            },
+            {
+              "key": "interior_outer_fibrociment",
+              "label": "Faserzement (€/m²)",
+              "unit": "€/m²",
+              "value": 42
+            },
+            {
+              "key": "interior_outer_mix",
               "label": "Mix (€/m²)",
               "unit": "€/m²",
               "value": 45
@@ -1932,6 +2006,37 @@
             ]
           },
           {
+            "title": "Schiebetüren",
+            "subtitle": "Preis pro m² je nach gewählter Schiebetür (Anzahl/Fläche aus Editor)",
+            "fieldTag": "sliding_door_type",
+            "variables": [
+              {
+                "key": "sliding_door_standard_price",
+                "label": "Standard (€/m²)",
+                "unit": "€/m²",
+                "value": 690
+              },
+              {
+                "key": "sliding_door_hebeschiebetuer_price",
+                "label": "Hebeschiebetür (€/m²)",
+                "unit": "€/m²",
+                "value": 880
+              },
+              {
+                "key": "sliding_door_panorama_price",
+                "label": "Panorama (€/m²)",
+                "unit": "€/m²",
+                "value": 1040
+              },
+              {
+                "key": "sliding_door_aluminium_premium_price",
+                "label": "Aluminium Premium (€/m²)",
+                "unit": "€/m²",
+                "value": 980
+              }
+            ]
+          },
+          {
             "title": "Garagentor",
             "subtitle": "Stückpreis Garagentor (nur wenn „Garagentor gewünscht“)",
             "fieldTag": "garage_door_type",
@@ -2103,9 +2208,9 @@
         "title": "Materialien & Ausbaustufe",
         "subsections": [
           {
-            "title": "Innenausbau",
-            "subtitle": "Innenausbau pro m²",
-            "fieldTag": "interior_finish",
+            "title": "Innenausbau Innenwände",
+            "subtitle": "Innenwände pro m²",
+            "fieldTag": "interior_finish_interior_walls",
             "variables": [
               {
                 "key": "interior_tencuiala",
@@ -2127,6 +2232,37 @@
               },
               {
                 "key": "interior_mix",
+                "label": "Mix (€/m²)",
+                "unit": "€/m²",
+                "value": 45
+              }
+            ]
+          },
+          {
+            "title": "Innenausbau Außenwände",
+            "subtitle": "Außenwände innen pro m²",
+            "fieldTag": "interior_finish_exterior_walls",
+            "variables": [
+              {
+                "key": "interior_outer_tencuiala",
+                "label": "Putz (€/m²)",
+                "unit": "€/m²",
+                "value": 35
+              },
+              {
+                "key": "interior_outer_lemn",
+                "label": "Holz (€/m²)",
+                "unit": "€/m²",
+                "value": 55
+              },
+              {
+                "key": "interior_outer_fibrociment",
+                "label": "Faserzement (€/m²)",
+                "unit": "€/m²",
+                "value": 42
+              },
+              {
+                "key": "interior_outer_mix",
                 "label": "Mix (€/m²)",
                 "unit": "€/m²",
                 "value": 45

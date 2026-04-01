@@ -53,7 +53,7 @@ describe('Preisdatenbank – acoperire completă', () => {
       'Energieeffizienz & Heizung',
     ]
 
-    expectedSectionTitles.forEach((title, index) => {
+    expectedSectionTitles.forEach((title) => {
       it(`secțiunea "${title}" există și are subsections`, () => {
         const section = priceSections.find((s) => s.title === title)
         expect(section).toBeDefined()
@@ -137,6 +137,8 @@ describe('Preisdatenbank – acoperire completă', () => {
       'acces_santier_leicht_factor',
       'unit_price_keller_nutzkeller',
       'window_2_fach_price',
+      'interior_outer_tencuiala',
+      'sliding_door_standard_price',
       'door_interior_standard',
       'garage_door_sektional_standard_stueck',
       'wandaufbau_aussen_clt_35',
@@ -154,6 +156,60 @@ describe('Preisdatenbank – acoperire completă', () => {
       for (const key of engineKeys) {
         expect(allIds.has(key)).toBe(true)
       }
+    })
+  })
+
+  describe('Schiebetür', () => {
+    it('formularul întreabă tipul de Schiebetür', () => {
+      const step = holzbauSchema.steps.find((s) => s.key === 'ferestreUsi')
+      const field = step?.fields.find((f) => 'name' in f && f.name === 'slidingDoorType')
+      expect(field).toBeDefined()
+      expect(field?.tag).toBe('sliding_door_type')
+      expect(field?.options).toEqual([
+        'Standard',
+        'Hebeschiebetür',
+        'Panorama',
+        'Aluminium Premium',
+      ])
+    })
+
+    it('Preisdatenbank conține cardul Schiebetüren', () => {
+      const section = priceSections.find((s) => s.title === 'Fenster & Türen')
+      const card = section?.subsections.find((sub) => sub.title === 'Schiebetüren')
+      expect(card).toBeDefined()
+      expect(card?.fieldTag).toBe('sliding_door_type')
+      expect(card?.variables.map((v) => v.id)).toEqual([
+        'sliding_door_standard_price',
+        'sliding_door_hebeschiebetuer_price',
+        'sliding_door_panorama_price',
+        'sliding_door_aluminium_premium_price',
+      ])
+    })
+  })
+
+  describe('Innenausbau split', () => {
+    it('Preisdatenbank conține cardurile pentru Innenwände și Außenwände', () => {
+      const section = priceSections.find((s) => s.title === 'Materialien & Ausbaustufe')
+      const innerCard = section?.subsections.find((sub) => sub.title === 'Innenausbau Innenwände')
+      const outerCard = section?.subsections.find((sub) => sub.title === 'Innenausbau Außenwände')
+
+      expect(innerCard).toBeDefined()
+      expect(innerCard?.fieldTag).toBe('interior_finish_interior_walls')
+      expect(innerCard?.variables.map((v) => v.id)).toEqual([
+        'interior_tencuiala',
+        'interior_lemn',
+        'interior_fibrociment',
+        'interior_mix',
+      ])
+
+      expect(outerCard).toBeDefined()
+      expect(outerCard?.fieldTag).toBe('interior_finish_exterior_walls')
+      expect(outerCard?.variables.map((v) => v.id)).toEqual([
+        'interior_outer_tencuiala',
+        'interior_outer_lemn',
+        'interior_outer_fibrociment',
+        'interior_outer_mix',
+      ])
     })
   })
 })
