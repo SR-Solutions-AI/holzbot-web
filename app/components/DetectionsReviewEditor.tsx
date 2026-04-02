@@ -19,6 +19,7 @@ import {
   Check,
   X,
   Undo2,
+  GripVertical,
 } from 'lucide-react'
 import { DetectionsPolygonCanvas, type Point, type RoomPolygon, type DoorRect } from './DetectionsPolygonCanvas'
 import {
@@ -27,6 +28,7 @@ import {
   type RoofSurfaceTab,
 } from './RoofReviewEditor'
 import { apiFetch } from '../lib/supabaseClient'
+import { displayFloorTabLabelDe } from '@/lib/displayFloorTabLabelDe'
 
 /** Unire vârfuri consecutive foarte apropiate (în px imagine) – la randarea poligoanelor prima dată. */
 const MERGE_VERTEX_DIST_PX = 14
@@ -69,6 +71,18 @@ type PlanData = {
 type DoorType = 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
 const round2 = (v: number) => Math.round(v * 100) / 100
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function isValidFloorPlanPerm(perm: unknown, n: number): perm is number[] {
+  if (!Array.isArray(perm) || perm.length !== n || n === 0) return false
+  const ints = perm.map((x) => Math.round(Number(x)))
+  if (ints.some((x) => !Number.isFinite(x))) return false
+  if (new Set(ints).size !== n) return false
+  const sorted = [...ints].sort((a, b) => a - b)
+  for (let i = 0; i < n; i++) {
+    if (sorted[i] !== i) return false
+  }
+  return true
+}
 const isTooManyRequestsError = (err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err ?? '')
   return /too many requests|throttle/i.test(msg)
@@ -239,6 +253,12 @@ export function DetectionsReviewEditor({
   const [tabPerPlan, setTabPerPlan] = useState<Record<number, ReviewTab>>({})
   const [plansData, setPlansData] = useState<PlanData[]>([])
   const [floorLabels, setFloorLabels] = useState<string[]>([])
+  /** Permutation: index from bottom (0 = lowest floor) → raster/plan index. PDF & tabs use this order (top tab = lowest floor). */
+  const [floorPlanOrder, setFloorPlanOrder] = useState<number[]>([])
+  const [floorOrderDraft, setFloorOrderDraft] = useState<number[]>([])
+  const [reorderFloorsMode, setReorderFloorsMode] = useState(false)
+  const [dragFromDisplayIdx, setDragFromDisplayIdx] = useState<number | null>(null)
+  const floorPlanOrderRef = useRef<number[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedPolygonIndex, setSelectedPolygonIndex] = useState<number | null>(null)
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
@@ -260,6 +280,10 @@ export function DetectionsReviewEditor({
   useEffect(() => {
     plansDataRef.current = plansData
   }, [plansData])
+
+  useEffect(() => {
+    floorPlanOrderRef.current = floorPlanOrder
+  }, [floorPlanOrder])
 
   const pushHistory = useCallback(() => {
     if (skipNextPushRef.current) {
@@ -324,6 +348,7 @@ export function DetectionsReviewEditor({
           const res = (await apiFetch(`/offers/${offerId}/compute/detections-review-data?ts=${Date.now()}`)) as {
             plans?: PlanData[]
             floorLabels?: string[]
+            floorPlanOrder?: number[]
           }
           const plans = Array.isArray(res?.plans) ? res.plans : []
           const normalized = plans.map((p) => ({
@@ -344,6 +369,12 @@ export function DetectionsReviewEditor({
           lastPlans = normalized
           if (cancelled) return
           setFloorLabels(Array.isArray(res?.floorLabels) ? res.floorLabels : [])
+          const nl = normalized.length
+          const apiPerm = nl > 0 && isValidFloorPlanPerm(res?.floorPlanOrder, nl) ? (res!.floorPlanOrder as number[]) : null
+          const initialOrder = nl > 0 ? (apiPerm ?? Array.from({ length: nl }, (_, i) => i)) : []
+          setFloorPlanOrder(initialOrder)
+          setFloorOrderDraft(initialOrder)
+          floorPlanOrderRef.current = initialOrder
           if (normalized.length > 0 || attempt === 11) {
             setPlansData(normalized)
             setLoading(false)
@@ -372,9 +403,15 @@ export function DetectionsReviewEditor({
   const pendingAutosaveRef = useRef(false)
   const lastSavedPayloadRef = useRef<string>('')
   const buildDetectionsPayload = useCallback((snapshot: PlanData[]) => {
-    return JSON.stringify({
+    const ord = floorPlanOrderRef.current
+    const n = snapshot.length
+    const body: { plans: { rooms: RoomPolygon[]; doors: DoorRect[] }[]; floorPlanOrder?: number[] } = {
       plans: snapshot.map((p) => ({ rooms: p.rooms, doors: p.doors })),
-    })
+    }
+    if (n > 0 && ord.length === n && isValidFloorPlanPerm(ord, n)) {
+      body.floorPlanOrder = ord
+    }
+    return JSON.stringify(body)
   }, [])
   const persistDetectionsPayload = useCallback(async (payload: string): Promise<boolean> => {
     if (!offerId) return false
@@ -442,7 +479,7 @@ export function DetectionsReviewEditor({
     return () => {
       if (detSaveDebounceRef.current) clearTimeout(detSaveDebounceRef.current)
     }
-  }, [plansData, offerId, loading, saveDetectionsToServer])
+  }, [plansData, floorPlanOrder, offerId, loading, saveDetectionsToServer])
 
   const setRooms = useCallback((planIdx: number, rooms: RoomPolygon[]) => {
     setPlansData((prev) => {
@@ -471,6 +508,14 @@ export function DetectionsReviewEditor({
     await roofEditorRef.current?.flushSave()
     let saved = true
     if (plansData.length > 0) {
+      if (reorderFloorsMode && isValidFloorPlanPerm(floorOrderDraft, plansData.length)) {
+        const next = [...floorOrderDraft]
+        floorPlanOrderRef.current = next
+        setFloorPlanOrder(next)
+        setFloorOrderDraft(next)
+        setReorderFloorsMode(false)
+        setDragFromDisplayIdx(null)
+      }
       saved = await saveDetectionsToServer(true)
       if (!saved) {
         await sleep(900)
@@ -505,7 +550,7 @@ export function DetectionsReviewEditor({
       // roof flag best-effort
     }
     await onConfirm()
-  }, [offerId, plansData, onConfirm, saveDetectionsToServer])
+  }, [offerId, plansData, onConfirm, saveDetectionsToServer, reorderFloorsMode, floorOrderDraft])
 
   const handleRemoveSelected = useCallback((index?: number) => {
     const idx = index ?? selectedPolygonIndex
@@ -847,14 +892,137 @@ export function DetectionsReviewEditor({
       */}
       <div className="grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-x-3 px-2 pt-1 pb-1 min-w-0">
         <div className="flex min-h-0 min-w-0 flex-col items-start justify-center gap-1 self-stretch">
-          {!loading && n > 1 && (plansData.length > 0 || roofOnlyOffer) && (
-            <div className="flex w-fit max-w-full flex-col items-stretch gap-1" role="tablist" aria-label="Etage wählen">
+          {!loading && n > 1 && (plansData.length > 0 || roofOnlyOffer) && !roofOnlyOffer && (
+            <div className="flex w-fit max-w-full flex-col items-stretch gap-2">
+              <div
+                className="flex w-fit max-w-full flex-col-reverse items-stretch gap-1"
+                role="tablist"
+                aria-label="Etage wählen"
+              >
+                {(reorderFloorsMode ? floorOrderDraft : floorPlanOrder).map((planIdx, displayPos) => {
+                  const label = displayFloorTabLabelDe(floorLabels[planIdx] ?? `Plan ${planIdx + 1}`)
+                  const isActive = planIndexClamped === planIdx
+                  return (
+                    <div
+                      key={`floor-tab-wrap-${planIdx}-${displayPos}`}
+                      className="flex items-stretch gap-1 min-w-0"
+                      onDragOver={reorderFloorsMode ? (e) => e.preventDefault() : undefined}
+                      onDrop={
+                        reorderFloorsMode
+                          ? (e) => {
+                              e.preventDefault()
+                              const from = dragFromDisplayIdx
+                              setDragFromDisplayIdx(null)
+                              if (from === null || from === displayPos) return
+                              setFloorOrderDraft((prev) => {
+                                const next = [...prev]
+                                const [removed] = next.splice(from, 1)
+                                next.splice(displayPos, 0, removed)
+                                return next
+                              })
+                            }
+                          : undefined
+                      }
+                    >
+                      {reorderFloorsMode && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          onDragStart={() => setDragFromDisplayIdx(displayPos)}
+                          onDragEnd={() => setDragFromDisplayIdx(null)}
+                          className="shrink-0 flex items-center justify-center px-1 rounded-md border border-white/15 text-sand/60 cursor-grab active:cursor-grabbing hover:bg-white/10"
+                          title="Ziehen zum Sortieren"
+                          aria-label="Stockwerk verschieben"
+                        >
+                          <GripVertical size={16} />
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        onClick={() => {
+                          setPlanIndex(planIdx)
+                          setSelectedPolygonIndex(null)
+                          setNewPolygonPoints(null)
+                          if (tool === 'add') setTool('select')
+                        }}
+                        className={`flex-1 min-w-0 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-left whitespace-nowrap transition-colors ${
+                          isActive
+                            ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50'
+                            : 'text-sand/80 border border-white/10 hover:bg-white/5'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              <label className="flex items-start gap-2 text-sand/80 text-xs cursor-pointer select-none max-w-[220px]">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-white/30"
+                  checked={reorderFloorsMode}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    if (on) {
+                      setFloorOrderDraft([...floorPlanOrder])
+                      setReorderFloorsMode(true)
+                    } else {
+                      setFloorOrderDraft([...floorPlanOrder])
+                      setReorderFloorsMode(false)
+                      setDragFromDisplayIdx(null)
+                    }
+                  }}
+                />
+                <span>Reihenfolge der Stockwerke ändern</span>
+              </label>
+              {reorderFloorsMode && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = [...floorOrderDraft]
+                      if (!isValidFloorPlanPerm(next, n)) return
+                      floorPlanOrderRef.current = next
+                      setFloorPlanOrder(next)
+                      setReorderFloorsMode(false)
+                      setDragFromDisplayIdx(null)
+                      await saveDetectionsToServer(true)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#FF9F0F] text-white hover:brightness-110"
+                  >
+                    Speichern
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFloorOrderDraft([...floorPlanOrder])
+                      setReorderFloorsMode(false)
+                      setDragFromDisplayIdx(null)
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border border-white/25 text-sand/90 hover:bg-white/10"
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {!loading && n > 1 && roofOnlyOffer && (
+            <div
+              className="flex w-fit max-w-full flex-col-reverse items-stretch gap-1"
+              role="tablist"
+              aria-label="Etage wählen"
+            >
               {Array.from({ length: n }).map((_, i) => {
-                const label = floorLabels[i] ?? `Plan ${i + 1}`
+                const label = displayFloorTabLabelDe(floorLabels[i] ?? `Plan ${i + 1}`)
                 const isActive = planIndexClamped === i
                 return (
                   <button
-                    key={`floor-tab-${i}`}
+                    key={`floor-tab-roof-${i}`}
                     type="button"
                     role="tab"
                     aria-selected={isActive}
