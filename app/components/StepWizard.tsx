@@ -7,6 +7,7 @@ import { apiFetch } from '../lib/supabaseClient'
 import { inferOfferFlow } from '../lib/offerFlow'
 import { buildFormStepsFromJson, buildPriceSectionsFromFormStepsJson } from '../../lib/buildFormFromJson'
 import { mergeSelectOptions } from '../../lib/mergeSelectOptions'
+import { adaptCurrencyCopy, type DisplayCurrency, normalizeDisplayCurrency } from '../../lib/displayCurrency'
 import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
 import { type Field, formStepsDachstuhl } from '../dashboard/formConfig'
 import { CheckCircle2, ChevronLeft, ChevronRight, ChevronDown, Loader2, AlertTriangle, X } from 'lucide-react'
@@ -22,6 +23,74 @@ type Errors = Record<string, string | undefined>
 
 // Timpul minim (în ms) pentru care afișăm animația de loading/progres
 const MIN_ANIMATION_TIME = 5000;
+
+/** Etape care apar în log după ce utilizatorul a confirmat editorul de detecții (refresh: nu mai redeschidem editorul). */
+const STAGES_AFTER_DETECTIONS_REVIEW = new Set([
+  'scale_flood',
+  'exterior_doors',
+  'count_objects',
+  'measure_objects',
+  'perimeter',
+  'area',
+  'roof',
+  'pricing',
+  'offer_generation',
+  'pdf_generation',
+  'computation_complete',
+])
+const STAGES_AFTER_ROOF_REVIEW = new Set(['pricing', 'offer_generation', 'pdf_generation', 'computation_complete'])
+
+type CalcEventLite = {
+  id?: number
+  level?: string
+  message?: string
+  payload?: { files?: unknown[] }
+}
+
+function inferReviewCompletionFromCalcEvents(items: CalcEventLite[]): {
+  detectionsReviewPassed: boolean
+  roofReviewPassed: boolean
+} {
+  const sorted = [...items]
+    .filter((e): e is CalcEventLite & { id: number } => typeof e.id === 'number')
+    .sort((a, b) => a.id - b.id)
+
+  let maxDr = -1
+  let maxAfterDr = -1
+  let maxRoof = -1
+  let maxAfterRoof = -1
+
+  for (const ev of sorted) {
+    const id = ev.id
+    const match = ev.message?.match(/^\s*\[([^\]]+)\]/)
+    const stage = match?.[1]?.trim() ?? ''
+    const hasFiles = Array.isArray(ev.payload?.files) && ev.payload.files.length > 0
+
+    if (stage === 'detections_review' && hasFiles) {
+      maxDr = Math.max(maxDr, id)
+    }
+    if (maxDr >= 0 && id > maxDr) {
+      if (STAGES_AFTER_DETECTIONS_REVIEW.has(stage)) {
+        maxAfterDr = Math.max(maxAfterDr, id)
+      }
+      if (stage === 'detections') {
+        maxAfterDr = Math.max(maxAfterDr, id)
+      }
+    }
+
+    if (stage === 'roof' && hasFiles) {
+      maxRoof = Math.max(maxRoof, id)
+    }
+    if (maxRoof >= 0 && id > maxRoof && STAGES_AFTER_ROOF_REVIEW.has(stage)) {
+      maxAfterRoof = Math.max(maxAfterRoof, id)
+    }
+  }
+
+  return {
+    detectionsReviewPassed: maxDr >= 0 && maxAfterDr > maxDr,
+    roofReviewPassed: maxRoof >= 0 && maxAfterRoof > maxRoof,
+  }
+}
 
 /** Ofertă doar acoperiș (Dachstuhl): meta, wizard_package sau tip ofertă slug. */
 function isRoofOnlyOfferFromMeta(
@@ -600,6 +669,8 @@ export default function StepWizard() {
   const [computing, setComputing] = useState(false)
   const [computeFailed, setComputeFailed] = useState(false)
   const [computeRunId, setComputeRunId] = useState<string | null>(null)
+  /** Run-ul curent pentru care acceptăm offer:pdf-ready (evită PDF/congrats din rulare anterioară). */
+  const pdfReadyRunIdRef = useRef<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [computeStartTime, setComputeStartTime] = useState<number | null>(null)
 
@@ -613,6 +684,9 @@ export default function StepWizard() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
 
   const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'neubau' | null>(null)
+  /** După „Mengenermittlung“: alegere Neubau vs Dachstuhl (fără formular complet, doar Upload + Editor + PDF măsurători). */
+  const [packagePickerMengenSub, setPackagePickerMengenSub] = useState(false)
+  const [measurementsOnlyFlow, setMeasurementsOnlyFlow] = useState(false)
   /** Editor verificare detecții: blueprint + overlay (camere, uși) – afișat în loc de GIF până la Approve */
   const [showDetectionsReview, setShowDetectionsReview] = useState(false)
   const [reviewImages, setReviewImages] = useState<Array<{ url: string; caption?: string }>>([])
@@ -627,12 +701,16 @@ export default function StepWizard() {
   const [paramLabelOverrides, setParamLabelOverrides] = useState<Record<string, string>>({})
   /** Chei ascunse în Preisdatenbank – nu le afișăm în formular (select-uri / opțiuni). */
   const [hiddenKeysForm, setHiddenKeysForm] = useState<Set<string>>(new Set())
+  /** Währung nur Anzeige (EUR/CHF) – gleiche Zahlen wie in Preisdatenbank/PDF. */
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('EUR')
 
   const lastProcessedCreationId = useRef<number>(0)
   const activeCreationPromise = useRef<Promise<string> | null>(null)
   const pendingOfferTypeIdRef = useRef<string | null>(null)
   /** Card „Dachstuhl“: ofertă doar acoperiș (meta + tip ofertă) */
   const roofOnlyOfferRef = useRef(false)
+  /** Mengenermittlung-only: meta.measurements_only_offer cât mai devreme pentru eticheta din listă. */
+  const measurementsOnlyFlowRef = useRef(false)
   /** Prevent reopening detections editor after it was approved in current run. */
   const detectionsReviewApprovedRef = useRef(false)
   /** Prevent reopening roof editor after it was approved in current run. */
@@ -658,6 +736,9 @@ export default function StepWizard() {
     window.history.replaceState(null, '', url.toString())
   }, [])
   useEffect(() => { offerIdRef.current = offerId }, [offerId])
+  useEffect(() => {
+    measurementsOnlyFlowRef.current = measurementsOnlyFlow
+  }, [measurementsOnlyFlow])
 
   useEffect(() => {
     apiFetch('/offers/types')
@@ -826,6 +907,10 @@ export default function StepWizard() {
       .replace(/\s*\(\s*€\/m²\s*\)\s*$/i, '')
       .replace(/\s*\(\s*€\s*\)\s*$/i, '')
       .replace(/\s*\(\s*€\/Stück\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/m²\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/Stück\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/m\s*\)\s*$/i, '')
       .replace(/\s*\(\s*Faktor\s*\)\s*$/i, '')
       .replace(/\s*\(\s*€\/m\s*\)\s*$/i, '')
       .trim() || label
@@ -901,16 +986,43 @@ export default function StepWizard() {
     setLoadingForm(false)
   }, [formStepsFromJson])
 
+  useEffect(() => {
+    void apiFetch('/tenant-config')
+      .then((c: unknown) => {
+        const cfg = c as { displayCurrency?: string } | null
+        setDisplayCurrency(normalizeDisplayCurrency(cfg?.displayCurrency))
+      })
+      .catch(() => {})
+    const onSaved = () => {
+      void apiFetch('/tenant-config')
+        .then((c: unknown) => {
+          const cfg = c as { displayCurrency?: string } | null
+          setDisplayCurrency(normalizeDisplayCurrency(cfg?.displayCurrency))
+        })
+        .catch(() => {})
+    }
+    window.addEventListener('tenant-config:saved', onSaved)
+    return () => window.removeEventListener('tenant-config:saved', onSaved)
+  }, [])
+
   // 1b. Când user alege pachet (Dachstuhl vs Neubau/Mengen), folosim flow-ul corespunzător
   useEffect(() => {
-    if (selectedPackage === 'dachstuhl') {
+    if (measurementsOnlyFlow && selectedPackage === 'dachstuhl') {
+      const uploadOnly = (formStepsDachstuhl as any[]).filter((s) => s.key === 'upload')
+      setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[]))
+      setIdx(0)
+    } else if (measurementsOnlyFlow && selectedPackage === 'neubau') {
+      const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
+      setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsFromJson as any[]))
+      setIdx(0)
+    } else if (selectedPackage === 'dachstuhl') {
       setDynamicSteps(formStepsDachstuhl as any[])
       setIdx(0)
     } else if ((selectedPackage === 'neubau' || selectedPackage === 'mengen') && formStepsFromJson.length > 0) {
       setDynamicSteps(formStepsFromJson as any[])
       setIdx(0)
     }
-  }, [selectedPackage, formStepsFromJson])
+  }, [measurementsOnlyFlow, selectedPackage, formStepsFromJson])
 
   const fetchPricingParameters = useCallback(() => {
     // Întotdeauna reîmprospătăm datele din Preisdatenbank (indiferent de pachet), ca formularul să reflecte starea actuală
@@ -983,12 +1095,15 @@ export default function StepWizard() {
       setShowErrors(false)
       setValidationError(null)
       setPdfUrl(null)
+      pdfReadyRunIdRef.current = null
       setComputing(false)
       setComputeFailed(false)
       setComputeRunId(null)
       setComputeStartTime(null)
       setSaveStatus('idle')
       setSelectedPackage(null)
+      setPackagePickerMengenSub(false)
+      setMeasurementsOnlyFlow(false)
       roofOnlyOfferRef.current = false
       setActiveRoofOnlyOffer(false)
       creatingRef.current = false
@@ -1014,6 +1129,7 @@ export default function StepWizard() {
       roofReviewApprovedRef.current = false
       setOfferId(detail.offerId)
       offerIdRef.current = detail.offerId
+      pdfReadyRunIdRef.current = detail.runId
       setComputing(true)
       setComputeRunId(detail.runId)
       setComputeStartTime(Date.now())
@@ -1051,8 +1167,10 @@ export default function StepWizard() {
   // 4. PDF Ready Listener
   useEffect(() => {
     const onReady = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { offerId?: string; pdfUrl?: string }
+      const detail = (e as CustomEvent).detail as { offerId?: string; pdfUrl?: string; runId?: string }
       if (!detail?.pdfUrl) return
+      const evRun = String(detail.runId || '').trim()
+      if (evRun && pdfReadyRunIdRef.current && evRun !== pdfReadyRunIdRef.current) return
       if (offerId && detail.offerId && offerId !== detail.offerId) return
       if (detail.offerId) {
         const fromUrl =
@@ -1071,6 +1189,7 @@ export default function StepWizard() {
       const elapsed = computeStartTime ? now - computeStartTime : MIN_ANIMATION_TIME
       const remainingTime = Math.max(0, MIN_ANIMATION_TIME - elapsed)
       const oid = detail.offerId
+      const expectedRunId = (detail as { runId?: string }).runId ?? pdfReadyRunIdRef.current
 
       setTimeout(() => {
         if (oid) {
@@ -1079,9 +1198,11 @@ export default function StepWizard() {
           if (fromUrl != null && fromUrl !== oid) return
           if (fromUrl == null && offerIdRef.current !== oid) return
         }
+        if (expectedRunId && pdfReadyRunIdRef.current && expectedRunId !== pdfReadyRunIdRef.current) return
         setPdfUrl(detail.pdfUrl || null)
         setComputing(false)
         setComputeRunId(null)
+        pdfReadyRunIdRef.current = null
         setComputeStartTime(null)
         window.dispatchEvent(new Event('offers:refresh'))
       }, remainingTime)
@@ -1098,6 +1219,7 @@ export default function StepWizard() {
       setComputeFailed(true)
       setComputing(false)
       setComputeRunId(null)
+      pdfReadyRunIdRef.current = null
     }
     window.addEventListener('offer:compute-failed', onFailed as EventListener)
     return () => window.removeEventListener('offer:compute-failed', onFailed as EventListener)
@@ -1199,28 +1321,33 @@ export default function StepWizard() {
           const stage = match?.[1]?.trim()
           const files = (ev.payload?.files ?? []).filter((f) => typeof f?.url === 'string' && f.url.length > 0) as Array<{ url: string; caption?: string }>
 
+          // Dacă stream-ul a trecut deja de review, nu redeschidem editorul la refresh.
+          if ([
+            'scale_flood', 'detections', 'exterior_doors', 'count_objects', 'measure_objects',
+            'perimeter', 'area', 'roof', 'pricing', 'offer_generation', 'pdf_generation', 'computation_complete',
+          ].includes(stage || '')) {
+            detectionsReviewApprovedRef.current = true
+            setShowDetectionsReview(false)
+          }
+          if (['pricing', 'offer_generation', 'pdf_generation', 'computation_complete'].includes(stage || '')) {
+            roofReviewApprovedRef.current = true
+            setShowDetectionsReview(false)
+          }
+
           if (stage === 'detections_review') {
             if (detectionsReviewApprovedRef.current) continue
+            if (files.length === 0) continue
             window.dispatchEvent(new CustomEvent('offer:detections-review-start'))
-            if (files.length > 0) {
-              setReviewImages(files)
-              setPlanReviewImages(files)
-            }
-            const hasFallback = planReviewImages.length > 0 || reviewImages.length > 0
-            if (files.length > 0 || hasFallback) {
-              setShowDetectionsReview(true)
-            }
+            setReviewImages(files)
+            setPlanReviewImages(files)
+            setShowDetectionsReview(true)
           }
           if (stage === 'roof') {
             if (roofReviewApprovedRef.current) continue
+            if (files.length === 0) continue
             window.dispatchEvent(new CustomEvent('offer:roof-review-start'))
-            if (files.length > 0) {
-              setRoofReviewImages(files)
-            }
-            const hasFallback = planReviewImages.length > 0 || reviewImages.length > 0
-            if (files.length > 0 || hasFallback) {
-              setShowDetectionsReview(true)
-            }
+            setRoofReviewImages(files)
+            setShowDetectionsReview(true)
           }
 
           if (ev.level === 'error') {
@@ -1233,7 +1360,7 @@ export default function StepWizard() {
       } catch (_) {}
     }, POLL_INTERVAL)
     return () => clearInterval(iv)
-  }, [computing, computeRunId, computeFailed, planReviewImages.length, reviewImages.length])
+  }, [computing, computeRunId, computeFailed])
 
   // 4d. Fallback: poll offer status (failed or ready without PDF)
   // La restaurare după refresh nu rulăm check() imediat, ca să nu afișăm PDF-ul unei rulări anterioare dacă offer.status e încă 'ready'.
@@ -1257,6 +1384,10 @@ export default function StepWizard() {
           return
         }
         if (status === 'ready') {
+          if (typeof window !== 'undefined') {
+            const uRun = new URL(window.location.href).searchParams.get('runId')
+            if (computeRunId && uRun && uRun !== computeRunId) return
+          }
           const exportRes = await apiFetch(`/offers/${offerId}/export-url`).catch(() => null) as { url?: string; download_url?: string; pdf?: string } | null
           if (offerIdRef.current !== oid) return
           if (typeof window !== 'undefined') {
@@ -1267,7 +1398,11 @@ export default function StepWizard() {
           if (iv) clearInterval(iv)
           iv = null
           if (url) {
-            window.dispatchEvent(new CustomEvent('offer:pdf-ready', { detail: { offerId: oid, pdfUrl: url } }))
+            window.dispatchEvent(
+              new CustomEvent('offer:pdf-ready', {
+                detail: { offerId: oid, pdfUrl: url, runId: computeRunId || undefined },
+              }),
+            )
           } else {
             setComputeFailed(true)
             setComputing(false)
@@ -1285,7 +1420,7 @@ export default function StepWizard() {
       clearTimeout(timeout)
       if (iv) clearInterval(iv)
     }
-  }, [computing, offerId, pdfUrl, computeFailed])
+  }, [computing, offerId, pdfUrl, computeFailed, computeRunId])
 
   // 5. Offer Selected Listener — doar setăm offerId; NU suprascriem selectedPackage (altfel flow Dachstuhl s-ar transforma în Neubau după primul pas)
   useEffect(() => {
@@ -1307,6 +1442,8 @@ export default function StepWizard() {
       stepLoadNonceRef.current += 1
       // Clean current wizard state before loading the newly selected offer
       setSelectedPackage(null)
+      setPackagePickerMengenSub(false)
+      setMeasurementsOnlyFlow(false)
       setDrafts({})
       setForm({})
       setErrors({})
@@ -1314,6 +1451,7 @@ export default function StepWizard() {
       setValidationError(null)
       setComputeFailed(false)
       setComputeRunId(null)
+      pdfReadyRunIdRef.current = null
       setPdfUrl(null)
       setComputing(false)
       setComputeStartTime(null)
@@ -1475,7 +1613,33 @@ export default function StepWizard() {
 
   // -- Helper Functions
   async function ensureOffer(): Promise<string> {
-    if (offerIdRef.current) return offerIdRef.current
+    if (offerIdRef.current) {
+      const oid = offerIdRef.current
+      try {
+        const cur = (await apiFetch(`/offers/${oid}`)) as {
+          meta?: Record<string, unknown>
+          offer?: { meta?: Record<string, unknown> }
+        }
+        const m = { ...(cur?.meta ?? cur?.offer?.meta ?? {}) }
+        let dirty = false
+        if (roofOnlyOfferRef.current) {
+          if (m.roof_only_offer !== true || m.wizard_package !== 'dachstuhl') dirty = true
+          m.roof_only_offer = true
+          m.wizard_package = 'dachstuhl'
+        }
+        if (measurementsOnlyFlowRef.current && m.measurements_only_offer !== true) {
+          m.measurements_only_offer = true
+          dirty = true
+        }
+        if (dirty) {
+          await apiFetch(`/offers/${oid}`, { method: 'PATCH', body: JSON.stringify({ meta: m }) })
+          window.dispatchEvent(new Event('offers:refresh'))
+        }
+      } catch (_) {
+        /* non-fatal */
+      }
+      return oid
+    }
     if (activeCreationPromise.current) return activeCreationPromise.current
 
     if (creatingRef.current) {
@@ -1503,11 +1667,19 @@ export default function StepWizard() {
               : { title: 'Ofertă nouă' }
           )
         })
+        const metaPatch: Record<string, unknown> = {}
         if (roofOnlyOfferRef.current) {
+          metaPatch.roof_only_offer = true
+          metaPatch.wizard_package = 'dachstuhl'
+        }
+        if (measurementsOnlyFlowRef.current) {
+          metaPatch.measurements_only_offer = true
+        }
+        if (Object.keys(metaPatch).length > 0) {
           try {
             await apiFetch(`/offers/${created.id}`, {
               method: 'PATCH',
-              body: JSON.stringify({ meta: { roof_only_offer: true, wizard_package: 'dachstuhl' } }),
+              body: JSON.stringify({ meta: metaPatch }),
             })
           } catch (_) {}
         }
@@ -1655,7 +1827,9 @@ export default function StepWizard() {
       }
 
       /* FINALIZARE */
+      setPdfUrl(null)
       const id = await ensureOffer()
+      window.dispatchEvent(new CustomEvent('offer:wizard-flush-feed', { detail: { offerId: id } }))
       const filesToUpload: { key: string, file: File }[] = []
       for (const key in form) {
         const val = form[key]
@@ -1706,13 +1880,19 @@ export default function StepWizard() {
       try {
         const cur = (await apiFetch(`/offers/${id}`)) as { meta?: Record<string, unknown>; offer?: { meta?: Record<string, unknown> } }
         const currentMeta = cur?.meta ?? cur?.offer?.meta ?? {}
-        const meta = { ...currentMeta, roof_only_offer: roofOnly, ...(roofOnly ? { wizard_package: 'dachstuhl' } : {}) }
+        const meta = {
+          ...currentMeta,
+          roof_only_offer: roofOnly,
+          ...(roofOnly ? { wizard_package: 'dachstuhl' } : {}),
+          ...(measurementsOnlyFlow ? { measurements_only_offer: true } : {}),
+        }
         await apiFetch(`/offers/${id}`, { method: 'PATCH', body: JSON.stringify({ meta }) })
       } catch (_) { /* meta merge best-effort */ }
 
       setActiveRoofOnlyOffer(roofOnly)
       const { run_id } = await apiFetch(`/offers/${id}/compute`, { method: 'POST', body: JSON.stringify({ payload: {} }), timeoutMs: 180_000 })
       setPdfUrl(null)
+      pdfReadyRunIdRef.current = run_id
       setComputeFailed(false)
       setComputing(true)
       setComputeStartTime(Date.now())
@@ -1720,7 +1900,7 @@ export default function StepWizard() {
       updateRunUrl(id, run_id)
       window.dispatchEvent(
         new CustomEvent('offer:compute-started', {
-          detail: { offerId: id, runId: run_id, flow: roofOnly ? 'dachstuhl' : 'neubau' },
+          detail: { offerId: id, runId: run_id, flow: roofOnly ? 'dachstuhl' : 'neubau', measurementsOnlyOffer: measurementsOnlyFlow },
         }),
       )
       window.dispatchEvent(new Event('offers:refresh'))
@@ -1762,12 +1942,16 @@ export default function StepWizard() {
     setValidationError(null)
     setComputeFailed(false)
     setComputeRunId(null)
+    pdfReadyRunIdRef.current = null
     setPdfUrl(null)
     setComputing(false)
     setComputeStartTime(null)
     setProcessStatus('')
     setSaveStatus('idle')
     setSelectedPackage(null)
+    setPackagePickerMengenSub(false)
+    setMeasurementsOnlyFlow(false)
+    measurementsOnlyFlowRef.current = false
     roofOnlyOfferRef.current = false
     setActiveRoofOnlyOffer(false)
     creatingRef.current = false
@@ -1941,64 +2125,156 @@ export default function StepWizard() {
             <SimplePdfViewer src={pdfUrl} className="w-full h-full rounded-xl" />
           </div>
         ) : showPackagePicker ? (
-          <div className="w-full flex justify-center px-2 page-enter">
-          <div className="w-full max-w-5xl mx-auto pt-6 px-1" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 justify-items-center items-stretch">
-                {/* 1) Mengenermittlung */}
-                <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
-                  <div className="flex items-center justify-center mb-3">
-                    <img src="/images/blueprint.png" alt="Mengenermittlung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+          <div className="w-full flex flex-1 min-h-0 flex-col justify-center px-2 page-enter">
+            <div
+              className="w-full max-w-5xl mx-auto px-1 relative flex-1 min-h-0 flex flex-col"
+              style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
+            >
+              <div
+                className={`absolute inset-0 flex items-center justify-center px-1 transition-all duration-300 ease-out ${
+                  packagePickerMengenSub
+                    ? 'opacity-0 scale-[0.97] pointer-events-none -translate-y-2'
+                    : 'opacity-100 scale-100 translate-y-0'
+                }`}
+                aria-hidden={packagePickerMengenSub}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 justify-items-center items-stretch w-full max-w-5xl">
+                  {/* 1) Mengenermittlung */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/blueprint.png" alt="Mengenermittlung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Mengenermittlung</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Nur Maß-/Mengen-PDF – ohne Preisangebot</div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        roofOnlyOfferRef.current = false
+                        setPackagePickerMengenSub(true)
+                      }}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    >
+                      Weiter
+                      <ChevronRight size={18} className="opacity-85" />
+                    </button>
                   </div>
-                  <div className="text-white font-extrabold text-lg text-center">Mengenermittlung</div>
-                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Ermittlung von Maßen für Hauspläne</div>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => { roofOnlyOfferRef.current = false; setSelectedPackage('mengen') }}
-                    className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                  >
-                    Kalkulation starten
-                    <ChevronRight size={18} className="opacity-85" />
-                  </button>
-                </div>
 
-                {/* 2) Dachstuhl */}
-                <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
-                  <div className="flex items-center justify-center mb-3">
-                    <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                  {/* 2) Dachstuhl */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Dachstühle</div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMeasurementsOnlyFlow(false)
+                        roofOnlyOfferRef.current = true
+                        setSelectedPackage('dachstuhl')
+                      }}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    >
+                      Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
+                    </button>
                   </div>
-                  <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
-                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Dachstühle</div>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => { roofOnlyOfferRef.current = true; setSelectedPackage('dachstuhl') }}
-                    className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                  >
-                    Kalkulation starten
-                    <ChevronRight size={18} className="opacity-85" />
-                  </button>
-                </div>
 
-                {/* 3) Neubau */}
-                <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
-                  <div className="flex items-center justify-center mb-3">
-                    <img src="/images/house.png" alt="Neubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                  {/* 3) Neubau */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] sm:col-span-2 lg:col-span-1">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/house.png" alt="Neubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Neubau</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Neubauten</div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMeasurementsOnlyFlow(false)
+                        roofOnlyOfferRef.current = false
+                        setSelectedPackage('neubau')
+                      }}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    >
+                      Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
+                    </button>
                   </div>
-                  <div className="text-white font-extrabold text-lg text-center">Neubau</div>
-                  <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Neubauten</div>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => { roofOnlyOfferRef.current = false; setSelectedPackage('neubau') }}
-                    className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                  >
-                    Kalkulation starten
-                    <ChevronRight size={18} className="opacity-85" />
-                  </button>
                 </div>
               </div>
-          </div>
+
+              <div
+                className={`flex flex-col flex-1 min-h-0 transition-all duration-300 ease-out ${
+                  packagePickerMengenSub
+                    ? 'opacity-100 scale-100 relative'
+                    : 'opacity-0 scale-[0.97] pointer-events-none absolute inset-0 translate-y-3'
+                }`}
+                aria-hidden={!packagePickerMengenSub}
+              >
+                <button
+                  type="button"
+                  onClick={() => setPackagePickerMengenSub(false)}
+                  className="absolute left-0 top-0 z-20 flex items-center gap-1.5 text-sm text-sand/80 hover:text-sand transition-colors py-1"
+                >
+                  <ChevronLeft size={18} />
+                  Zurück zur Auswahl
+                </button>
+                <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
+                  <p className="text-center text-sand/90 text-sm max-w-md mb-6">
+                    Projekttyp wählen – danach nur Plan hochladen und im Editor prüfen.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-[680px] justify-items-stretch items-stretch">
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Neubau Mengenermittlung</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = false
+                          setPackagePickerMengenSub(false)
+                          setSelectedPackage('neubau')
+                        }}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/roof-blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl Mengenermittlung</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = true
+                          setPackagePickerMengenSub(false)
+                          setSelectedPackage('dachstuhl')
+                        }}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         ) : (
           <div key={`${step.key}-${animKey}`} className={`wizard-card wizard-sunny ${dir === null ? 'card-initial' : dir === 'back' ? 'card-in-back' : 'card-in-next'}`}>
@@ -2048,10 +2324,12 @@ export default function StepWizard() {
                     optionValueToPriceKey={optionValueToPriceKey}
                     hiddenKeysForm={hiddenKeysForm}
                     preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
+                    displayCurrency={displayCurrency}
                   />
                 </div>
               ) : step.key === 'structuraCladirii' ? (
                 <BuildingStructureStep
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => {
                     ensureOffer().catch(() => {})
@@ -2091,6 +2369,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'wandaufbau' ? (
                 <WandaufbauStep
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
@@ -2104,6 +2383,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'wintergaertenBalkone' ? (
                 <WintergaertenBalkoneStep
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
@@ -2116,6 +2396,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'materialeFinisaj' ? (
                 <MaterialeFinisajStep
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
@@ -2129,6 +2410,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'bodenDeckeBelag' ? (
                 <BodenDeckeBelagStep
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => applyFormUpdate(step.key, v)}
                   errors={visibleErrors}
@@ -2142,6 +2424,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'projektdaten' ? (
                 <ProjektdatenStepContent
+                  displayCurrency={displayCurrency}
                   form={form}
                   setForm={(v) => applyFormUpdate('projektdaten', v)}
                   errors={visibleErrors}
@@ -2152,6 +2435,7 @@ export default function StepWizard() {
                 />
               ) : step.key === 'daemmungDachdeckung' && selectedPackage === 'dachstuhl' ? (
                 <DachOnlyDaemmungStepContent
+                  displayCurrency={displayCurrency}
                   form={form}
                   drafts={drafts}
                   setForm={(v) => applyFormUpdate(step.key, v)}
@@ -2182,6 +2466,7 @@ export default function StepWizard() {
                     optionValueToPriceKey={optionValueToPriceKey}
                     hiddenKeysForm={hiddenKeysForm}
                     preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
+                    displayCurrency={displayCurrency}
                   />
                 </div>
               ) : (
@@ -2200,6 +2485,7 @@ export default function StepWizard() {
                     errors={{}}
                     onEnter={onContinue}
                     preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
+                    displayCurrency={displayCurrency}
                   />
                 </div>
               )}
@@ -2344,6 +2630,7 @@ function ProjektdatenStepContent({
   preisdatenbankOptionsByTag = {},
   optionValueToPriceKey = {},
   paramLabelOverrides = {},
+  displayCurrency = 'EUR',
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
@@ -2352,10 +2639,11 @@ function ProjektdatenStepContent({
   preisdatenbankOptionsByTag?: Record<string, string[]>
   optionValueToPriceKey?: Record<string, Record<string, string>>
   paramLabelOverrides?: Record<string, string>
+  displayCurrency?: DisplayCurrency
 }) {
   const deckenInnenausbauOptions = preisdatenbankOptionsByTag['decke_innenausbau'] ?? ['Standard', 'Premium', 'Exklusiv']
   const displayDeckenInnenausbau = (opt: string) =>
-    paramLabelOverrides[optionValueToPriceKey['decke_innenausbau']?.[opt] ?? ''] ?? opt
+    adaptCurrencyCopy(paramLabelOverrides[optionValueToPriceKey['decke_innenausbau']?.[opt] ?? ''] ?? opt, displayCurrency)
 
   return (
     <div className="space-y-5">
@@ -2416,6 +2704,7 @@ function DachOnlyDaemmungStepContent({
   optionValueToPriceKey,
   hiddenKeysForm,
   preisdatenbankOptionsByTag,
+  displayCurrency = 'EUR',
 }: {
   form: Record<string, any>
   drafts: Drafts
@@ -2430,6 +2719,7 @@ function DachOnlyDaemmungStepContent({
   optionValueToPriceKey?: Record<string, Record<string, string>>
   hiddenKeysForm?: Set<string>
   preisdatenbankOptionsByTag?: Record<string, string[]>
+  displayCurrency?: DisplayCurrency
 }) {
   const projektumfang = (form.projektumfang || drafts?.projektdaten?.projektumfang || '').toString().trim()
   const includeDachstuhl = projektumfang === '' || projektumfang === 'Dachstuhl' || projektumfang === 'Dachstuhl + Dachdeckung'
@@ -2467,6 +2757,7 @@ function DachOnlyDaemmungStepContent({
       optionValueToPriceKey={optionValueToPriceKey}
       hiddenKeysForm={hiddenKeysForm}
       preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
+      displayCurrency={displayCurrency}
     />
   )
 }
@@ -2488,6 +2779,7 @@ function WandaufbauStep({
   hiddenKeysForm = new Set<string>(),
   tOption,
   preisdatenbankOptionsByTag = {},
+  displayCurrency = 'EUR',
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
@@ -2499,6 +2791,7 @@ function WandaufbauStep({
   hiddenKeysForm?: Set<string>
   tOption: (stepKey: string, fieldName: string, opt: string) => string
   preisdatenbankOptionsByTag?: Record<string, string[]>
+  displayCurrency?: DisplayCurrency
 }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -2510,8 +2803,16 @@ function WandaufbauStep({
 
   const außenOptions = preisdatenbankOptionsByTag['wandaufbau_aussen'] ?? []
   const innenOptions = preisdatenbankOptionsByTag['wandaufbau_innen'] ?? []
-  const displayAußen = (opt: string) => paramLabelOverrides[optionValueToPriceKey['wandaufbau_aussen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'außenwandeBeci', opt)
-  const displayInnen = (opt: string) => paramLabelOverrides[optionValueToPriceKey['wandaufbau_innen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'innenwandeBeci', opt)
+  const displayAußen = (opt: string) =>
+    adaptCurrencyCopy(
+      paramLabelOverrides[optionValueToPriceKey['wandaufbau_aussen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'außenwandeBeci', opt),
+      displayCurrency,
+    )
+  const displayInnen = (opt: string) =>
+    adaptCurrencyCopy(
+      paramLabelOverrides[optionValueToPriceKey['wandaufbau_innen']?.[opt] ?? ''] ?? tOption('wandaufbau', 'innenwandeBeci', opt),
+      displayCurrency,
+    )
 
   return (
     <div className="space-y-4">
@@ -2602,6 +2903,7 @@ function WintergaertenBalkoneStep({
   paramLabelOverrides = {},
   tOption,
   preisdatenbankOptionsByTag = {},
+  displayCurrency = 'EUR',
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
@@ -2612,6 +2914,7 @@ function WintergaertenBalkoneStep({
   paramLabelOverrides?: Record<string, string>
   tOption: (stepKey: string, fieldName: string, opt: string) => string
   preisdatenbankOptionsByTag?: Record<string, string[]>
+  displayCurrency?: DisplayCurrency
 }) {
   const hasWintergarden = form.hasWintergarden === true
   const hasBalkone = form.hasBalkone === true
@@ -2628,7 +2931,13 @@ function WintergaertenBalkoneStep({
             value={form.wintergartenTyp || ''}
             onChange={(v) => setForm(prev => ({ ...prev, wintergartenTyp: v }))}
             options={wintergartenOptions}
-            displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['wintergarten_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'wintergartenTyp', opt)}
+            displayFor={(opt) =>
+              adaptCurrencyCopy(
+                paramLabelOverrides[optionValueToPriceKey['wintergarten_type']?.[opt] ?? ''] ??
+                  tOption('wintergaertenBalkone', 'wintergartenTyp', opt),
+                displayCurrency,
+              )
+            }
           />
         </label>
       )}
@@ -2639,7 +2948,12 @@ function WintergaertenBalkoneStep({
             value={form.balkonTyp || ''}
             onChange={(v) => setForm(prev => ({ ...prev, balkonTyp: v }))}
             options={balkonOptions}
-            displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['balkon_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'balkonTyp', opt)}
+            displayFor={(opt) =>
+              adaptCurrencyCopy(
+                paramLabelOverrides[optionValueToPriceKey['balkon_type']?.[opt] ?? ''] ?? tOption('wintergaertenBalkone', 'balkonTyp', opt),
+                displayCurrency,
+              )
+            }
           />
         </label>
       )}
@@ -2665,6 +2979,7 @@ function BodenDeckeBelagStep({
   optionValueToPriceKey = {},
   hiddenKeysForm = new Set<string>(),
   preisdatenbankOptionsByTag = {},
+  displayCurrency = 'EUR',
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
@@ -2676,6 +2991,7 @@ function BodenDeckeBelagStep({
   optionValueToPriceKey?: Record<string, Record<string, string>>
   hiddenKeysForm?: Set<string>
   preisdatenbankOptionsByTag?: Record<string, string[]>
+  displayCurrency?: DisplayCurrency
 }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -2689,9 +3005,21 @@ function BodenDeckeBelagStep({
   const bodenaufbauOptions = preisdatenbankOptionsByTag['bodenaufbau'] ?? []
   const deckenaufbauOptions = preisdatenbankOptionsByTag['deckenaufbau'] ?? []
   const bodenbelagOptions = preisdatenbankOptionsByTag['bodenbelag'] ?? []
-  const displayBodenaufbau = (opt: string) => paramLabelOverrides[optionValueToPriceKey['bodenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenaufbau', opt)
-  const displayDeckenaufbau = (opt: string) => paramLabelOverrides[optionValueToPriceKey['deckenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'deckenaufbau', opt)
-  const displayBodenbelag = (opt: string) => paramLabelOverrides[optionValueToPriceKey['bodenbelag']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenbelag', opt)
+  const displayBodenaufbau = (opt: string) =>
+    adaptCurrencyCopy(
+      paramLabelOverrides[optionValueToPriceKey['bodenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenaufbau', opt),
+      displayCurrency,
+    )
+  const displayDeckenaufbau = (opt: string) =>
+    adaptCurrencyCopy(
+      paramLabelOverrides[optionValueToPriceKey['deckenaufbau']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'deckenaufbau', opt),
+      displayCurrency,
+    )
+  const displayBodenbelag = (opt: string) =>
+    adaptCurrencyCopy(
+      paramLabelOverrides[optionValueToPriceKey['bodenbelag']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenbelag', opt),
+      displayCurrency,
+    )
   return (
     <div className="space-y-4">
       <p className="text-sun/70 text-sm">Wählen Sie für jede Etage die passende Konstruktion und den entsprechenden Bodenaufbau entsprechend Ihrer Gebäudeplanung.</p>
@@ -2826,7 +3154,7 @@ function BodenDeckeBelagStep({
   )
 }
 
-function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; drafts: Drafts; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
+function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR' }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; drafts: Drafts; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
   const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
@@ -2845,11 +3173,15 @@ function MaterialeFinisajStep({ form, setForm, errors, drafts, customOptionsForm
     const isExterior = fieldName.startsWith('fatada')
     const isInteriorOuter = fieldName.startsWith('finisajInteriorAussen')
     const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : isInteriorOuter ? INTERIOR_OUTER_FINISH_KEY[opt] : INTERIOR_FINISH_KEY[opt]
-    if (key && paramLabelOverrides[key]) return paramLabelOverrides[key]
-    const tag = isExterior ? 'exterior_facade' : isInteriorOuter ? 'interior_finish_exterior_walls' : 'interior_finish_interior_walls'
-    const pk = optionValueToPriceKey[tag]?.[opt] ?? (!isExterior && !isInteriorOuter ? optionValueToPriceKey['interior_finish']?.[opt] : undefined)
-    if (pk && paramLabelOverrides[pk]) return paramLabelOverrides[pk]
-    return tOption('materialeFinisaj', fieldName, opt) || opt
+    let raw: string
+    if (key && paramLabelOverrides[key]) raw = paramLabelOverrides[key]
+    else {
+      const tag = isExterior ? 'exterior_facade' : isInteriorOuter ? 'interior_finish_exterior_walls' : 'interior_finish_interior_walls'
+      const pk = optionValueToPriceKey[tag]?.[opt] ?? (!isExterior && !isInteriorOuter ? optionValueToPriceKey['interior_finish']?.[opt] : undefined)
+      if (pk && paramLabelOverrides[pk]) raw = paramLabelOverrides[pk]
+      else raw = tOption('materialeFinisaj', fieldName, opt) || opt
+    }
+    return adaptCurrencyCopy(raw, displayCurrency)
   }
 
   return (
@@ -2914,7 +3246,7 @@ const FOUNDATION_OPTIONS = ['Kein Keller (nur Bodenplatte)', 'Keller (unbeheizt 
 const FLOOR_HEIGHT_OPTIONS = ['Standard (2,50 m)', 'Komfort (2,70 m)', 'Hoch (2,85+ m)'] as const
 const STAIR_TYPE_OPTIONS = ['Standard', 'Holz', 'Beton', 'Metall', 'Sonder'] as const
 
-function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {} }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]> }) {
+function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR' }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
   const addFloorBtnRef = useRef<HTMLButtonElement>(null)
   const [addFloorPos, setAddFloorPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 })
@@ -3106,14 +3438,18 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
 
       <div className="flex-1 min-w-0 relative z-10 space-y-4 !pb-0 !mb-0">
         <label className="flex flex-col gap-1" data-field="inaltimeEtaje">
-          <span className="wiz-label text-sun/90">{tFieldLabel('structuraCladirii', 'inaltimeEtaje', undefined)}</span>
+          <span className="wiz-label text-sun/90">
+            {adaptCurrencyCopy(tFieldLabel('structuraCladirii', 'inaltimeEtaje', undefined), displayCurrency)}
+          </span>
           <div className={errors.inaltimeEtaje ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
               value={inaltimeEtaje}
               onChange={(v) => setForm(prev => ({ ...prev, inaltimeEtaje: v }))}
               options={floorHeightOptions}
               placeholder="Wählen Sie eine Option"
-              displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['floor_height']?.[opt] ?? ''] ?? opt}
+              displayFor={(opt) =>
+                adaptCurrencyCopy(paramLabelOverrides[optionValueToPriceKey['floor_height']?.[opt] ?? ''] ?? opt, displayCurrency)
+              }
             />
           </div>
           {errors.inaltimeEtaje && <span className="text-xs text-orange-400">{errors.inaltimeEtaje}</span>}
@@ -3127,7 +3463,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
               onChange={(v) => setForm(prev => ({ ...prev, tipFundatieBeci: v }))}
               options={foundationOptions}
               placeholder="Wählen Sie eine Option"
-              displayFor={(opt) => paramLabelOverrides[optionValueToPriceKey['foundation_type']?.[opt] ?? ''] ?? opt}
+              displayFor={(opt) =>
+                adaptCurrencyCopy(paramLabelOverrides[optionValueToPriceKey['foundation_type']?.[opt] ?? ''] ?? opt, displayCurrency)
+              }
             />
           </div>
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
@@ -3235,7 +3573,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
 
         {hasFloorAboveGround && (
           <label className="flex flex-col gap-1" data-field="treppeTyp">
-            <span className="wiz-label text-sun/90">Treppentyp (Preis pro Stück)</span>
+            <span className="wiz-label text-sun/90">
+              {adaptCurrencyCopy('Treppentyp (Preis pro Stück)', displayCurrency)}
+            </span>
             <div className={errors.treppeTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
               <SelectSun
                 value={String(form.treppeTyp || (stairOptsEffective[0] ?? STAIR_TYPE_OPTIONS[0]))}
@@ -3244,7 +3584,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                 placeholder="Wählen Sie eine Option"
                 displayFor={(opt) => {
                   const key = optionValueToPriceKey['stairs_type']?.[opt]
-                  return key ? (paramLabelOverrides[key] ?? opt) : opt
+                  const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
+                  return adaptCurrencyCopy(raw, displayCurrency)
                 }}
               />
             </div>
@@ -3283,7 +3624,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
 
 function DynamicFields({
   stepKey, fields, form, setForm, onUpload, ensureOffer, errors, onEnter, customOptionsForm = {},
-  paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), preisdatenbankOptionsByTag = {}
+  paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), preisdatenbankOptionsByTag = {},
+  displayCurrency = 'EUR',
 }: {
   stepKey: string
   fields: Field[]
@@ -3298,8 +3640,10 @@ function DynamicFields({
   optionValueToPriceKey?: Record<string, Record<string, string>>
   hiddenKeysForm?: Set<string>
   preisdatenbankOptionsByTag?: Record<string, string[]>
+  displayCurrency?: DisplayCurrency
 }) {
-  
+  const fmt = (s: string) => adaptCurrencyCopy(s, displayCurrency)
+
   let currentFields = fields;
   if (stepKey === 'upload') {
       currentFields = fields.filter(f => f.name === 'planArhitectural' || f.name === 'planArhitectura');
@@ -3330,14 +3674,17 @@ function DynamicFields({
                     field={f as Extract<Field, { type: 'upload' }>}
                     files={form[f.name] || []}
                     onChange={(newFiles) => setForm(prev => ({ ...prev, [f.name]: newFiles }))}
+                    displayCurrency={displayCurrency}
                  />
              )
         }
 
         if (f.type === 'select') {
           const hasErr = !!errors[f.name]
-          const displayLabel = tFieldLabel(stepKey, f.name, f.label)
-          const displayPlaceholder = tPlaceholder(stepKey, f.name, ('placeholder' in f && (f as any).placeholder) ? (f as any).placeholder : undefined)
+          const displayLabel = fmt(tFieldLabel(stepKey, f.name, f.label))
+          const displayPlaceholder = fmt(
+            tPlaceholder(stepKey, f.name, ('placeholder' in f && (f as any).placeholder) ? (f as any).placeholder : undefined) ?? '',
+          )
           const rawVal = form[f.name]
           const selectValue = (rawVal != null && typeof rawVal === 'object' && 'value' in rawVal) ? String((rawVal as any).value) : (rawVal != null ? String(rawVal) : '')
 
@@ -3377,23 +3724,25 @@ function DynamicFields({
                       })
                     })()
                   }
-                  placeholder={displayPlaceholder ?? DE.common.selectPlaceholder}
+                  placeholder={(displayPlaceholder || DE.common.selectPlaceholder) as string}
                   displayFor={(opt) => {
                     const val = typeof opt === 'string' ? opt : optValue(opt)
                     const tag = (f as any).tag || FIELD_TAG_FALLBACK_BY_NAME[f.name]
                     const priceKey = tag && optionValueToPriceKey[tag]?.[val]
                     const override = priceKey && paramLabelOverrides[priceKey]
-                    if (override) return override
-                    if (isFireplaceField && fireplaceLabels[val]) return fireplaceLabels[val]
+                    if (override) return fmt(override)
+                    if (isFireplaceField && fireplaceLabels[val]) return fmt(fireplaceLabels[val])
                     const objLabel = typeof opt === 'object' && opt !== null && (opt as any).label != null && (opt as any).label !== '' ? String((opt as any).label) : null
-                    return objLabel ?? tOption(stepKey, f.name, val)
+                    return fmt(objLabel ?? tOption(stepKey, f.name, val))
                   }}
                 />
               </div>
               {hasErr && <span className="text-xs text-orange-400">{errors[f.name]}</span>}
               {isFireplaceField && form[f.name] && form[f.name] !== 'Kein Kamin' && (
                 <span className="text-xs text-sand/70 mt-1">
-                  *Schornstein wird dazugerechnet mit Anzahl der Stockwerke (4.500 € Standardpreis + 1.500 € pro Geschoss)
+                  {fmt(
+                    '*Schornstein wird dazugerechnet mit Anzahl der Stockwerke (4.500 € Standardpreis + 1.500 € pro Geschoss)',
+                  )}
                 </span>
               )}
             </label>
@@ -3401,7 +3750,7 @@ function DynamicFields({
         }
 
         if (f.type === 'bool') {
-          const displayLabel = tFieldLabel(stepKey, f.name, f.label)
+          const displayLabel = fmt(tFieldLabel(stepKey, f.name, f.label))
           return (
             <label key={f.name} className="flex items-center gap-2 mt-1" data-field={f.name}>
               <input
@@ -3432,9 +3781,10 @@ function DynamicFields({
           )
         }
 
-        const displayLabel = tFieldLabel(stepKey, f.name, f.label)
-        const displayPlaceholder =
-          tPlaceholder(stepKey, f.name, ('placeholder' in f && (f as any).placeholder) ? (f as any).placeholder : undefined)
+        const displayLabel = fmt(tFieldLabel(stepKey, f.name, f.label))
+        const displayPlaceholder = fmt(
+          tPlaceholder(stepKey, f.name, ('placeholder' in f && (f as any).placeholder) ? (f as any).placeholder : undefined) ?? '',
+        )
 
         const rawFieldVal = form[f.name]
         const inputValue = (typeof rawFieldVal === 'string' || typeof rawFieldVal === 'number') ? String(rawFieldVal) : ''
@@ -3469,8 +3819,20 @@ function DynamicFields({
   )
 }
 
-function SimpleUploadField({ stepKey, field, files, onChange }: { stepKey: string, field: Extract<Field, { type: 'upload' }>, files: File[], onChange: (f: File[]) => void }) {
-  const displayLabel = tFieldLabel(stepKey, field.name, field.label)
+function SimpleUploadField({
+  stepKey,
+  field,
+  files,
+  onChange,
+  displayCurrency = 'EUR',
+}: {
+  stepKey: string
+  field: Extract<Field, { type: 'upload' }>
+  files: File[]
+  onChange: (f: File[]) => void
+  displayCurrency?: DisplayCurrency
+}) {
+  const displayLabel = adaptCurrencyCopy(tFieldLabel(stepKey, field.name, field.label), displayCurrency)
   const [isDragging, setIsDragging] = useState(false) // Stare pentru efect vizual
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

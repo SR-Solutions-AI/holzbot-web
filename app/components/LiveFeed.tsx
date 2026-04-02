@@ -267,7 +267,18 @@ type TextItem = { kind: 'text'; stage: string; role: 'ai'|'formula'|'rezultat'; 
 type SpinnerItem = { kind: 'spinner'; stage: string; __id: string }
 type ImageItem = { kind: 'image'; stage: string; files: FeedFile[]; __id: string }
 type BreakItem = { kind: 'break'; stage: string; __id: string }
-type CongratsItem = { kind: 'congrats'; stage: 'final'; pdfUrl: string; offerId: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null; __id: string }
+type CongratsItem = {
+  kind: 'congrats'
+  stage: 'final'
+  pdfUrl: string
+  offerId: string
+  adminPdfUrl?: string | null
+  canDownloadAdminPdf?: boolean
+  roofMeasurementsPdfUrl?: string | null
+  /** Nur Maß-/Mengen-PDF, kein Angebots-PDF (meta.measurements_only_offer). */
+  measurementsOnlyOffer?: boolean
+  __id: string
+}
 type SyntheticItem = TextItem | SpinnerItem | ImageItem | BreakItem | CongratsItem
 type Group = { id: string; stage: string; startedAt: string; title: string; items: SyntheticItem[]; instant?: boolean }
 type Row = { kind: 'group'; id: string; group: Group } | { kind: 'gap'; id: string }
@@ -428,7 +439,9 @@ async function downloadPdfWithRefresh(
       if (!allow()) return
       const freshUrl =
         kind === 'roofMeasurements'
-          ? (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
+          ? fresh?.measurements_only_offer === true
+            ? (fresh?.url || fresh?.download_url || fresh?.pdf)
+            : (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
           : kind === 'admin'
             ? (fresh?.adminPdf?.download_url || fresh?.adminPdf?.url)
             : (fresh?.url || fresh?.download_url || fresh?.pdf)
@@ -467,7 +480,9 @@ async function downloadPdfWithRefresh(
         if (!allow()) return
         const freshUrl =
           kind === 'roofMeasurements'
-            ? (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
+            ? fresh?.measurements_only_offer === true
+              ? (fresh?.url || fresh?.download_url || fresh?.pdf)
+              : (fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url)
             : kind === 'admin'
               ? (fresh?.adminPdf?.download_url || fresh?.adminPdf?.url)
               : (fresh?.url || fresh?.download_url || fresh?.pdf)
@@ -642,6 +657,7 @@ export default function LiveFeed() {
   const [currentStageName, setCurrentStageName] = useState<string | null>(null)
   /** Neubau vs Dachstuhl: titluri și fallback progres */
   const [offerFlow, setOfferFlow] = useState<OfferFlow>('neubau')
+  const [isMeasurementsOnlyOffer, setIsMeasurementsOnlyOffer] = useState(false)
   const flowModeRef = useRef<OfferFlow>('neubau')
 
   const filesByStage = useRef<Record<string, FeedFile[]>>({})
@@ -664,7 +680,14 @@ export default function LiveFeed() {
   const allStagesCompleted = useRef(false)
 
   const queuedStages = useRef<Set<string>>(new Set())
-  const pendingCompletionRef = useRef<{ offerId: string; pdfUrl: string; adminPdfUrl?: string | null; canDownloadAdminPdf?: boolean; roofMeasurementsPdfUrl?: string | null } | null>(null)
+  const pendingCompletionRef = useRef<{
+    offerId: string
+    pdfUrl: string
+    adminPdfUrl?: string | null
+    canDownloadAdminPdf?: boolean
+    roofMeasurementsPdfUrl?: string | null
+    measurementsOnlyOffer?: boolean
+  } | null>(null)
   /** In history mode: first event created_at per stage (for correct timestamps) */
   const stageStartedAtRef = useRef<Record<string, string>>({})
   /** Când primim detections_review, punem „stop” la GIF și afișăm editorul; etapele următoare se bufferizează până la Approve */
@@ -824,6 +847,7 @@ export default function LiveFeed() {
         const inferred = inferOfferFlow({ ...meta, offer_type_slug: slug })
         flowModeRef.current = inferred
         setOfferFlow(inferred)
+        setIsMeasurementsOnlyOffer(meta?.measurements_only_offer === true)
       })
       .catch(() => {})
     return () => {
@@ -876,6 +900,7 @@ export default function LiveFeed() {
       setCurrentStageName(null)
       flowModeRef.current = 'neubau'
       setOfferFlow('neubau')
+      setIsMeasurementsOnlyOffer(false)
     }
     
     const onComputeStarted = (e: any) => {
@@ -894,6 +919,7 @@ export default function LiveFeed() {
       let flow: OfferFlow = detailFlow === 'neubau' || detailFlow === 'dachstuhl' ? detailFlow : 'neubau'
       flowModeRef.current = flow
       setOfferFlow(flow)
+      setIsMeasurementsOnlyOffer(e?.detail?.measurementsOnlyOffer === true)
 
       setOfferId(offerId); 
       setComputing(true) // Activează progress bar-ul
@@ -915,6 +941,7 @@ export default function LiveFeed() {
             const inferred = inferOfferFlow({ ...meta, offer_type_slug: slug })
             flowModeRef.current = inferred
             setOfferFlow(inferred)
+        setIsMeasurementsOnlyOffer(meta?.measurements_only_offer === true)
             persistOfferState(offerId, runId, true, inferred)
           })
           .catch(() => {})
@@ -923,7 +950,9 @@ export default function LiveFeed() {
       ;(async () => {
         const hydrateSession = sessionRef.current
         try {
-          const historyData = await apiFetch(`/calc-events/history?offer_id=${encodeURIComponent(offerId)}`)
+          const historyData = await apiFetch(
+            `/calc-events/history?offer_id=${encodeURIComponent(offerId)}&run_id=${encodeURIComponent(runId)}`,
+          )
           if (sessionRef.current !== hydrateSession) return
           if (!offerEventMatchesUrlAndRef(offerId)) return
           if (historyData?.items?.length && historyData?.run_id === runId) {
@@ -991,6 +1020,47 @@ export default function LiveFeed() {
       reset()
       setOfferId(null)
     }
+
+    /** Înainte de upload/validare la finalizare: golește PDF/congrats vechi pentru aceeași ofertă (fără reset offerId). */
+    const onOfferWizardFlush = (e: Event) => {
+      const want = (e as CustomEvent<{ offerId?: string }>).detail?.offerId
+      const cur = offerIdRef.current
+      if (want && cur && want !== cur) return
+      if (!want && !cur) return
+      sessionRef.current = sessionRef.current + 1
+      setRows([])
+      setGroups([])
+      filesByStage.current = {}
+      processedStages.current.clear()
+      stageQueue.current = []
+      processing.current = false
+      sinceRef.current = undefined
+      seenEventIdsRef.current.clear()
+      currentStageRef.current = null
+      titleIndexRef.current = {}
+      finalPdfUrlRef.current = null
+      isHistoryMode.current = false
+      allStagesCompleted.current = false
+      queuedStages.current.clear()
+      pendingCompletionRef.current = null
+      reviewPendingRef.current = null
+      pendingStagesAfterReviewRef.current = []
+      roofReviewPendingRef.current = null
+      pendingStagesAfterRoofReviewRef.current = []
+      detectionsReviewActiveRef.current = false
+      roofReviewActiveRef.current = false
+      progressLockedInEditorRef.current = null
+      targetProgressRef.current = 0
+      displayProgressRef.current = 0
+      serverDrivesProgressRef.current = false
+      stageStartedAtRef.current = {}
+      setPdfUrl(null)
+      setRunId(null)
+      activeRunIdRef.current = null
+      setProgress(0)
+      setCurrentStageName(null)
+      setComputing(false)
+    }
     const onDetectionsReviewStart = () => {
       if (progressLockedInEditorRef.current == null) {
         progressLockedInEditorRef.current = Math.min(100, Math.max(0, displayProgressRef.current || 0))
@@ -1010,17 +1080,20 @@ export default function LiveFeed() {
 
     window.addEventListener('offer:compute-started', onComputeStarted)
     window.addEventListener('offer:new', onOfferNew)
+    window.addEventListener('offer:wizard-flush-feed', onOfferWizardFlush as EventListener)
     window.addEventListener('offer:detections-review-start', onDetectionsReviewStart as EventListener)
     window.addEventListener('offer:roof-review-start', onRoofReviewStart as EventListener)
     // Fallback: if the wizard signals PDF ready but stage queue never reaches computation_complete,
     // inject the final download card anyway.
     const onPdfReady = (e: Event) => {
       try {
-        const detail = (e as CustomEvent).detail as { offerId?: string; pdfUrl?: string }
+        const detail = (e as CustomEvent).detail as { offerId?: string; pdfUrl?: string; runId?: string }
         const oid = String(detail?.offerId || '').trim()
         const url = String(detail?.pdfUrl || '').trim()
         if (!oid || !url) return
         if (!offerEventMatchesUrlAndRef(oid)) return
+        const rid = String(detail?.runId || '').trim()
+        if (rid && activeRunIdRef.current && rid !== activeRunIdRef.current) return
         pendingCompletionRef.current = { offerId: oid, pdfUrl: url, canDownloadAdminPdf }
         if (!queuedStages.current.has('computation_complete')) {
           queuedStages.current.add('computation_complete')
@@ -1034,6 +1107,7 @@ export default function LiveFeed() {
     return () => {
       window.removeEventListener('offer:compute-started', onComputeStarted)
       window.removeEventListener('offer:new', onOfferNew)
+      window.removeEventListener('offer:wizard-flush-feed', onOfferWizardFlush as EventListener)
       window.removeEventListener('offer:detections-review-start', onDetectionsReviewStart as EventListener)
       window.removeEventListener('offer:roof-review-start', onRoofReviewStart as EventListener)
       window.removeEventListener('offer:pdf-ready', onPdfReady as EventListener)
@@ -1080,6 +1154,7 @@ export default function LiveFeed() {
         setCurrentStageName(null)
         flowModeRef.current = 'neubau'
         setOfferFlow('neubau')
+      setIsMeasurementsOnlyOffer(false)
         return
       }
 
@@ -1089,6 +1164,7 @@ export default function LiveFeed() {
         const meta = o?.meta ?? o?.offer?.meta
         const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
         offerFlowResolved = inferOfferFlow({ ...meta, offer_type_slug: slug })
+        setIsMeasurementsOnlyOffer(meta?.measurements_only_offer === true)
       } catch (_) {}
       if (loadGen !== historyLoadGenRef.current) return
       if (urlOfferConflictsWithSelection(id)) return
@@ -1197,19 +1273,29 @@ export default function LiveFeed() {
             )
           }
 
-          try {
-            const fresh = await apiFetch(`/offers/${id}/export-url`)
-            if (loadGen !== historyLoadGenRef.current) return
-            if (urlOfferConflictsWithSelection(id)) return
-            const url = fresh?.url || fresh?.download_url || fresh?.pdf
-            if (url) {
-              if (!offerEventMatchesUrlAndRef(id)) return
-              addCongrats(id, url)
-              window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
-                detail: { offerId: id, pdfUrl: url } 
-              }))
-            }
-          } catch {}
+          if (runStatus !== 'running') {
+            try {
+              const fresh = await apiFetch(`/offers/${id}/export-url`)
+              if (loadGen !== historyLoadGenRef.current) return
+              if (urlOfferConflictsWithSelection(id)) return
+              const url = fresh?.url || fresh?.download_url || fresh?.pdf
+              if (url) {
+                if (!offerEventMatchesUrlAndRef(id)) return
+                const measOnly = fresh?.measurements_only_offer === true
+                const roofMeas =
+                  fresh?.roofMeasurementsPdf?.download_url || fresh?.roofMeasurementsPdf?.url || null
+                addCongrats(id, url, {
+                  measurementsOnlyOffer: measOnly,
+                  roofMeasurementsPdfUrl: roofMeas,
+                })
+                window.dispatchEvent(
+                  new CustomEvent('offer:pdf-ready', {
+                    detail: { offerId: id, pdfUrl: url, runId: runIdFromHistory || undefined },
+                  }),
+                )
+              }
+            } catch {}
+          }
         } else if (runStatus === 'running' && runIdFromHistory) {
           // Oferta rulează dar nu avem încă evenimente: afișăm GIF + progress și pornim polling
           if (!offerEventMatchesUrlAndRef(id)) return
@@ -1260,9 +1346,11 @@ export default function LiveFeed() {
               if (!offerEventMatchesUrlAndRef(id)) return
               setPdfUrl(url)
               setComputing(false)
-              window.dispatchEvent(new CustomEvent('offer:pdf-ready', { 
-                detail: { offerId: id, pdfUrl: url } 
-              }))
+              window.dispatchEvent(
+                new CustomEvent('offer:pdf-ready', {
+                  detail: { offerId: id, pdfUrl: url, runId: runIdFromHistory || undefined },
+                }),
+              )
             } else {
               setPdfUrl(null)
               setComputing(false)
@@ -1427,6 +1515,7 @@ export default function LiveFeed() {
                 let realPdfUrl: string | null = finalPdfUrlRef.current || null
                 let adminPdfUrl: string | null = null
                 let roofMeasurementsPdfUrl: string | null = null
+                let measurementsOnlyFlag = false
                 try {
                   const exportRes = await apiFetch(`/offers/${offerId}/export-url`)
                   if (sessionRef.current !== mySessionId) return
@@ -1434,6 +1523,7 @@ export default function LiveFeed() {
                   realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf || realPdfUrl
                   adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
                   roofMeasurementsPdfUrl = exportRes?.roofMeasurementsPdf?.download_url || exportRes?.roofMeasurementsPdf?.url || null
+                  measurementsOnlyFlag = exportRes?.measurements_only_offer === true
                 } catch (_) {}
                 if (sessionRef.current !== mySessionId) return
                 if (offerId && !offerEventMatchesUrlAndRef(offerId)) return
@@ -1443,6 +1533,7 @@ export default function LiveFeed() {
                   adminPdfUrl,
                   canDownloadAdminPdf,
                   roofMeasurementsPdfUrl,
+                  measurementsOnlyOffer: measurementsOnlyFlag,
                 }
               }
               if (STAGE_TO_SEQUENCE[stage] && !pendingStagesAfterRoofReviewRef.current.includes(stage)) {
@@ -1469,6 +1560,7 @@ export default function LiveFeed() {
               let realPdfUrl: string | null = null
               let adminPdfUrl: string | null = null
               let roofMeasurementsPdfUrl: string | null = null
+              let measurementsOnlyFlag = false
               if(offerId) {
                 try {
                     // Obține URL-ul pentru PDF-ul normal și admin PDF-ul dacă e disponibil
@@ -1478,6 +1570,7 @@ export default function LiveFeed() {
                     realPdfUrl = exportRes?.url || exportRes?.download_url || exportRes?.pdf
                     adminPdfUrl = exportRes?.adminPdf?.download_url || exportRes?.adminPdf?.url || null
                     roofMeasurementsPdfUrl = exportRes?.roofMeasurementsPdf?.download_url || exportRes?.roofMeasurementsPdf?.url || null
+                    measurementsOnlyFlag = exportRes?.measurements_only_offer === true
                 } catch(e) {
                     console.warn("Failed to fetch export url on complete", e)
                 }
@@ -1496,7 +1589,8 @@ export default function LiveFeed() {
                   pdfUrl: realPdfUrl || '',
                   adminPdfUrl: adminPdfUrl,
                   canDownloadAdminPdf: canDownloadAdminPdf,
-                  roofMeasurementsPdfUrl: roofMeasurementsPdfUrl
+                  roofMeasurementsPdfUrl: roofMeasurementsPdfUrl,
+                  measurementsOnlyOffer: measurementsOnlyFlag,
                 }
                 if (STAGE_TO_SEQUENCE[stage] && !queuedStages.current.has(stage)) {
                   queuedStages.current.add(stage)
@@ -1780,12 +1874,19 @@ export default function LiveFeed() {
           adminPdfUrl: completion.adminPdfUrl || null,
           canDownloadAdminPdf: completion.canDownloadAdminPdf || false,
           roofMeasurementsPdfUrl: completion.roofMeasurementsPdfUrl || null,
+          measurementsOnlyOffer: completion.measurementsOnlyOffer === true,
           __id: 'final'
         }
         addItem(item)
-        window.dispatchEvent(new CustomEvent('offer:pdf-ready', {
-          detail: { offerId: completion.offerId, pdfUrl: completion.pdfUrl }
-        }))
+        window.dispatchEvent(
+          new CustomEvent('offer:pdf-ready', {
+            detail: {
+              offerId: completion.offerId,
+              pdfUrl: completion.pdfUrl,
+              runId: activeRunIdRef.current || undefined,
+            },
+          }),
+        )
         pendingCompletionRef.current = null
       }
       if (!instant) {
@@ -1921,7 +2022,13 @@ export default function LiveFeed() {
     }
   }
 
-  const addCongrats = (oid: string, url: string) => {
+  const addCongrats = (
+    oid: string,
+    url: string,
+    opts?: { measurementsOnlyOffer?: boolean; roofMeasurementsPdfUrl?: string | null },
+  ) => {
+     const measOnly = opts?.measurementsOnlyOffer === true
+     const roofMeas = opts?.roofMeasurementsPdfUrl ?? null
      setGroups(prev => {
          const clean = prev.filter(g => g.stage !== 'final')
          const g: Group = { 
@@ -1930,7 +2037,15 @@ export default function LiveFeed() {
            startedAt: new Date().toISOString(), 
            title: 'Fertig', 
            items: [
-             { kind: 'congrats', stage: 'final', offerId: oid, pdfUrl: url, __id: 'final' } as CongratsItem
+             {
+               kind: 'congrats',
+               stage: 'final',
+               offerId: oid,
+               pdfUrl: url,
+               roofMeasurementsPdfUrl: measOnly ? (roofMeas || url) : roofMeas,
+               measurementsOnlyOffer: measOnly,
+               __id: 'final',
+             } as CongratsItem,
            ]
          }
          const next = [...clean, g]
@@ -1953,7 +2068,7 @@ export default function LiveFeed() {
                     : 'border-white/15 text-sand/75 bg-white/[0.06]'
                 }`}
               >
-                {offerFlow === 'dachstuhl' ? 'Dachstuhl' : 'Neubau'}
+                {isMeasurementsOnlyOffer ? (offerFlow === 'dachstuhl' ? 'Dachstuhl Mengenermittlung' : 'Neubau Mengenermittlung') : (offerFlow === 'dachstuhl' ? 'Dachstuhl Angebot' : 'Neubau Angebot')}
               </span>
               <div className="text-xs font-medium text-sand/80 truncate">
                 {currentStageName || 'Verarbeitung...'}
@@ -2054,12 +2169,17 @@ export default function LiveFeed() {
                                      </div>
                                      <div className="flex-1">
                                        <div className="text-[18px] font-semibold text-[#FF9F0F]">
-                                         Angebot erfolgreich erstellt!
+                                         {it.measurementsOnlyOffer
+                                           ? 'Mengenermittlung abgeschlossen'
+                                           : 'Angebot erfolgreich erstellt!'}
                                        </div>
                                        <div className="text-sm text-white/70 mt-1">
-                                         Das PDF ist bereit. Sie können die Dokumente über die Buttons unten herunterladen.
+                                         {it.measurementsOnlyOffer
+                                           ? 'Ihr Maß-/Mengen-PDF ist bereit. Es enthält keine Preisangaben.'
+                                           : 'Das PDF ist bereit. Sie können die Dokumente über die Buttons unten herunterladen.'}
                                        </div>
                                        <div className="mt-3 flex flex-col gap-2">
+                                        {!it.measurementsOnlyOffer && (
                                         <button
                                           onClick={async () => {
                                             if (!allowDownload()) return
@@ -2079,25 +2199,39 @@ export default function LiveFeed() {
                                         >
                                           <Download className="h-4 w-4" /> Angebot herunterladen (PDF)
                                         </button>
+                                        )}
+                                        {(it.measurementsOnlyOffer || it.roofMeasurementsPdfUrl || it.pdfUrl) && (
                                         <button
                                           onClick={async () => {
                                             if (!allowDownload()) return
-                                            let url: string | null = it.roofMeasurementsPdfUrl || null
+                                            let url: string | null =
+                                              it.roofMeasurementsPdfUrl || (it.measurementsOnlyOffer ? it.pdfUrl : null) || null
                                             if (!url) {
                                               try {
-                                                const res = await apiFetch(`/offers/${it.offerId}/export-url`) as { roofMeasurementsPdf?: { download_url?: string; url?: string } }
+                                                const res = await apiFetch(`/offers/${it.offerId}/export-url`) as {
+                                                  measurements_only_offer?: boolean
+                                                  roofMeasurementsPdf?: { download_url?: string; url?: string }
+                                                  download_url?: string
+                                                  url?: string
+                                                  pdf?: string
+                                                }
                                                 if (!allowDownload()) return
-                                                url = res?.roofMeasurementsPdf?.download_url || res?.roofMeasurementsPdf?.url || null
+                                                if (res?.measurements_only_offer === true) {
+                                                  url = res?.url || res?.download_url || res?.pdf || null
+                                                } else {
+                                                  url = res?.roofMeasurementsPdf?.download_url || res?.roofMeasurementsPdf?.url || null
+                                                }
                                               } catch {
                                                 url = null
                                               }
                                             }
                                             if (url) await downloadPdfWithRefresh(it.offerId, url, 'roofMeasurements', allowDownload)
                                           }}
-                                          className="btn-sun-secondary"
+                                          className={it.measurementsOnlyOffer ? 'btn-sun' : 'btn-sun-secondary'}
                                         >
                                           <Download className="h-4 w-4" /> Mengenermittlung herunterladen (PDF)
                                         </button>
+                                        )}
                                        </div>
                                      </div>
                                    </div>

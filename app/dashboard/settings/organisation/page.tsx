@@ -18,14 +18,23 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+const MAX_ORG_MEMBERS = 5
+
+function isMemberAdminRole(role: string | null | undefined): boolean {
+  return role === 'org_leader' || role === 'admin'
+}
+
 function RoleDropdown({
   value,
   onChange,
   id,
+  demoteToUserDisabled,
 }: {
   value: 'user' | 'org_leader'
   onChange: (v: 'user' | 'org_leader') => void
   id?: string
+  /** Letzter Admin darf nicht auf Mitarbeiter gesetzt werden. */
+  demoteToUserDisabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLDivElement>(null)
@@ -91,16 +100,28 @@ function RoleDropdown({
           >
             {(['user', 'org_leader'] as const).map((opt) => {
               const isSelected = value === opt
+              const disabled = demoteToUserDisabled === true && opt === 'user'
               return (
                 <button
                   key={opt}
                   type="button"
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? 'Der letzte Administrator muss Administrator bleiben.'
+                      : undefined
+                  }
                   onClick={() => {
+                    if (disabled) return
                     onChange(opt)
                     setOpen(false)
                   }}
                   className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${
-                    isSelected ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/90 hover:bg-white/10 hover:text-white'
+                    disabled
+                      ? 'opacity-40 cursor-not-allowed text-sand/50'
+                      : isSelected
+                        ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]'
+                        : 'text-sand/90 hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   {isSelected ? <Check size={16} className="shrink-0" /> : <span className="w-5" />}
@@ -171,6 +192,10 @@ export default function OrganisationSettingsPage() {
 
   const handleAddMember = async () => {
     setAddError(null)
+    if (members.length >= MAX_ORG_MEMBERS) {
+      setAddError(`Maximal ${MAX_ORG_MEMBERS} Benutzer pro Organisation.`)
+      return
+    }
     if (!addEmail.trim() || !addPassword.trim()) {
       setAddError('E-Mail und Passwort sind erforderlich.')
       return
@@ -205,6 +230,7 @@ export default function OrganisationSettingsPage() {
   }
 
   const handleUpdateMember = async (id: string) => {
+    setMemberActionError(null)
     setEditSaving(true)
     try {
       await apiFetch(`/organisation/members/${id}`, {
@@ -221,8 +247,8 @@ export default function OrganisationSettingsPage() {
       setEditFullName('')
       setEditRole('user')
       setEditPassword('')
-    } catch {
-      // keep form open on error
+    } catch (error: unknown) {
+      setMemberActionError(getErrorMessage(error, 'Änderung fehlgeschlagen.'))
     } finally {
       setEditSaving(false)
     }
@@ -284,6 +310,9 @@ export default function OrganisationSettingsPage() {
             <div className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-6">
               <h2 className="text-xl font-bold text-[#FF9F0F] mb-1">Benutzer der Organisation</h2>
               <p className="text-white/80 text-sm mb-4">E-Mail, Name und Rolle verwalten. Admins können alle Einstellungen ändern.</p>
+              <p className="text-sand/70 text-xs mb-4">
+                Maximal {MAX_ORG_MEMBERS} Benutzer pro Organisation. Es muss immer mindestens ein Administrator bestehen.
+              </p>
               {memberActionError && (
                 <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                   {memberActionError}
@@ -294,8 +323,9 @@ export default function OrganisationSettingsPage() {
               ) : (
                 <div className="space-y-3">
                   {members.map((m) => {
-                    const isAdminMember = m.role === 'org_leader' || m.role === 'admin'
-                    const adminCount = members.filter((member) => member.role === 'org_leader' || member.role === 'admin').length
+                    const isAdminMember = isMemberAdminRole(m.role)
+                    const adminCount = members.filter((member) => isMemberAdminRole(member.role)).length
+                    const demoteToUserDisabled = isAdminMember && adminCount <= 1
                     const deleteBlockedBecauseLastMember = members.length <= 1
                     const deleteBlockedBecauseLastAdmin = isAdminMember && adminCount <= 1
                     const deleteDisabled = deleteBlockedBecauseLastMember || deleteBlockedBecauseLastAdmin
@@ -316,7 +346,11 @@ export default function OrganisationSettingsPage() {
                           <div>
                             <label className="text-xs font-medium text-sand/70 uppercase tracking-wider">Rolle</label>
                             <div className="mt-1">
-                              <RoleDropdown value={editRole} onChange={setEditRole} />
+                              <RoleDropdown
+                                value={editRole}
+                                onChange={setEditRole}
+                                demoteToUserDisabled={demoteToUserDisabled}
+                              />
                             </div>
                           </div>
                           <div className="col-span-2">
@@ -333,7 +367,12 @@ export default function OrganisationSettingsPage() {
                       ) : deleteConfirmId === m.id ? (
                         <div className="flex-1 flex items-center gap-2">
                           <span className="text-sm text-amber-200">Wirklich löschen?</span>
-                          <button type="button" disabled={deleteSaving} onClick={() => handleDeleteMember(m.id)} className="px-2 py-1 rounded bg-red-600 text-white text-sm">
+                          <button
+                            type="button"
+                            disabled={deleteSaving}
+                            onClick={() => handleDeleteMember(m.id)}
+                            className="px-2 py-1 rounded-md bg-[#FF9F0F] text-[#1a0f0a] text-sm font-semibold hover:brightness-110 disabled:opacity-60"
+                          >
                             {deleteSaving ? <Loader2 size={14} className="animate-spin" /> : 'Ja'}
                           </button>
                           <button type="button" onClick={() => setDeleteConfirmId(null)} className="px-2 py-1 rounded border border-white/20 text-sm">Nein</button>
@@ -343,15 +382,16 @@ export default function OrganisationSettingsPage() {
                           <div className="min-w-0">
                             <div className="font-medium text-white truncate">{m.full_name || m.email || '—'}</div>
                             <div className="text-sm text-sand/70 truncate">{m.email}</div>
-                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{m.role === 'org_leader' || m.role === 'admin' ? 'Administrator' : 'Mitarbeiter'}</span>
+                            <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs bg-white/10 text-sand/90">{isMemberAdminRole(m.role) ? 'Administrator' : 'Mitarbeiter'}</span>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               type="button"
                               onClick={() => {
+                                setMemberActionError(null)
                                 setEditingId(m.id)
                                 setEditFullName(m.full_name || '')
-                                setEditRole((m.role === 'org_leader' || m.role === 'admin' ? 'org_leader' : 'user') as 'user' | 'org_leader')
+                                setEditRole((isMemberAdminRole(m.role) ? 'org_leader' : 'user') as 'user' | 'org_leader')
                                 setEditPassword('')
                               }}
                               className="p-2 rounded text-sand/70 hover:text-[#FF9F0F]"
@@ -409,9 +449,15 @@ export default function OrganisationSettingsPage() {
                       </div>
                     </div>
                   ) : (
-                    <button type="button" onClick={() => setAddOpen(true)} className="flex items-center gap-2 py-2 text-[#FF9F0F] hover:underline text-sm">
-                      <UserPlus size={16} /> Benutzer hinzufügen
-                    </button>
+                    <div className="pt-2">
+                      {members.length >= MAX_ORG_MEMBERS ? (
+                        <p className="text-sand/60 text-sm">Benutzerlimit erreicht ({MAX_ORG_MEMBERS}/{MAX_ORG_MEMBERS}).</p>
+                      ) : (
+                        <button type="button" onClick={() => { setAddOpen(true); setAddError(null) }} className="flex items-center gap-2 py-2 text-[#FF9F0F] hover:underline text-sm">
+                          <UserPlus size={16} /> Benutzer hinzufügen
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

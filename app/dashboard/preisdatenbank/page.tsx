@@ -7,6 +7,12 @@ import { apiFetch } from '../../lib/supabaseClient'
 import { buildPriceSectionsFromFormStepsJson } from '../../../lib/buildFormFromJson'
 import holzbauFormStepsJson from '../../../data/form-schema/holzbau-form-steps.json'
 import type { PreisdatenbankSection } from '../formConfig'
+import {
+  adaptCurrencyCopy,
+  adaptPriceUnit,
+  type DisplayCurrency,
+  normalizeDisplayCurrency,
+} from '../../../lib/displayCurrency'
 
 /** Sursă unică: data/form-schema/holzbau-form-steps.json – secțiunile și variabilele vin doar din acest fișier. */
 
@@ -18,7 +24,7 @@ const CARD_MAX_PX = 300
 const CARD_WIDE_PX = 500
 
 function getStep(unit: string): number {
-  if (unit === '€/m²' || unit === '€/m') return 1
+  if (unit === '€/m²' || unit === '€/m' || unit === 'CHF/m²' || unit === 'CHF/m') return 1
   if (unit === '%') return 0.5
   if (unit === 'm') return 0.1
   return 10
@@ -43,7 +49,9 @@ function slugFromLabel(label: string): string {
 /** Elimină unitatea de măsură de la sfârșitul etichetei (ex. " (€/m²)", " (Faktor)") – afișăm doar numele variabilei. */
 function labelWithoutUnit(label: string): string {
   if (!label || typeof label !== 'string') return label
-  return label.replace(/\s*\((?:€\/m²|€\/m|€|Faktor!?|Stufe)\)\s*$/i, '').trim() || label
+  return label
+    .replace(/\s*\((?:€\/m²|€\/m|€|CHF\/m²|CHF\/m|CHF|Faktor!?|Stufe)\)\s*$/i, '')
+    .trim() || label
 }
 
 function isLockedRoofOnlyVariable(id: string): boolean {
@@ -97,6 +105,7 @@ const CARD_SUBTITLES: Record<string, string> = {
   'Türtyp Innentüren': 'Stückpreis je nach gewähltem Typ',
   'Türtyp Außentüren': 'Stückpreis je nach gewähltem Typ',
   'Schiebetüren': 'Preis pro m² je nach gewählter Schiebetür',
+  'Türhöhe': 'Höhen in m je Variante – für Flächenberechnung der Türen.',
   'Garagentor gewünscht': 'Wenn ja: Typ und Stückpreis aus Preisdatenbank',
   'Innenausbau Innenwände': 'Putz, Holz, Faserzement, Mix – €/m²',
   'Innenausbau Außenwände': 'Putz, Holz, Faserzement, Mix – €/m²',
@@ -112,9 +121,10 @@ const CARD_SUBTITLES: Record<string, string> = {
   'Klempnerarbeiten': 'Aufschlag der Klempnerarbeiten zum Dachpreis anpassen',
 }
 
-function cardSubtitle(cardTitle: string, _rawSubtitle?: string | null): string {
+function cardSubtitle(cardTitle: string, currency: DisplayCurrency, _rawSubtitle?: string | null): string {
   const key = cardTitle === 'Geschosshöhe' ? 'Raumhöhe' : cardTitle
-  return CARD_SUBTITLES[key] ?? CARD_SUBTITLES[cardTitle] ?? 'Preise anpassen'
+  const raw = CARD_SUBTITLES[key] ?? CARD_SUBTITLES[cardTitle] ?? 'Preise anpassen'
+  return adaptCurrencyCopy(raw, currency)
 }
 
 /** Subtitlu alb pentru fiecare pas de formular (stepKey). */
@@ -158,6 +168,7 @@ export default function PreisdatenbankPage() {
   const pendingSaveRef = useRef<Record<string, number>>({})
   /** Doar chei prezente în holzbau-form-steps.json (priceSections.variables[].key) – nimic în plus. */
   const allowedPricingKeysRef = useRef<Set<string>>(new Set())
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('EUR')
 
   useEffect(() => {
     let cancelled = false
@@ -178,6 +189,11 @@ export default function PreisdatenbankPage() {
           }
         }
         if (!cancelled) allowedPricingKeysRef.current = allowedKeys
+
+        const tenantCfg = (await apiFetch('/tenant-config').catch(() => null)) as
+          | { displayCurrency?: string }
+          | null
+        if (!cancelled) setDisplayCurrency(normalizeDisplayCurrency(tenantCfg?.displayCurrency))
 
         const apiRes = (await apiFetch('/pricing-parameters').catch(() => ({}))) as
           | {
@@ -264,6 +280,16 @@ export default function PreisdatenbankPage() {
       }
     })
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    const onSaved = () => {
+      apiFetch('/tenant-config')
+        .then((cfg) => setDisplayCurrency(normalizeDisplayCurrency((cfg as { displayCurrency?: string })?.displayCurrency)))
+        .catch(() => {})
+    }
+    window.addEventListener('tenant-config:saved', onSaved)
+    return () => window.removeEventListener('tenant-config:saved', onSaved)
   }, [])
 
   useEffect(() => {
@@ -689,7 +715,8 @@ export default function PreisdatenbankPage() {
           // Coloane fixe 300px; cardurile „late” (2 coloane interne) ocupă 2 celule ca gap-ul să rămână constant.
           const stepColumns = Math.min(6, maxColumnsThatFit, Math.max(1, nItems + wideCount))
           const stepGridMaxPx = stepColumns * CARD_MAX_PX + (stepColumns - 1) * GAP_PX
-          const stepSubtitle = (section.stepKey && STEP_SUBTITLES[section.stepKey]) || section.subtitle
+          const rawStepSub = (section.stepKey && STEP_SUBTITLES[section.stepKey]) || section.subtitle
+          const stepSubtitle = rawStepSub ? adaptCurrencyCopy(rawStepSub, displayCurrency) : ''
           return (
             <div
               key={section.stepKey ?? section.title}
@@ -722,7 +749,7 @@ export default function PreisdatenbankPage() {
                         >
                           <div className="border-b border-white/10 pb-2 mb-2">
                             <h3 className="text-sm font-semibold text-[#FF9F0F]">{displayPriceCardTitle(sub.title)}</h3>
-                            <p className="text-white/90 text-xs mt-0.5">{cardSubtitle(sub.title, sub.subtitle)}</p>
+                            <p className="text-white/90 text-xs mt-0.5">{cardSubtitle(sub.title, displayCurrency, sub.subtitle)}</p>
                           </div>
                           <div className="grid grid-cols-1 gap-2">
                             {sub.variables.map((v) => (
@@ -755,12 +782,16 @@ export default function PreisdatenbankPage() {
                                     id={v.id}
                                     type="number"
                                     min={0}
-                                    step={getStep(v.unit)}
+                                    step={getStep(adaptPriceUnit(v.unit || '€', displayCurrency))}
                                     value={v.value}
                                     onChange={(e) => updateValue(sectionIndex, subsectionIndex, v.id, parseFloat(e.target.value) || 0)}
                                     className="sun-input flex-1 min-w-0 max-w-[100px] text-sm"
                                   />
-                                  {v.unit ? <span className="text-sand/70 text-sm shrink-0">{v.unit}</span> : null}
+                                  {v.unit ? (
+                                    <span className="text-sand/70 text-sm shrink-0">
+                                      {adaptPriceUnit(v.unit, displayCurrency)}
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
                             ))}
@@ -768,7 +799,11 @@ export default function PreisdatenbankPage() {
                               <div className="flex flex-wrap items-center gap-2 text-left text-sm">
                                 <input type="text" placeholder="Bezeichnung" className="sun-input w-32 text-sm" id={`add-label-${sectionIndex}-${subsectionIndex}`} />
                                 <input type="number" min={0} step={0.01} placeholder="Preis" className="sun-input w-20 text-sm" id={`add-value-${sectionIndex}-${subsectionIndex}`} />
-                                {sub.variables[0]?.unit ? <span className="text-sand/70 text-sm">{sub.variables[0].unit}</span> : null}
+                                {sub.variables[0]?.unit ? (
+                                  <span className="text-sand/70 text-sm">
+                                    {adaptPriceUnit(sub.variables[0].unit, displayCurrency)}
+                                  </span>
+                                ) : null}
                                 <button type="button" onClick={() => { const labelEl = document.getElementById(`add-label-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; const valueEl = document.getElementById(`add-value-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; if (labelEl && valueEl && sub.fieldTag) handleAddOption(sectionIndex, subsectionIndex, sub.fieldTag, labelEl.value, parseFloat(valueEl.value) || 0, sub.variables[0]?.unit ?? '') }} className="px-2 py-1 rounded bg-[#FF9F0F] text-white text-sm">Übernehmen</button>
                                 <button type="button" onClick={() => setAddingAt(null)} className="px-2 py-1 rounded border border-white/20 text-sand/80 text-sm">Abbrechen</button>
                               </div>
@@ -790,7 +825,7 @@ export default function PreisdatenbankPage() {
                     >
                       <div className="border-b border-white/10 pb-3 mb-3">
                         <h3 className="text-base font-semibold text-[#FF9F0F]">Kamin / Ofen</h3>
-                        <p className="text-white/90 text-sm mt-1">{cardSubtitle('Kamin / Ofen', null)}</p>
+                        <p className="text-white/90 text-sm mt-1">{cardSubtitle('Kamin / Ofen', displayCurrency, null)}</p>
                       </div>
                       <div className="flex flex-col gap-6">
                         {item.subs.map(({ sub, subsectionIndex }) => (
@@ -825,12 +860,16 @@ export default function PreisdatenbankPage() {
                                       id={v.id}
                                       type="number"
                                       min={0}
-                                      step={getStep(v.unit)}
+                                      step={getStep(adaptPriceUnit(v.unit || '€', displayCurrency))}
                                       value={v.value}
                                       onChange={(e) => updateValue(sectionIndex, subsectionIndex, v.id, parseFloat(e.target.value) || 0)}
                                       className="sun-input flex-1 min-w-0 max-w-[120px] text-sm"
                                     />
-                                    {v.unit ? <span className="text-sand/70 text-sm shrink-0">{v.unit}</span> : null}
+                                    {v.unit ? (
+                                      <span className="text-sand/70 text-sm shrink-0">
+                                        {adaptPriceUnit(v.unit, displayCurrency)}
+                                      </span>
+                                    ) : null}
                                   </div>
                                 </div>
                               ))}
@@ -839,7 +878,11 @@ export default function PreisdatenbankPage() {
                               <div className="flex flex-wrap items-center gap-2 text-left text-sm">
                                 <input type="text" placeholder="Bezeichnung" className="sun-input w-32 text-sm" id={`add-label-${sectionIndex}-${subsectionIndex}`} />
                                 <input type="number" min={0} step={0.01} placeholder="Preis" className="sun-input w-20 text-sm" id={`add-value-${sectionIndex}-${subsectionIndex}`} />
-                                {sub.variables[0]?.unit ? <span className="text-sand/70 text-sm">{sub.variables[0].unit}</span> : null}
+                                {sub.variables[0]?.unit ? (
+                                  <span className="text-sand/70 text-sm">
+                                    {adaptPriceUnit(sub.variables[0].unit, displayCurrency)}
+                                  </span>
+                                ) : null}
                                 <button type="button" onClick={() => { const labelEl = document.getElementById(`add-label-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; const valueEl = document.getElementById(`add-value-${sectionIndex}-${subsectionIndex}`) as HTMLInputElement; if (labelEl && valueEl && sub.fieldTag) handleAddOption(sectionIndex, subsectionIndex, sub.fieldTag, labelEl.value, parseFloat(valueEl.value) || 0, sub.variables[0]?.unit ?? '') }} className="px-2 py-1 rounded bg-[#FF9F0F] text-white text-sm">Übernehmen</button>
                                 <button type="button" onClick={() => setAddingAt(null)} className="px-2 py-1 rounded border border-white/20 text-sand/80 text-sm">Abbrechen</button>
                               </div>
@@ -863,7 +906,7 @@ export default function PreisdatenbankPage() {
                         {displayPriceCardTitle(item.sub.title)}
                       </h3>
                       <p className="text-white/90 text-sm mt-1">
-                        {cardSubtitle(item.sub.title, item.sub.subtitle)}
+                        {cardSubtitle(item.sub.title, displayCurrency, item.sub.subtitle)}
                       </p>
                     </div>
                     <div
@@ -915,14 +958,18 @@ export default function PreisdatenbankPage() {
                               id={v.id}
                               type="number"
                               min={0}
-                              step={getStep(v.unit)}
+                              step={getStep(adaptPriceUnit(v.unit || '€', displayCurrency))}
                               value={v.value}
                               onChange={(e) =>
                                 updateValue(sectionIndex, item.subsectionIndex, v.id, parseFloat(e.target.value) || 0)
                               }
                               className="sun-input flex-1 min-w-0 max-w-[120px] md:max-w-[140px]"
                             />
-                            {v.unit ? <span className="text-sand/70 text-sm md:text-base shrink-0">{v.unit}</span> : null}
+                            {v.unit ? (
+                              <span className="text-sand/70 text-sm md:text-base shrink-0">
+                                {adaptPriceUnit(v.unit, displayCurrency)}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       ))}
@@ -942,7 +989,11 @@ export default function PreisdatenbankPage() {
                             className="sun-input w-24 text-sm"
                             id={`add-value-${sectionIndex}-${item.subsectionIndex}`}
                           />
-                          {item.sub.variables[0]?.unit ? <span className="text-sand/70 text-sm">{item.sub.variables[0].unit}</span> : null}
+                          {item.sub.variables[0]?.unit ? (
+                            <span className="text-sand/70 text-sm">
+                              {adaptPriceUnit(item.sub.variables[0].unit, displayCurrency)}
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => {
