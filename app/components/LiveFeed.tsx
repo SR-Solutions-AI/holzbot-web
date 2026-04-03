@@ -454,7 +454,13 @@ async function downloadPdfWithRefresh(
     if (!res.ok) throw new Error('fetch-failed')
     const disp = res.headers.get('content-disposition') || ''
     const nameMatch = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp)
-    const filename = nameMatch ? decodeURIComponent(nameMatch[1]) : 'angebot.pdf'
+    const defaultName =
+      kind === 'roofMeasurements'
+        ? 'mengenermittlung.pdf'
+        : kind === 'admin'
+          ? 'admin.pdf'
+          : 'angebot.pdf'
+    const filename = nameMatch ? decodeURIComponent(nameMatch[1]) : defaultName
     const blob = await res.blob()
     const objUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
