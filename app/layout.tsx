@@ -2,9 +2,22 @@
 import './globals.css'
 import type { Metadata } from 'next'
 
+const siteDescription =
+  'Holzbot automatisiert die Mengenermittlung und Angebotserstellung für Holzbauunternehmen – schnell, präzise und direkt aus Bauplänen.'
+
 export const metadata: Metadata = {
   title: 'Holzbot',
-  description: 'Offers UI',
+  description: siteDescription,
+  openGraph: {
+    title: 'Holzbot',
+    description: siteDescription,
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Holzbot',
+    description: siteDescription,
+  },
   // NOU: Această setare generează <meta name="google" content="notranslate"> în <head>
   other: {
     google: 'notranslate',
