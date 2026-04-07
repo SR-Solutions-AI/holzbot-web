@@ -4,14 +4,27 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import { motion, Variants } from 'framer-motion'
-import { LogIn, ArrowRight, Hammer, XCircle, CheckCircle2, FileText, Clock, TrendingUp, Shield, Users, Briefcase, Download, Check, Plus, Lightbulb, Mail, Play, Pause, RotateCcw } from 'lucide-react'
+import { LogIn, ArrowRight, Hammer, XCircle, CheckCircle2, FileText, Clock, TrendingUp, Shield, Users, Briefcase, Download, Check, Plus, Lightbulb, Mail, Play, Pause, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
 
 // --- CONFIG ---
 const BACKGROUND_IMAGE_URL = '/images/landing-bg.png'
 const PRICING_BG_URL = '/images/construction-site.jpg' 
 const VIDEO_URL = '/videos/intro-video.mp4'
 const LOGO_IMAGE_URL = '/logo.png'
-const PDF_EXAMPLE_IMAGE = '/images/example-pdf-preview.png'
+const PDF_PREVIEWS = [
+  {
+    image: '/angebot.png',
+    file: '/angebot.pdf',
+    alt: 'Angebot PDF Vorschau',
+    buttonLabel: 'Angebot ansehen',
+  },
+  {
+    image: '/mengenermittlung.png',
+    file: '/mengenermittlung.pdf',
+    alt: 'Mengenermittlung PDF Vorschau',
+    buttonLabel: 'Mengenermittlung ansehen',
+  },
+]
 const PDF_URL = '/projekt.pdf'
 const ORDER_FORM_URL = '/documents/bestellformular.pdf'
 const BENEFITS_IMAGE_URL = '/images/second-bg.png'
@@ -60,26 +73,26 @@ function FeatureSection() {
       {/* UPDATE: Blob GIGANTIC pe mobil (180vw) */}
       <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} transition={{ duration: 1.5 }} className="absolute top-20 left-[-20%] w-[180vw] h-[180vw] md:w-[500px] md:h-[500px] bg-[#FF9F0F]/5 blur-[80px] md:blur-[120px] rounded-full pointer-events-none" />
 
-      <div className="relative z-10 max-w-[1500px] mx-auto grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-x-20 gap-y-12 items-center px-6 md:px-8">
+      <div className="relative z-10 max-w-[1700px] mx-auto grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] gap-x-8 xl:gap-x-10 gap-y-12 items-center px-1 md:px-2">
         {/* LEFT - PROBLEM */}
-        <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-50px" }} variants={fadeInLeft} className="flex flex-col gap-6 md:gap-8 p-6 md:p-8 rounded-3xl border border-white/5 bg-white/5 backdrop-blur-sm shadow-2xl relative order-1 lg:order-1">
+        <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-50px" }} variants={fadeInLeft} className="flex flex-col gap-5 md:gap-6 p-5 md:p-6 rounded-3xl border border-white/5 bg-white/5 backdrop-blur-sm shadow-2xl relative order-1 lg:order-1">
           <div className={`absolute -left-2 top-10 w-1 h-20 rounded-full bg-[${PROBLEM_BROWN}]`} />
           <div>
-            <h3 className="text-2xl md:text-3xl lg:text-4xl font-extrabold text-white mb-2 leading-tight">Das Problem: Angebote im Holzbau dauern zu lange - oft umsonst</h3>
+            <h3 className="text-xl md:text-2xl lg:text-[2rem] font-extrabold text-white mb-2 leading-tight">Das Problem: Angebote im Holzbau dauern zu lange - oft umsonst</h3>
             <div className={`h-1.5 w-24 rounded-full mt-4 bg-[${PROBLEM_BROWN}]`} />
           </div>
           <ul className="space-y-4 md:space-y-6">
             <li className="flex items-start gap-4">
                <XCircle className={`shrink-0 mt-1 text-[${PROBLEM_BROWN}]`} size={24} />
-               <span className="text-lg md:text-xl text-sand/90 font-medium">4–6 Stunden pro Angebot – oft umsonst</span>
+               <span className="text-base md:text-lg text-sand/90 font-medium">4–6 Stunden pro Angebot – oft umsonst</span>
             </li>
             <li className="flex items-start gap-4">
                <XCircle className={`shrink-0 mt-1 text-[${PROBLEM_BROWN}]`} size={24} />
-               <span className="text-lg md:text-xl text-sand/90 font-medium">Viele Interessenten springen ab, bevor ein Preis da ist</span>
+               <span className="text-base md:text-lg text-sand/90 font-medium">Viele Interessenten springen ab, bevor ein Preis da ist</span>
             </li>
             <li className="flex items-start gap-4">
                <XCircle className={`shrink-0 mt-1 text-[${PROBLEM_BROWN}]`} size={24} />
-               <span className="text-lg md:text-xl text-sand/90 font-medium">Verpasste Kunden durch zu späte Antworten</span>
+               <span className="text-base md:text-lg text-sand/90 font-medium">Verpasste Kunden durch zu späte Antworten</span>
             </li>
           </ul>
         </motion.div>
@@ -89,22 +102,27 @@ function FeatureSection() {
           {/* Blob PDF mare */}
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[160%] h-[160%] bg-[#FF9F0F]/10 blur-3xl rounded-full" />
           
-          <div className="relative w-full max-w-sm md:max-w-md group cursor-pointer">
-            {/* Imaginea PDF */}
-            <img src={PDF_EXAMPLE_IMAGE} alt="Beispiel PDF" className="rounded-2xl shadow-2xl border-4 border-white/10 w-full h-auto" />
-            
-            {/* BUTON PDF - ACUM VIZIBIL MEREU (Am scos opacity-0 si translate) */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <a href={PDF_URL} target="_blank" rel="noopener noreferrer" className="bg-[#FF9F0F] hover:bg-[#FF9F0F]/90 text-white font-bold text-base md:text-lg py-3 px-6 md:py-4 md:px-8 rounded-xl flex items-center gap-3 shadow-xl transition-transform duration-300 hover:scale-105">Beispiel PDF ansehen <ArrowRight size={20} /></a>
+          <div className="relative w-full max-w-3xl">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {PDF_PREVIEWS.map((preview) => (
+                <div key={preview.file} className="relative group cursor-pointer">
+                  <img src={preview.image} alt={preview.alt} className="rounded-2xl shadow-2xl border-4 border-white/10 w-full h-auto" />
+                  <div className="absolute inset-0 flex items-center justify-center px-3">
+                    <a href={preview.file} target="_blank" rel="noopener noreferrer" className="bg-[#FF9F0F] hover:bg-[#FF9F0F]/90 text-white font-bold text-sm md:text-base py-3 px-4 md:py-3.5 md:px-5 rounded-xl flex items-center gap-2 shadow-xl transition-transform duration-300 hover:scale-105 text-center">
+                      {preview.buttonLabel} <ArrowRight size={18} />
+                    </a>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </motion.div>
 
         {/* RIGHT - SOLUTION */}
-        <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-50px" }} variants={fadeInRight} className="flex flex-col gap-6 md:gap-8 p-6 md:p-8 rounded-3xl border border-white/5 bg-white/5 backdrop-blur-sm shadow-2xl relative order-3 lg:order-3">
+        <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-50px" }} variants={fadeInRight} className="flex flex-col gap-5 md:gap-6 p-5 md:p-6 rounded-3xl border border-white/5 bg-white/5 backdrop-blur-sm shadow-2xl relative order-3 lg:order-3">
            <div className="absolute -right-2 top-10 w-1 h-20 bg-[#FF9F0F] rounded-full" />
           <div>
-            <h3 className="text-2xl md:text-3xl lg:text-4xl font-extrabold text-white mb-2 leading-tight">Die Lösung: Ein Schätzungsangebot in Minuten statt Stunden.</h3>
+            <h3 className="text-xl md:text-2xl lg:text-[2rem] font-extrabold text-white mb-2 leading-tight">Die Lösung: Ein Schätzungsangebot in Minuten statt Stunden.</h3>
             <div className="h-1.5 w-24 bg-[#FF9F0F] rounded-full mt-4" />
           </div>
           <ol className="space-y-4 md:space-y-6">
@@ -112,23 +130,23 @@ function FeatureSection() {
                 <div className="bg-[#FF9F0F]/20 w-8 h-8 flex items-center justify-center rounded-full text-[#FF9F0F] shrink-0 mt-1">
                     <span className="font-bold text-lg">1</span>
                 </div>
-                <span className="text-lg md:text-xl text-sand/90 font-medium">Hausdaten eingeben</span>
+                <span className="text-base md:text-lg text-sand/90 font-medium">Hausdaten eingeben</span>
             </li>
             <li className="flex items-start gap-4">
                 <div className="bg-[#FF9F0F]/20 w-8 h-8 flex items-center justify-center rounded-full text-[#FF9F0F] shrink-0 mt-1">
                     <span className="font-bold text-lg">2</span>
                 </div>
-                <span className="text-lg md:text-xl text-sand/90 font-medium">Bauplan (PDF) hochladen</span>
+                <span className="text-base md:text-lg text-sand/90 font-medium">Bauplan (PDF) hochladen</span>
             </li>
              <li className="flex items-start gap-4">
                 <div className="bg-[#FF9F0F]/20 w-8 h-8 flex items-center justify-center rounded-full text-[#FF9F0F] shrink-0 mt-1">
                     <span className="font-bold text-lg">3</span>
                 </div>
-                <span className="text-lg md:text-xl text-sand/90 font-medium">Holzbot analysiert Bauplan</span>
+                <span className="text-base md:text-lg text-sand/90 font-medium">Holzbot analysiert Bauplan</span>
             </li>
              <li className="flex items-start gap-4">
                 <CheckCircle2 className="text-[#FF9F0F] shrink-0 w-8 h-8 mt-1" />
-                <span className="text-lg md:text-xl font-bold text-white">Schätzungsangebot als PDF erhalten (± 8-10 % Genauigkeit)</span>
+                <span className="text-base md:text-lg font-bold text-white">Schätzungsangebot als PDF erhalten (± 8-10 % Genauigkeit)</span>
             </li>
           </ol>
         </motion.div>
@@ -705,6 +723,14 @@ export default function LandingPage() {
     }
   }
 
+  const seekBy = (deltaSeconds: number) => {
+    if (!videoRef.current) return
+    const video = videoRef.current
+    const duration = Number.isFinite(video.duration) ? video.duration : 0
+    const targetTime = Math.min(Math.max(video.currentTime + deltaSeconds, 0), duration || video.currentTime + deltaSeconds)
+    video.currentTime = targetTime
+  }
+
   if (loading) return null
 
   return (
@@ -752,8 +778,10 @@ export default function LandingPage() {
                   {/* Custom Controls - SNAPPY HOVER FIX */}
                   {/* Am adaugat transform-gpu pentru hardware acceleration si am scos transition-all */}
                   <div className="absolute bottom-4 right-4 flex items-center gap-3 z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <button onClick={() => seekBy(-5)} className="bg-black/40 hover:bg-[#FF9F0F] backdrop-blur-xl border border-white/10 text-white p-3 rounded-full transition-colors transform-gpu duration-200 group/btn" aria-label="Zurueck 5 Sekunden"><SkipBack className="w-5 h-5" /></button>
                     <button onClick={togglePlay} className="bg-black/40 hover:bg-[#FF9F0F] backdrop-blur-xl border border-white/10 text-white p-3 rounded-full transition-colors transform-gpu duration-200 group/btn" aria-label={isPlaying ? "Pause" : "Play"}>{isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}</button>
                     <button onClick={restartVideo} className="bg-black/40 hover:bg-[#FF9F0F] backdrop-blur-xl border border-white/10 text-white p-3 rounded-full transition-colors transform-gpu duration-200 group/btn" aria-label="Restart Video"><RotateCcw className="w-5 h-5" /></button>
+                    <button onClick={() => seekBy(5)} className="bg-black/40 hover:bg-[#FF9F0F] backdrop-blur-xl border border-white/10 text-white p-3 rounded-full transition-colors transform-gpu duration-200 group/btn" aria-label="Vor 5 Sekunden"><SkipForward className="w-5 h-5" /></button>
                   </div>
               </div>
             </motion.div>
