@@ -2,10 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home } from 'lucide-react'
+import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home, Coins } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { apiFetch } from '../lib/supabaseClient'
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 
 // --- CONFIG ---
 const LOGO_IMAGE_URL = '/logo.png'
@@ -15,14 +15,21 @@ export default function DashboardHeader() {
   const isPreisdatenbank = pathname?.includes('/preisdatenbank')
   const isSettingsArea = pathname?.includes('/settings') || isPreisdatenbank
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [me, setMe] = useState<{ user?: { email?: string | null; role?: string | null; can_manage_org?: boolean }, tenant?: { config?: any } | null } | null>(null)
+  const [me, setMe] = useState<{
+    user?: { email?: string | null; role?: string | null; can_manage_org?: boolean }
+    tenant?: { id?: string; config?: any } | null
+    tokens?: { display?: string; unlimited?: boolean } | null
+  } | null>(null)
   const [wrongApp, setWrongApp] = useState<{ forApp: string; loginUrl: string } | null>(null)
   const mountedRef = useRef(true)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  const role = (me?.user as any)?.role as string | undefined
   const canSeeOrgSettings =
-    (me?.user as any)?.role === 'org_leader' || (me?.user as any)?.can_manage_org === true
-  const isSiteAdmin = (me?.user as any)?.role === 'admin'
+    role === 'org_leader' || role === 'admin' || (me?.user as any)?.can_manage_org === true
+  const isSiteAdmin = role === 'admin'
+  const tokenDisplay = me?.tokens?.display
+  const hasTenant = Boolean(me?.tenant?.id)
   const canSeeOfferCustomization = !isSiteAdmin
   // ADMIN vede doar interfața admin; USER și ORGANIZATION LEADER văd Preisdatenbank
   const canSeePreisdatenbank = !isSiteAdmin
@@ -52,7 +59,7 @@ export default function DashboardHeader() {
     }
   }
 
-  const fetchMe = async () => {
+  const fetchMe = useCallback(async () => {
     try {
       const data = await apiFetch('/me')
       if (!mountedRef.current) return
@@ -68,18 +75,33 @@ export default function DashboardHeader() {
     } catch {
       if (mountedRef.current) setMe(null)
     }
-  }
+  }, [])
 
   useEffect(() => {
     mountedRef.current = true
-    fetchMe()
-    const onTenantConfigSaved = () => fetchMe()
+    void fetchMe()
+    const onTenantConfigSaved = () => void fetchMe()
+    const onTokensRefresh = () => void fetchMe()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void fetchMe()
+    }
     window.addEventListener('tenant-config:saved', onTenantConfigSaved)
+    window.addEventListener('tokens:refresh', onTokensRefresh)
+    document.addEventListener('visibilitychange', onVisibility)
+    const intervalMs = 30_000
+    const intervalId = window.setInterval(() => void fetchMe(), intervalMs)
     return () => {
       mountedRef.current = false
       window.removeEventListener('tenant-config:saved', onTenantConfigSaved)
+      window.removeEventListener('tokens:refresh', onTokensRefresh)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.clearInterval(intervalId)
     }
-  }, [])
+  }, [fetchMe])
+
+  useEffect(() => {
+    void fetchMe()
+  }, [pathname, fetchMe])
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -92,7 +114,6 @@ export default function DashboardHeader() {
   }, [])
 
   const email = me?.user?.email || null
-  const role = (me as any)?.user?.role as string | undefined
   const tenantConfig = (me?.tenant as any)?.config
   const tenantLogoUrlRaw =
     (tenantConfig?.logo_url ?? tenantConfig?.logoUrl) as string | undefined
@@ -121,16 +142,16 @@ export default function DashboardHeader() {
           style={{ background: 'radial-gradient(40% 100% at 0% 0%, rgba(216,162,94,.35), transparent 60%)' }}
         />
         
-        {/* Full-width header content: left + center + right pushed to edges */}
-        <div className="relative z-10 w-full grid grid-cols-3 items-center px-2 sm:px-6">
+        {/* Flex: logo left, title centered on viewport, actions inset from right with looser spacing */}
+        <div className="relative z-10 flex w-full min-w-0 items-center gap-4 px-3 sm:px-8">
           {/* Left: tenant logo */}
-          <div className="flex items-center gap-3 min-w-0 h-12 sm:h-14">
+          <div className="flex h-12 shrink-0 items-center gap-3 sm:h-14 min-w-0 max-w-[min(200px,32vw)]">
             {tenantLogoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={tenantLogoUrl}
                 alt="Logo"
-                className="h-10 sm:h-12 w-auto max-w-[160px] object-contain object-left"
+                className="h-10 sm:h-12 w-auto max-h-full max-w-full object-contain object-left"
                 onError={(e) => {
                   e.currentTarget.style.display = 'none'
                 }}
@@ -138,8 +159,8 @@ export default function DashboardHeader() {
             ) : null}
           </div>
 
-          {/* Center: Holzbot logo only */}
-          <div className="flex items-center justify-center">
+          {/* Center: Holzbot — true viewport center */}
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={LOGO_IMAGE_URL}
@@ -149,13 +170,27 @@ export default function DashboardHeader() {
             />
           </div>
 
-          {/* Right: email + Settings (Organisation / Preisdatenbank) + logout */}
-          <div className="flex justify-end items-center gap-2 sm:gap-3 min-w-0">
-            <div className="hidden sm:flex items-center gap-2 text-xs sm:text-sm text-sand/70 truncate max-w-[200px]">
-              <User size={16} className="flex-shrink-0" />
-              <span className="truncate">{email || ''}</span>
+          {/* Right: email + Projekte-Kontingent + settings + logout — pulled slightly toward center, more air */}
+          <div className="relative z-10 ml-auto flex min-w-0 items-center gap-3 sm:gap-5 pr-1 sm:pr-2">
+            <div className="flex min-w-0 flex-col items-end gap-1 text-[11px] sm:text-sm sm:gap-1.5">
+              <div className="flex max-w-[11rem] min-w-0 items-center gap-2 text-sand/70 sm:max-w-[16rem]">
+                <User size={16} className="shrink-0" />
+                <span className="min-w-0 truncate text-right" title={email ?? undefined}>
+                  {email || ''}
+                </span>
+              </div>
+              {hasTenant && tokenDisplay ? (
+                <div
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap font-normal text-white"
+                  title="Projekte: noch verfügbar / Monatslimit (Kalender Berlin)"
+                >
+                  <Coins size={16} className="shrink-0 opacity-90" aria-hidden />
+                  <span className="tabular-nums">{tokenDisplay}</span>
+                  <span>Projekte</span>
+                </div>
+              ) : null}
             </div>
-            <div className="relative" ref={dropdownRef}>
+            <div className="relative shrink-0" ref={dropdownRef}>
               <>
                 <button
                   type="button"
@@ -213,7 +248,7 @@ export default function DashboardHeader() {
             </div>
             <button
               onClick={handleLogout}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-md transition-all duration-200 ease-out border border-white/30 bg-coffee-850 hover:bg-coffee-800 hover:border-[#FF9F0F]/50"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-normal text-[#ffffff] shadow-md transition-all duration-200 ease-out border border-white/30 bg-coffee-850 hover:bg-coffee-800 hover:border-[#FF9F0F]/50"
               title="Log Out"
             >
               <span className="hidden sm:inline">Log Out</span>

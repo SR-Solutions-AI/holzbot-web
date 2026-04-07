@@ -8,6 +8,8 @@ export type RoomPolygon = {
   points: Point[]
   roomType?: string
   roomName?: string
+  /** Abweichung von der zuletzt gespeicherten KI-Erkennung (Server: detections_review vs. detections_edited). */
+  editedInRun?: boolean
   /** true doar pentru „Raum gedämmt“ (zonă izolată sub acoperiș); lipsă/false = tratată ca neizolată la gedämmt */
   roomInsulated?: boolean
   /** Roof editor: pitch in degrees (0–60). */
@@ -23,6 +25,8 @@ export type DoorRect = {
   width_m?: number
   height_m?: number
   dimensionsEdited?: boolean
+  /** Abweichung von der KI-Erkennung (gespeicherte Bearbeitung). */
+  editedInRun?: boolean
 }
 
 type PolygonCanvasProps = {

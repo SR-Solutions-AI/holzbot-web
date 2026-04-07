@@ -1299,6 +1299,7 @@ export default function LiveFeed() {
                     detail: { offerId: id, pdfUrl: url, runId: runIdFromHistory || undefined },
                   }),
                 )
+                window.dispatchEvent(new Event('tokens:refresh'))
               }
             } catch {}
           }
@@ -1357,6 +1358,7 @@ export default function LiveFeed() {
                   detail: { offerId: id, pdfUrl: url, runId: runIdFromHistory || undefined },
                 }),
               )
+              window.dispatchEvent(new Event('tokens:refresh'))
             } else {
               setPdfUrl(null)
               setComputing(false)
@@ -1893,6 +1895,7 @@ export default function LiveFeed() {
             },
           }),
         )
+        window.dispatchEvent(new Event('tokens:refresh'))
         pendingCompletionRef.current = null
       }
       if (!instant) {
