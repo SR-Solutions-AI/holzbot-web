@@ -1,6 +1,14 @@
 'use client'
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase, apiFetch } from '../lib/supabaseClient'
@@ -1241,7 +1249,7 @@ export default function AdminPage() {
   }, [projFilterOpen])
 
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: globalThis.MouseEvent) => {
       const t = e.target as Node
       const el = e.target as HTMLElement
       if (el.closest?.('[data-offer-history-offer-type-menu]')) return
@@ -1314,7 +1322,7 @@ export default function AdminPage() {
   }, [ready, activeView, selectedProjectRef])
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: globalThis.MouseEvent) => {
       const el = statsScrollRef.current
       if (!el || !dragStateRef.current.dragging) return
       const delta = e.clientY - dragStateRef.current.startY
@@ -1383,7 +1391,7 @@ export default function AdminPage() {
   ])
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: globalThis.MouseEvent) => {
       const el = pipelineScrollRef.current
       if (!el || !pipelineDragRef.current.dragging) return
       const delta = e.clientY - pipelineDragRef.current.startY
@@ -1404,7 +1412,7 @@ export default function AdminPage() {
     }
   }, [pipelineThumb.height])
 
-  const handleStatsTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleStatsTrackClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const el = statsScrollRef.current
     if (!el) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1415,14 +1423,14 @@ export default function AdminPage() {
     el.scrollTop = ratio * (el.scrollHeight - el.clientHeight)
   }
 
-  const handleStatsThumbMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleStatsThumbMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
     dragStateRef.current.dragging = true
     dragStateRef.current.startY = e.clientY
     dragStateRef.current.startTop = statsThumb.top
   }
 
-  const handlePipelineTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePipelineTrackClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const el = pipelineScrollRef.current
     if (!el) return
     const rect = e.currentTarget.getBoundingClientRect()
@@ -1433,7 +1441,7 @@ export default function AdminPage() {
     el.scrollTop = ratio * (el.scrollHeight - el.clientHeight)
   }
 
-  const handlePipelineThumbMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePipelineThumbMouseDown = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault()
     pipelineDragRef.current.dragging = true
     pipelineDragRef.current.startY = e.clientY
@@ -2095,7 +2103,7 @@ export default function AdminPage() {
                                 }}
                                 {...(hasActivity
                                   ? {
-                                      onMouseEnter: (e: MouseEvent<HTMLDivElement>) => {
+                                      onMouseEnter: (e: ReactMouseEvent<HTMLDivElement>) => {
                                         if (heatmapTipHideRef.current) {
                                           clearTimeout(heatmapTipHideRef.current)
                                           heatmapTipHideRef.current = null
