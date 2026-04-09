@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
+import { apiFetch } from './lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import { motion, Variants } from 'framer-motion'
 import { LogIn, ArrowRight, Hammer, XCircle, CheckCircle2, FileText, Clock, TrendingUp, Shield, Users, Briefcase, Download, Check, Plus, Lightbulb, Mail, Play, Pause, RotateCcw, SkipBack, SkipForward } from 'lucide-react'
@@ -697,9 +698,18 @@ export default function LandingPage() {
   const [isPlaying, setIsPlaying] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace('/dashboard')
-      else setLoading(false)
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) {
+        setLoading(false)
+        return
+      }
+      try {
+        const me = await apiFetch('/me')
+        const role = (me?.user?.role ?? null) as string | null
+        router.replace(role === 'admin' ? '/admin' : '/dashboard')
+      } catch {
+        router.replace('/dashboard')
+      }
     })
   }, [router])
 

@@ -71,7 +71,7 @@ export default function LoginPage() {
     setError(null)
     setSubmitting(true)
 
-    const { data, error: err } = await supabase.auth.signInWithPassword({ email, password })
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
 
     if (err) {
       setError(err.message)
@@ -79,6 +79,7 @@ export default function LoginPage() {
       return
     }
 
+    let role: string | undefined
     try {
       const me = await apiFetch('/me')
       if ((me?.tenant as any)?.slug === 'betonbau') {
@@ -87,13 +88,16 @@ export default function LoginPage() {
         setSubmitting(false)
         return
       }
+      role =
+        me?.user && typeof me.user === 'object' && 'role' in me.user
+          ? (me.user as { role?: string }).role
+          : undefined
     } catch {
       setError(DE.genericError)
       setSubmitting(false)
       return
     }
-
-    router.push('/')
+    router.push(role === 'admin' ? '/admin' : '/')
     setSubmitting(false)
   }
 

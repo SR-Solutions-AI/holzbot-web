@@ -1,12 +1,11 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { apiFetch } from '../lib/supabaseClient'
 import { inferOfferFlow } from '../lib/offerFlow'
-import { Plus, Loader2, Search, Filter, Trash2, ChevronDown, Check, X } from 'lucide-react'
-import { DatePickerPopover } from './DatePickerPopover'
+import { Plus, Loader2, Search, Filter, Trash2, X } from 'lucide-react'
+import { OfferHistoryFilterForm, WIZARD_OFFER_SLUGS, offerTypeLabel } from './OfferHistoryFilterForm'
 
 type OfferListItem = {
   id: string
@@ -35,21 +34,6 @@ function translateText(text?: string | null): string {
   if (!text) return ''
   const t = text.trim()
   return (DE.translations as Record<string, string>)[t] || t
-}
-
-/** Same 3 types as Step Wizard package picker: Mengenermittlung, Dachstuhl, Neubau */
-const WIZARD_OFFER_SLUGS = ['mengenermittlung', 'mengen', 'dachstuhl', 'neubau', 'full_house'] as const
-const SLUG_TO_LABEL: Record<string, string> = {
-  mengenermittlung: 'Mengenermittlung',
-  mengen: 'Mengenermittlung',
-  dachstuhl: 'Dachstuhl Angebot',
-  neubau: 'Neubau Angebot',
-  full_house: 'Neubau Angebot',
-}
-
-function offerTypeLabel(slug: string | null | undefined): string {
-  if (!slug) return ''
-  return SLUG_TO_LABEL[slug] ?? slug
 }
 
 function getOfferTypeBadgeLabel(item: OfferListItem): string {
@@ -116,20 +100,11 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const filterWrapRef = useRef<HTMLDivElement>(null)
-  const [offerTypeDropdownOpen, setOfferTypeDropdownOpen] = useState(false)
-  const offerTypeTriggerRef = useRef<HTMLDivElement>(null)
-  const offerTypeMenuRef = useRef<HTMLDivElement>(null)
-  const [offerTypeMenuPosition, setOfferTypeMenuPosition] = useState({ top: 0, left: 0, width: 200 })
   const loadGenerationRef = useRef(0)
 
   const wizardOfferTypes = offerTypes.filter((ot) =>
     WIZARD_OFFER_SLUGS.includes(ot.slug as (typeof WIZARD_OFFER_SLUGS)[number])
   )
-  const orderedWizardTypes = [
-    wizardOfferTypes.find((o) => o.slug === 'mengenermittlung' || o.slug === 'mengen'),
-    wizardOfferTypes.find((o) => o.slug === 'dachstuhl'),
-    wizardOfferTypes.find((o) => o.slug === 'neubau' || o.slug === 'full_house'),
-  ].filter(Boolean) as OfferType[]
 
   async function load() {
     const gen = ++loadGenerationRef.current
@@ -235,52 +210,13 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node
-      // Filter panel should stay open while interacting with portal-based dropdown
-      if (offerTypeTriggerRef.current?.contains(target)) return
-      if (offerTypeMenuRef.current?.contains(target)) return
-      if (filterWrapRef.current && !filterWrapRef.current.contains(target)) setFilterOpen(false)
+      const el = e.target as HTMLElement
+      if (el.closest?.('[data-offer-history-offer-type-menu]')) return
+      if (filterWrapRef.current && !filterWrapRef.current.contains(e.target as Node)) setFilterOpen(false)
     }
     if (filterOpen) document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
   }, [filterOpen])
-
-  useEffect(() => {
-    if (!offerTypeDropdownOpen || !offerTypeTriggerRef.current) return
-    const MIN_W = 200
-    const MENU_H = 220
-    const GAP = 6
-    const update = () => {
-      if (!offerTypeTriggerRef.current) return
-      const rect = offerTypeTriggerRef.current.getBoundingClientRect()
-      const width = Math.max(rect.width, MIN_W)
-      const vw = window.innerWidth
-      const vh = window.innerHeight
-      const left = Math.max(GAP, Math.min(rect.left, vw - width - GAP))
-      const wouldOverflowBottom = rect.bottom + GAP + MENU_H > vh
-      const top = wouldOverflowBottom ? Math.max(GAP, rect.top - GAP - MENU_H) : rect.bottom + GAP
-      setOfferTypeMenuPosition({ top, left, width })
-    }
-    update()
-    window.addEventListener('scroll', update, true)
-    window.addEventListener('resize', update)
-    return () => {
-      window.removeEventListener('scroll', update, true)
-      window.removeEventListener('resize', update)
-    }
-  }, [offerTypeDropdownOpen])
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (
-        offerTypeTriggerRef.current?.contains(e.target as Node) ||
-        offerTypeMenuRef.current?.contains(e.target as Node)
-      ) return
-      setOfferTypeDropdownOpen(false)
-    }
-    if (offerTypeDropdownOpen) document.addEventListener('click', handleClickOutside)
-    return () => document.removeEventListener('click', handleClickOutside)
-  }, [offerTypeDropdownOpen])
 
   const loadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -369,125 +305,23 @@ export default function HistoryList({ variant = 'wood' }: { variant?: 'wood' | '
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -8 }}
                 transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
-                className="absolute right-0 top-full mt-2 z-30 w-[280px] rounded-2xl bg-coffee-850/95 border border-white/20 shadow-2xl shadow-black/30 backdrop-blur-sm overflow-hidden"
+                className="absolute right-0 top-full z-30 mt-2 w-[280px] overflow-hidden rounded-2xl border border-white/20 bg-coffee-850/95 shadow-2xl shadow-black/30 backdrop-blur-sm"
               >
-                <div className="p-4 space-y-5">
-                  <div>
-                    <label className="block text-xs font-medium text-sand/70 uppercase tracking-wider mb-2">Angebot</label>
-                    <div ref={offerTypeTriggerRef} className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setOfferTypeDropdownOpen((o) => !o)}
-                        className="w-full flex items-center justify-between gap-2 sun-input text-sm py-2.5 px-3 rounded-xl bg-white/5 border border-white/15 text-left text-white hover:border-white/25 focus:border-[#FF9F0F]/50 focus:ring-2 focus:ring-[#FF9F0F]/20"
-                      >
-                        <span>
-                          {(() => {
-                            if (!draftOfferTypeId) return 'Alle'
-                            const selectedType = orderedWizardTypes.find((ot) => ot.id === draftOfferTypeId)
-                            return offerTypeLabel(selectedType?.slug) || 'Alle'
-                          })()}
-                        </span>
-                        <ChevronDown size={16} className={`text-sand/50 shrink-0 transition-transform ${offerTypeDropdownOpen ? 'rotate-180' : ''}`} />
-                      </button>
-                      {typeof document !== 'undefined' &&
-                        offerTypeDropdownOpen &&
-                        createPortal(
-                          <div
-                            ref={offerTypeMenuRef}
-                            onClick={(e) => e.stopPropagation()}
-                            className="fixed z-[9998] rounded-xl bg-coffee-850 border border-white/20 shadow-xl shadow-black/40 overflow-hidden py-1.5"
-                            style={{
-                              top: offerTypeMenuPosition.top,
-                              left: offerTypeMenuPosition.left,
-                              width: offerTypeMenuPosition.width,
-                            }}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => { setDraftOfferTypeId(''); setOfferTypeDropdownOpen(false) }}
-                              className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${!draftOfferTypeId ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/90 hover:bg-white/10 hover:text-white'}`}
-                            >
-                              {draftOfferTypeId ? <span className="w-5" /> : <Check size={16} className="shrink-0" />}
-                              Alle
-                            </button>
-                            {orderedWizardTypes.map((ot) => {
-                              const isSelected = draftOfferTypeId === ot.id
-                              return (
-                                <button
-                                  key={ot.id}
-                                  type="button"
-                                  onClick={() => { setDraftOfferTypeId(ot.id); setOfferTypeDropdownOpen(false) }}
-                                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors ${isSelected ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/90 hover:bg-white/10 hover:text-white'}`}
-                                >
-                                  {isSelected ? <Check size={16} className="shrink-0" /> : <span className="w-5" />}
-                                  {offerTypeLabel(ot.slug)}
-                                </button>
-                              )
-                            })}
-                          </div>,
-                          document.body
-                        )}
-                    </div>
-                  </div>
-                  <div className="border-t border-white/10 pt-4">
-                    <label className="block text-xs font-medium text-sand/70 uppercase tracking-wider mb-2">Zeitraum</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <DatePickerPopover
-                        value={draftDateFrom}
-                        onChange={setDraftDateFrom}
-                        placeholder="Von"
-                        label="Von"
-                      />
-                      <DatePickerPopover
-                        value={draftDateTo}
-                        onChange={setDraftDateTo}
-                        placeholder="Bis"
-                        label="Bis"
-                      />
-                    </div>
-                  </div>
-                  <div className="border-t border-white/10 pt-4">
-                    <label className="block text-xs font-medium text-sand/70 uppercase tracking-wider mb-2">Benutzer</label>
-                    <div className="max-h-36 overflow-y-auto rounded-xl bg-white/5 border border-white/10 p-2 space-y-1.5">
-                      {orgMembers.map((m) => (
-                        <label key={m.id} className="flex items-center gap-3 cursor-pointer py-1.5 px-2 rounded-lg hover:bg-white/5 text-sm text-sand/90 hover:text-white transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={draftSelectedUserIds.includes(m.id)}
-                            onChange={() => toggleUserFilter(m.id)}
-                            className="rounded border-white/30 text-[#FF9F0F] focus:ring-2 focus:ring-[#FF9F0F]/40 size-4 shrink-0"
-                          />
-                          <span className="truncate">{m.full_name || m.email || m.id}</span>
-                        </label>
-                      ))}
-                    </div>
-                    {draftSelectedUserIds.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setDraftSelectedUserIds([])}
-                        className="mt-2 text-xs text-[#FF9F0F] hover:text-[#FFB84D] font-medium transition-colors"
-                      >
-                        Zurücksetzen
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="px-4 pb-4 pt-0 space-y-2">
-                  <button
-                    type="button"
-                    onClick={applyFilters}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-[#FF9F0F] hover:bg-[#FFB84D] border border-black/20 text-white text-sm font-semibold transition-colors"
-                  >
-                    Filter anwenden
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetDraftFilters}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-sand/90 hover:text-white text-sm font-medium transition-colors"
-                  >
-                    Zurücksetzen
-                  </button>
-                </div>
+                <OfferHistoryFilterForm
+                  offerTypeOptions={wizardOfferTypes}
+                  orgMembers={orgMembers}
+                  draftOfferTypeId={draftOfferTypeId}
+                  setDraftOfferTypeId={setDraftOfferTypeId}
+                  draftDateFrom={draftDateFrom}
+                  setDraftDateFrom={setDraftDateFrom}
+                  draftDateTo={draftDateTo}
+                  setDraftDateTo={setDraftDateTo}
+                  draftSelectedUserIds={draftSelectedUserIds}
+                  toggleUserFilter={toggleUserFilter}
+                  onClearUserSelection={() => setDraftSelectedUserIds([])}
+                  onApply={applyFilters}
+                  onReset={resetDraftFilters}
+                />
               </motion.div>
             )}
             </AnimatePresence>

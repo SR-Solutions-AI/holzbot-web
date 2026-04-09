@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home, Coins } from 'lucide-react'
+import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home, Coins, FlaskConical, Server } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { apiFetch } from '../lib/supabaseClient'
 import { useCallback, useEffect, useState, useRef } from 'react'
@@ -12,6 +12,7 @@ const LOGO_IMAGE_URL = '/logo.png'
 
 export default function DashboardHeader() {
   const pathname = usePathname()
+  const isAdminRoute = pathname?.startsWith('/admin')
   const isPreisdatenbank = pathname?.includes('/preisdatenbank')
   const isSettingsArea = pathname?.includes('/settings') || isPreisdatenbank
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -28,7 +29,7 @@ export default function DashboardHeader() {
   const canSeeOrgSettings =
     role === 'org_leader' || role === 'admin' || (me?.user as any)?.can_manage_org === true
   const isSiteAdmin = role === 'admin'
-  const tokenDisplay = me?.tokens?.display
+  const tokenDisplay = isAdminRoute || isSiteAdmin ? null : me?.tokens?.display
   const hasTenant = Boolean(me?.tenant?.id)
   const canSeeOfferCustomization = !isSiteAdmin
   // ADMIN vede doar interfața admin; USER și ORGANIZATION LEADER văd Preisdatenbank
@@ -145,8 +146,41 @@ export default function DashboardHeader() {
         {/* Flex: logo left, title centered on viewport, actions inset from right with looser spacing */}
         <div className="relative z-10 flex w-full min-w-0 items-center gap-4 px-3 sm:px-8">
           {/* Left: tenant logo */}
-          <div className="flex h-12 shrink-0 items-center gap-3 sm:h-14 min-w-0 max-w-[min(200px,32vw)]">
-            {tenantLogoUrl ? (
+          <div className="flex h-12 shrink-0 items-center gap-3 sm:h-14 min-w-0 max-w-[min(360px,45vw)]">
+            {isAdminRoute ? (
+              <div className="flex items-center gap-2">
+                <VpsStatusChip
+                  label="Testing"
+                  value={64}
+                  icon={<FlaskConical size={12} className="text-[#FFB84D]" />}
+                  details={{
+                    os: 'Ubuntu 24.04',
+                    status: 'Running',
+                    cpu: '1%',
+                    memory: '17%',
+                    disk: '38 GB / 100 GB',
+                    incoming: '5.2 MB',
+                    outgoing: '21.4 MB',
+                    bandwidth: '0.003 TB / 8 TB',
+                  }}
+                />
+                <VpsStatusChip
+                  label="Production"
+                  value={78}
+                  icon={<Server size={12} className="text-[#FFB84D]" />}
+                  details={{
+                    os: 'Ubuntu 24.04',
+                    status: 'Running',
+                    cpu: '4%',
+                    memory: '42%',
+                    disk: '61 GB / 100 GB',
+                    incoming: '18.6 MB',
+                    outgoing: '44.9 MB',
+                    bandwidth: '0.11 TB / 8 TB',
+                  }}
+                />
+              </div>
+            ) : tenantLogoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={tenantLogoUrl}
@@ -190,62 +224,64 @@ export default function DashboardHeader() {
                 </div>
               ) : null}
             </div>
-            <div className="relative shrink-0" ref={dropdownRef}>
-              <>
-                <button
-                  type="button"
-                  onClick={() => setSettingsOpen((o) => !o)}
-                  className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
-                  title="Einstellungen"
-                >
-                  <Settings size={18} className="shrink-0" />
-                  <span className="hidden sm:inline">Einstellungen</span>
-                  <ChevronDown size={16} className={`shrink-0 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {settingsOpen && (
-                  <div className="absolute right-0 top-full mt-1 py-1 w-72 rounded-xl bg-coffee-850 border border-white/20 shadow-xl z-50">
-                    <Link
-                      href="/dashboard"
-                      onClick={() => setSettingsOpen(false)}
-                      className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
-                    >
-                      <Home size={18} className="shrink-0 text-sand/80" />
-                      <span className="leading-snug">Angebot generieren</span>
-                    </Link>
-                    {canSeeOrgSettings && (
+            {!isAdminRoute && !isSiteAdmin ? (
+              <div className="relative shrink-0" ref={dropdownRef}>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen((o) => !o)}
+                    className="flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl font-bold text-[#ffffff] shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    title="Einstellungen"
+                  >
+                    <Settings size={18} className="shrink-0" />
+                    <span className="hidden sm:inline">Einstellungen</span>
+                    <ChevronDown size={16} className={`shrink-0 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  {settingsOpen && (
+                    <div className="absolute right-0 top-full mt-1 py-1 w-72 rounded-xl bg-coffee-850 border border-white/20 shadow-xl z-50">
                       <Link
-                        href="/dashboard/settings/organisation"
+                        href="/dashboard"
                         onClick={() => setSettingsOpen(false)}
                         className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
                       >
-                        <Building2 size={18} className="shrink-0 text-sand/80" />
-                        <span className="leading-snug">Organisationseinstellungen</span>
+                        <Home size={18} className="shrink-0 text-sand/80" />
+                        <span className="leading-snug">Angebot generieren</span>
                       </Link>
-                    )}
-                    {canSeeOfferCustomization && (
-                      <Link
-                        href="/dashboard/settings/angebotsanpassung"
-                        onClick={() => setSettingsOpen(false)}
-                        className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
-                      >
-                        <FileText size={18} className="shrink-0 text-sand/80" />
-                        <span className="leading-snug">Angebotsanpassung</span>
-                      </Link>
-                    )}
-                    {canSeePreisdatenbank && (
-                      <Link
-                        href="/dashboard/preisdatenbank"
-                        onClick={() => setSettingsOpen(false)}
-                        className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
-                      >
-                        <Database size={18} className="shrink-0 text-sand/80" />
-                        <span className="leading-snug">Preisdatenbank</span>
-                      </Link>
-                    )}
-                  </div>
-                )}
-              </>
-            </div>
+                      {canSeeOrgSettings && (
+                        <Link
+                          href="/dashboard/settings/organisation"
+                          onClick={() => setSettingsOpen(false)}
+                          className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                        >
+                          <Building2 size={18} className="shrink-0 text-sand/80" />
+                          <span className="leading-snug">Organisationseinstellungen</span>
+                        </Link>
+                      )}
+                      {canSeeOfferCustomization && (
+                        <Link
+                          href="/dashboard/settings/angebotsanpassung"
+                          onClick={() => setSettingsOpen(false)}
+                          className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                        >
+                          <FileText size={18} className="shrink-0 text-sand/80" />
+                          <span className="leading-snug">Angebotsanpassung</span>
+                        </Link>
+                      )}
+                      {canSeePreisdatenbank && (
+                        <Link
+                          href="/dashboard/preisdatenbank"
+                          onClick={() => setSettingsOpen(false)}
+                          className="flex items-start gap-2 px-4 py-2.5 text-left text-white hover:bg-white/10 rounded-lg mx-1 whitespace-normal leading-snug"
+                        >
+                          <Database size={18} className="shrink-0 text-sand/80" />
+                          <span className="leading-snug">Preisdatenbank</span>
+                        </Link>
+                      )}
+                    </div>
+                  )}
+                </>
+              </div>
+            ) : null}
             <button
               onClick={handleLogout}
               className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-normal text-[#ffffff] shadow-md transition-all duration-200 ease-out border border-white/30 bg-coffee-850 hover:bg-coffee-800 hover:border-[#FF9F0F]/50"
@@ -257,6 +293,74 @@ export default function DashboardHeader() {
           </div>
         </div>
     </header>
+  )
+}
+
+function VpsStatusChip({
+  label,
+  value,
+  icon,
+  details,
+}: {
+  label: string
+  value: number
+  icon: React.ReactNode
+  details: {
+    os: string
+    status: string
+    cpu: string
+    memory: string
+    disk: string
+    incoming: string
+    outgoing: string
+    bandwidth: string
+  }
+}) {
+  const width = Math.max(0, Math.min(100, value))
+  return (
+    <div className="group relative min-w-[152px] rounded-xl border border-white/12 bg-black/30 px-3 py-2 transition-colors duration-150 hover:border-white/20 hover:bg-black/45">
+      <div className="flex items-center gap-2">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/6 text-[#FFB84D]">
+          {icon}
+        </span>
+        <div className="min-w-0 flex-1 leading-tight">
+          <span className="block text-[10px] font-medium uppercase tracking-[0.12em] text-sand/50">VPS</span>
+          <span className="block text-xs font-semibold text-sand/95">{label}</span>
+        </div>
+        <span className="shrink-0 text-xs font-bold text-[#FFD29A]">{value}%</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/40 ring-1 ring-white/10">
+        <div className="h-full rounded-full bg-[#FF9F0F]" style={{ width: `${width}%` }} />
+      </div>
+
+      <div className="pointer-events-none absolute left-0 top-full z-50 mt-2 w-[310px] origin-top-left rounded-xl border border-white/15 bg-black/90 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[15px] font-bold text-white">{label}</div>
+          <div className="inline-flex items-center gap-1 rounded-full border border-[#FF9F0F]/45 bg-[#FF9F0F]/14 px-2 py-0.5 text-[11px] font-semibold text-[#FFD29A]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#FF9F0F]" />
+            {details.status}
+          </div>
+        </div>
+        <div className="mb-2 text-[12px] text-sand/80">{details.os}</div>
+        <div className="grid grid-cols-2 gap-2 text-[12px]">
+          <DetailItem label="CPU usage" value={details.cpu} />
+          <DetailItem label="Memory usage" value={details.memory} />
+          <DetailItem label="Disk usage" value={details.disk} />
+          <DetailItem label="Bandwidth" value={details.bandwidth} />
+          <DetailItem label="Incoming traffic" value={details.incoming} />
+          <DetailItem label="Outgoing traffic" value={details.outgoing} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+      <div className="text-[11px] text-sand/70">{label}</div>
+      <div className="mt-0.5 text-[13px] font-semibold text-sand">{value}</div>
+    </div>
   )
 }
 

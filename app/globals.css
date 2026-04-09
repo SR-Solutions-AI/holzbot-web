@@ -109,7 +109,8 @@ html, body {
          bg-black/10 hover:bg-black/20 border border-white/10;
 }
 .list-btn { @apply w-full text-left px-4 py-3 rounded-md border shadow-soft bg-coffee-700 hover:bg-coffee-600 border-black/40 transition; }
-.list-btn--active { @apply ring-2 ring-caramel; }
+/* Active state without ring to avoid any clipping in scroll containers */
+.list-btn--active { @apply border-caramel bg-coffee-650; }
 
 /* ====== Scrollbar tematic (global) ====== */
 html .themed-scroll,
@@ -175,6 +176,28 @@ html .themed-scroll::-webkit-scrollbar-thumb:hover,
 }
 .preisdatenbank-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(216,162,94,.75);
+}
+
+/* Admin analytics: force visible, high-contrast scrollbar */
+.admin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #ff9f0f rgba(0,0,0,.28);
+}
+.admin-scroll::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+.admin-scroll::-webkit-scrollbar-track {
+  background: rgba(0,0,0,.28);
+  border-radius: 9999px;
+}
+.admin-scroll::-webkit-scrollbar-thumb {
+  background: #ff9f0f;
+  border-radius: 9999px;
+  border: 2px solid rgba(0,0,0,.28);
+}
+.admin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #ffb84d;
 }
 
 /* KaTeX: permite wrap pe rânduri noi și aliniere la stânga */

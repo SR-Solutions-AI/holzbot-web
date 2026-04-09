@@ -5,11 +5,9 @@ import { apiFetch } from '../lib/supabaseClient'
 import HistoryList from '../components/HistoryList'
 import LiveFeed from '../components/LiveFeed'
 import StepWizard from '../components/StepWizard'
-import AdminDashboard from '../components/AdminDashboard'
 
 export default function Home() {
   const [ready, setReady] = useState(false)
-  const [isOrgAdmin, setIsOrgAdmin] = useState(false)
   const [isSiteAdmin, setIsSiteAdmin] = useState(false)
   useEffect(() => {
     supabase.auth.getSession().then(({ data, error }) => {
@@ -38,12 +36,10 @@ export default function Home() {
         const me = await apiFetch('/me')
         const role = (me?.user?.role ?? null) as string | null
         if (mounted) {
-          setIsOrgAdmin(role === 'org_leader' || (me?.user as any)?.can_manage_org === true)
           setIsSiteAdmin(role === 'admin')
         }
       } catch {
         if (mounted) {
-          setIsOrgAdmin(false)
           setIsSiteAdmin(false)
         }
       }
@@ -71,16 +67,20 @@ export default function Home() {
         }
       }, 150)
       return () => clearTimeout(timer)
-    } catch (_) {}
+    } catch {}
+  }, [ready, isSiteAdmin])
+
+  useEffect(() => {
+    if (!ready || !isSiteAdmin) return
+    window.location.href = '/admin'
   }, [ready, isSiteAdmin])
 
   if (!ready) return null
+  if (isSiteAdmin) return null
 
   return (
     <>
-      {isSiteAdmin ? (
-        <AdminDashboard />
-      ) : (
+      {!isSiteAdmin ? (
         <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr_440px] gap-4 h-full min-h-0">
           {/* Stânga: proiecte */}
           <aside className="bg-panel/80 border border-black/40 rounded-xl2 p-3 shadow-soft flex flex-col min-w-0 h-full min-h-0">
@@ -96,7 +96,7 @@ export default function Home() {
             <LiveFeed />
           </div>
         </div>
-      )}
+      ) : null}
     </>
   )
 }

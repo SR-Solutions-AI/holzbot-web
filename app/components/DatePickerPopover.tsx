@@ -37,9 +37,10 @@ type DatePickerPopoverProps = {
   placeholder?: string
   label?: string
   id?: string
+  size?: 'default' | 'compact'
 }
 
-export function DatePickerPopover({ value, onChange, placeholder = 'Datum', label, id }: DatePickerPopoverProps) {
+export function DatePickerPopover({ value, onChange, placeholder = 'Datum', label, id, size = 'default' }: DatePickerPopoverProps) {
   const [open, setOpen] = useState(false)
   const [viewDate, setViewDate] = useState(() => parseYMD(value) || new Date())
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -64,8 +65,8 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
     const anchor = triggerRef.current || wrapRef.current
     if (!anchor) return
     const rect = anchor.getBoundingClientRect()
-    const POPOVER_W = 320
-    const POPOVER_H = 410
+    const POPOVER_W = size === 'compact' ? 280 : 320
+    const POPOVER_H = size === 'compact' ? 350 : 410
     const GAP = 8
 
     const vw = window.innerWidth
@@ -126,7 +127,7 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
           if (next) updatePosition()
           setOpen(next)
         }}
-        className="w-full min-w-0 overflow-hidden flex items-center gap-2 sun-input text-sm py-2.5 px-3 rounded-xl bg-white/90 border border-white/20 text-left text-coffee-900 hover:bg-white focus:border-[#FF9F0F]/50 focus:ring-2 focus:ring-[#FF9F0F]/20"
+        className={`w-full min-w-0 overflow-hidden flex items-center gap-2 sun-input text-sm px-3 rounded-xl bg-white/90 border border-white/20 text-left text-coffee-900 hover:bg-white focus:border-[#FF9F0F]/50 focus:ring-2 focus:ring-[#FF9F0F]/20 ${size === 'compact' ? 'py-2' : 'py-2.5'}`}
       >
         <CalendarIcon size={16} className="text-coffee-700/70 shrink-0" />
         <span className={`flex-1 min-w-0 truncate ${value ? 'text-coffee-900' : 'text-coffee-700/60'}`}>
@@ -138,6 +139,7 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
         createPortal(
           <>
             <motion.div
+              data-holzbot-date-picker-portal
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.15 }}
@@ -147,49 +149,50 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
             />
             <motion.div
               ref={popoverRef}
+              data-holzbot-date-picker-portal
               initial={{ opacity: 0, scale: 0.96, y: -4 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.2, ease: [0.25, 0.46, 0.45, 0.94] }}
-              className="fixed z-[9999] w-[320px] rounded-2xl bg-coffee-850 border border-white/20 shadow-2xl shadow-black/40 overflow-hidden"
+              className={`fixed z-[9999] rounded-2xl bg-coffee-850 border border-white/20 shadow-2xl shadow-black/40 overflow-hidden ${size === 'compact' ? 'w-[280px]' : 'w-[320px]'}`}
               style={{ top: position.top, left: position.left }}
               onPointerDown={(e) => e.stopPropagation()}
             >
-            <div className="p-5">
+            <div className={size === 'compact' ? 'p-4' : 'p-5'}>
               {/* Month/Year header */}
-              <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-3 mb-4">
+              <div className={`flex items-center justify-between rounded-xl bg-white/5 px-3 mb-4 ${size === 'compact' ? 'py-2.5' : 'py-3'}`}>
                 <button
                   type="button"
                   onClick={prevMonth}
                   className="p-2 -m-2 rounded-lg text-sand/70 hover:bg-white/10 hover:text-white transition-colors"
                   aria-label="Vorheriger Monat"
                 >
-                  <ChevronLeft size={22} />
+                  <ChevronLeft size={size === 'compact' ? 19 : 22} />
                 </button>
-                <span className="text-base font-semibold text-white capitalize tracking-tight">{monthYearLabel}</span>
+                <span className={`${size === 'compact' ? 'text-sm' : 'text-base'} font-semibold text-white capitalize tracking-tight`}>{monthYearLabel}</span>
                 <button
                   type="button"
                   onClick={nextMonth}
                   className="p-2 -m-2 rounded-lg text-sand/70 hover:bg-white/10 hover:text-white transition-colors"
                   aria-label="Nächster Monat"
                 >
-                  <ChevronRight size={22} />
+                  <ChevronRight size={size === 'compact' ? 19 : 22} />
                 </button>
               </div>
 
               {/* Weekday labels */}
-              <div className="grid grid-cols-7 gap-2 mb-2 px-0.5">
+              <div className={`grid grid-cols-7 ${size === 'compact' ? 'gap-1.5' : 'gap-2'} mb-2 px-0.5`}>
                 {WEEKDAYS_DE.map((wd) => (
-                  <div key={wd} className="text-center text-[11px] font-semibold text-sand/50 uppercase tracking-wider py-2">
+                  <div key={wd} className={`text-center font-semibold text-sand/50 uppercase tracking-wider ${size === 'compact' ? 'text-[10px] py-1.5' : 'text-[11px] py-2'}`}>
                     {wd}
                   </div>
                 ))}
               </div>
 
               {/* Date grid – fiecare zi într-o celulă clar definită */}
-              <div className="grid grid-cols-7 gap-2">
+              <div className={`grid grid-cols-7 ${size === 'compact' ? 'gap-1.5' : 'gap-2'}`}>
                 {days.map((d, i) => {
                   if (d === null) {
-                    return <div key={`empty-${i}`} className="w-10 h-10 rounded-xl bg-white/[0.03]" aria-hidden />
+                    return <div key={`empty-${i}`} className={`${size === 'compact' ? 'w-8 h-8' : 'w-10 h-10'} rounded-xl bg-white/[0.03]`} aria-hidden />
                   }
                   const dateStr = toYMD(new Date(year, month, d))
                   const isSelected = value === dateStr
@@ -200,7 +203,7 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
                       type="button"
                       onClick={() => handleSelect(d)}
                       className={`
-                        w-10 h-10 flex items-center justify-center rounded-xl text-sm font-medium transition-all duration-150
+                        ${size === 'compact' ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm'} flex items-center justify-center rounded-xl font-medium transition-all duration-150
                         ${isSelected
                           ? 'bg-[#FF9F0F] text-white shadow-lg shadow-[#FF9F0F]/30 scale-105'
                           : isToday
@@ -216,7 +219,7 @@ export function DatePickerPopover({ value, onChange, placeholder = 'Datum', labe
               </div>
 
               {/* Footer actions */}
-              <div className="flex items-center justify-between gap-4 pt-5 mt-4 border-t border-white/10">
+              <div className={`flex items-center justify-between gap-4 mt-4 border-t border-white/10 ${size === 'compact' ? 'pt-4' : 'pt-5'}`}>
                 <button
                   type="button"
                   onClick={() => { onChange(''); setOpen(false) }}
