@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase, apiFetch } from '../lib/supabaseClient'
@@ -15,6 +15,7 @@ import {
   FileText,
   Filter,
   Gauge,
+  Globe,
   Images,
   SquarePen,
   Upload,
@@ -35,6 +36,16 @@ import {
 import { DatePickerPopover } from '../components/DatePickerPopover'
 import { SelectSun } from '../components/SunSelect'
 import { OfferHistoryFilterForm } from '../components/OfferHistoryFilterForm'
+import {
+  fetchAdminTenants,
+  fetchAdminTenantOffers,
+  fetchAdminTenantWorkspace,
+  fetchAdminStatisticsSummary,
+  type AdminTenant,
+  type AdminTenantOffer,
+  type AdminTenantWorkspace,
+  type AdminStatisticsSummary,
+} from '../lib/adminApi'
 
 /** Dashboard center logo; used as client header fallback when no `logoSrc`. */
 const HOLZBOT_LOGO_PLACEHOLDER = '/logo.png'
@@ -166,6 +177,14 @@ const THROUGHPUT_SERIES = [
   { label: 'W7', offers: 194, avgTime: '5m 59s' },
   { label: 'W8', offers: 203, avgTime: '5m 54s' },
 ] as const
+
+/** Same W1–W8 window as throughput chart — demo series for KPI sparklines. */
+const KPI_SPARK_OFFERS = [1688, 1724, 1690, 1848, 1812, 1960, 2024, 2184] as const
+/** Daily avg processing time trend (seconds); card headline stays a separate aggregate. */
+const KPI_SPARK_PROC_SECONDS = [432, 418, 401, 388, 382, 368, 359, 402] as const
+/** Net clients per week (acquired − churn, illustrative). */
+const KPI_SPARK_CLIENTS_NET = [5, 7, 4, 9, 8, 10, 11, 12] as const
+const KPI_SPARK_INCIDENTS = [34, 31, 28, 30, 29, 27, 25, 27] as const
 const DATA_MOAT_ITEMS = [
   { title: 'Plan segmentation', markedPlans: 14382 },
   { title: 'Wall detection', markedPlans: 9744 },
@@ -187,6 +206,8 @@ type OrgUserEditable = {
   email: string
   role: 'Admin' | 'Member'
   password: string
+  /** When set, row comes from Supabase; the edit modal does not persist changes. */
+  sourceProfileId?: string
 }
 
 function parseTokenBalanceString(s: string): number {
@@ -194,10 +215,39 @@ function parseTokenBalanceString(s: string): number {
   return Number.isFinite(n) ? n : 0
 }
 
-function seedOrgUsersFromMeta(orgId: string): OrgUserEditable[] {
-  const m = ORG_META[orgId] ?? ORG_META['org-1']
-  const domain = m.email.includes('@') ? m.email.split('@')[1]! : 'org.local'
-  return m.users.map((u, i) => {
+function profileRoleToUi(role: string | null): 'Admin' | 'Member' {
+  const r = (role ?? '').toLowerCase()
+  return r === 'admin' ? 'Admin' : 'Member'
+}
+
+/** When an org comes only from the API (no ORG_META entry), use this for organisation workspace placeholders. */
+function buildSyntheticOrgMeta(t: AdminTenant): OrgMeta {
+  const raw = (t.slug || t.name || 'org').replace(/[^a-z0-9]/gi, '')
+  const codePrefix = raw.slice(0, 3).toUpperCase() || 'ORG'
+  const displayName = t.name?.trim() || t.slug || 'Organization'
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'OR'
+  return {
+    companyName: displayName,
+    phone: '—',
+    email: '—',
+    address: '—',
+    logoLabel: initials,
+    codePrefix,
+    plan: '—',
+    tokenBalance: '0',
+    users: [{ name: '—', role: 'Member' }],
+  }
+}
+
+function seedOrgUsersFromMeta(meta: OrgMeta): OrgUserEditable[] {
+  const domain = meta.email.includes('@') ? meta.email.split('@')[1]! : 'org.local'
+  return meta.users.map((u, i) => {
     const slug = u.name.toLowerCase().replace(/[^a-z]/g, '') || 'user'
     return {
       name: u.name,
@@ -244,21 +294,227 @@ const ORG_PROJECT_DURATIONS = [
   '10m 14s',
 ] as const
 
-/** Slight hue shift per heatmap column (still orange family). */
-const ORG_HEATMAP_RGB: ReadonlyArray<[number, number, number]> = [
-  [255, 159, 15],
-  [255, 184, 77],
-  [232, 160, 92],
-  [214, 165, 116],
-  [242, 140, 60],
-  [230, 150, 75],
-]
+/**
+ * Activity heatmap: 5 fixed steps (Less → More), same hexes as the legend swatches.
+ * Ramp from deep brown → brand orange (#ff9f0f).
+ */
+const ACTIVITY_HEATMAP_STEPS = ['#352b22', '#5a3d26', '#8b5c24', '#c97810', '#ff9f0f'] as const
+const ACTIVITY_HEATMAP_EMPTY = '#1e1a16'
+
+function activityHeatmapStepIndex(runs: number, maxRuns: number): number {
+  if (runs <= 0) return -1
+  const denom = Math.max(1, maxRuns)
+  const step = Math.ceil((runs / denom) * ACTIVITY_HEATMAP_STEPS.length) - 1
+  return Math.min(ACTIVITY_HEATMAP_STEPS.length - 1, Math.max(0, step))
+}
 
 function toYMD(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+function formatDeltaPct(current: number, previous: number): string {
+  if (previous === 0 && current === 0) return '0%'
+  if (previous === 0) return current > 0 ? '+100%' : '0%'
+  const pct = ((current - previous) / previous) * 100
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct.toFixed(1)}%`
+}
+
+function formatRefreshLabel(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const sec = (Date.now() - d.getTime()) / 1000
+  if (sec < 45) return 'just now'
+  if (sec < 3600) return `${Math.max(1, Math.floor(sec / 60))}m ago`
+  return d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function formatMeanWallSeconds(sec: number | null): string {
+  if (sec == null || !Number.isFinite(sec)) return '—'
+  const s = Math.round(sec)
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  if (m <= 0) return `${r}s`
+  return `${m}m ${String(r).padStart(2, '0')}s`
+}
+
+function bumpDayCount(map: Map<string, number>, iso: string) {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return
+  const key = toYMD(d)
+  map.set(key, (map.get(key) ?? 0) + 1)
+}
+
+type AdminOrgProjectStatus = 'Running' | 'Queued' | 'Completed' | 'Failed' | 'Cancelled'
+
+type AdminOrgProjectRow = {
+  id: string
+  ref: string
+  /** Offer kind label (English; same rules as HistoryList type badge). */
+  offerKindLabel: string
+  dateLabel: string
+  title: string
+  duration: string
+  /** Explains total vs last-run duration (English tooltip). */
+  durationTooltip?: string
+  status: AdminOrgProjectStatus
+  /** DB status string for HistoryList-style badge. */
+  rawOfferStatus: string
+  historyStatusLabel: string
+  historyStatusBadgeClass: string
+  owner?: string | null
+  ownerMemberId: string
+  offerSlug: string
+  createdAt: Date
+  createdAtIso: string
+  pipelineFinishedAtIso?: string | null
+  durationWallSeconds?: number | null
+  lastRunDurationSeconds?: number | null
+  /** True when row comes from `fetchAdminTenantOffers` (not demo seed data). */
+  isLiveRow?: boolean
+}
+
+function formatDurationSeconds(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '—'
+  if (sec < 60) return `${Math.round(sec)}s`
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  const mr = m % 60
+  return mr > 0 ? `${h}h ${mr}m` : `${h}h`
+}
+
+function formatEnDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** Normalize default Romanian wizard title for English admin UI. */
+const ADMIN_OFFER_TITLE_EN: Record<string, string> = {
+  'ofertă nouă': 'New offer',
+}
+
+function translateAdminOfferDisplay(text: string): string {
+  const k = text.trim().toLowerCase()
+  return ADMIN_OFFER_TITLE_EN[k] || text
+}
+
+/** Same signals as HistoryList `getOfferTypeBadgeLabel`; English labels for admin cards. */
+function adminOfferKindLabelEn(
+  meta: AdminTenantOffer['meta_for_kind'] | undefined,
+  offerTypeSlug: string | null | undefined,
+): string {
+  const m = meta ?? {}
+  const slug = (offerTypeSlug || '').toLowerCase()
+  const wizardPkg = (m.wizard_package || '').toString().toLowerCase()
+  const isRoofOffer = m.roof_only_offer === true || wizardPkg === 'dachstuhl' || slug === 'dachstuhl'
+  const isMeasurementsOnly = m.measurements_only_offer === true
+  const slugIsMengen = slug === 'mengen' || slug === 'mengenermittlung'
+  const treatAsMeasurements = isMeasurementsOnly || slugIsMengen
+
+  if (treatAsMeasurements && isRoofOffer) return 'Roof takeoff'
+  if (treatAsMeasurements && !isRoofOffer) return 'House takeoff'
+  if (isRoofOffer) return 'Roof offer'
+  return 'House offer'
+}
+
+/** Status pill: English labels, same colours as HistoryList-style badges. */
+function historyStatusPresentation(status?: string | null): { label: string; className: string } {
+  const s = (status || '').toLowerCase()
+  if (s === 'draft' || s === 'entwurf') {
+    return { label: 'Draft', className: 'border-sand/30 bg-sand/10 text-sand' }
+  }
+  if (s === 'processing' || s === 'running' || s === 'laufend') {
+    return { label: 'Running', className: 'border-yellow-400/40 bg-yellow-400/15 text-yellow-300' }
+  }
+  if (s === 'done' || s === 'finished' || s === 'fertig' || s === 'ready') {
+    return { label: 'Completed', className: 'border-[#FF9F0F]/60 bg-[#FF9F0F]/15 text-[#FF9F0F]' }
+  }
+  if (s === 'cancelled') {
+    return { label: 'Cancelled', className: 'border-red-500/40 bg-red-500/10 text-red-300' }
+  }
+  if (s === 'failed') {
+    return { label: 'Failed', className: 'border-red-500/45 bg-red-500/12 text-red-200/95' }
+  }
+  return { label: status?.trim() ? status : '—', className: 'border-white/22 bg-white/10 text-sand/88' }
+}
+
+function projectDurationTooltip(o: AdminTenantOffer): string {
+  const lines: string[] = []
+  if (o.duration_wall_seconds != null && o.duration_wall_seconds >= 0) {
+    lines.push(
+      `Total: wall time from when the offer was created until the end of the latest finished compute run (${formatDurationSeconds(o.duration_wall_seconds)}).`,
+    )
+  }
+  if (o.last_run_duration_seconds != null && o.last_run_duration_seconds >= 0) {
+    lines.push(
+      `Last run: duration of the most recent run only, start→end (${formatDurationSeconds(o.last_run_duration_seconds)}).`,
+    )
+  }
+  return lines.join(' ')
+}
+
+function pickProjectDurationLabel(o: AdminTenantOffer): string {
+  const st = (o.status || '').toLowerCase()
+  if (o.duration_wall_seconds != null && o.duration_wall_seconds >= 0) {
+    return `${formatDurationSeconds(o.duration_wall_seconds)} (total)`
+  }
+  if ((st === 'processing' || st === 'running' || st === 'laufend') && o.created_at) {
+    const elapsed = (Date.now() - new Date(o.created_at).getTime()) / 1000
+    return `${formatDurationSeconds(elapsed)} · running`
+  }
+  if (o.last_run_duration_seconds != null && o.last_run_duration_seconds >= 0) {
+    return `${formatDurationSeconds(o.last_run_duration_seconds)} (last run)`
+  }
+  return '—'
+}
+
+function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
+  const created = new Date(o.created_at)
+  const headline = translateAdminOfferDisplay(o.display_title ?? o.title)
+  const hist = historyStatusPresentation(o.status)
+  return {
+    id: o.id,
+    ref: o.ref,
+    offerKindLabel: adminOfferKindLabelEn(o.meta_for_kind ?? {}, o.offer_type_slug),
+    dateLabel: formatEnDateTime(o.created_at),
+    title: headline,
+    duration: pickProjectDurationLabel(o),
+    durationTooltip: projectDurationTooltip(o) || undefined,
+    status: o.status_ui,
+    rawOfferStatus: o.status,
+    historyStatusLabel: hist.label,
+    historyStatusBadgeClass: hist.className,
+    owner: o.owner_name,
+    ownerMemberId: o.owner_id ?? '—',
+    offerSlug: o.offer_type_slug ?? 'neubau',
+    createdAt: Number.isNaN(created.getTime()) ? new Date() : created,
+    createdAtIso: o.created_at,
+    pipelineFinishedAtIso: o.pipeline_finished_at,
+    durationWallSeconds: o.duration_wall_seconds,
+    lastRunDurationSeconds: o.last_run_duration_seconds,
+    isLiveRow: true,
+  }
+}
+
+/** Align DB offer_type slugs with admin filter options (see OfferHistoryFilterForm). */
+function offerSlugMatchesAdminFilter(offerSlug: string, filterSlug: string | undefined): boolean {
+  if (!filterSlug) return true
+  if (filterSlug === 'neubau') return offerSlug === 'neubau' || offerSlug === 'full_house'
+  if (filterSlug === 'mengenermittlung') return offerSlug === 'mengenermittlung' || offerSlug === 'mengen'
+  if (filterSlug === 'dachstuhl') return offerSlug === 'dachstuhl'
+  return offerSlug === filterSlug
 }
 
 export default function AdminPage() {
@@ -308,6 +564,57 @@ export default function AdminPage() {
   const [pipelineThumb, setPipelineThumb] = useState({ height: 40, top: 0 })
   const [pipelineScrollVisible, setPipelineScrollVisible] = useState(false)
   const [selectedProjectRef, setSelectedProjectRef] = useState<string | null>(null)
+  const [adminTenants, setAdminTenants] = useState<AdminTenant[]>([])
+  const [adminTenantsStatus, setAdminTenantsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const [adminTenantsError, setAdminTenantsError] = useState<string | null>(null)
+  const [tenantOffers, setTenantOffers] = useState<AdminTenantOffer[]>([])
+  const [tenantOffersStatus, setTenantOffersStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const [tenantOffersError, setTenantOffersError] = useState<string | null>(null)
+  /** Tenant id for which `tenantOffers` is valid; avoids showing previous org's list after `selectedOrgId` changes (effect runs after paint). */
+  const [tenantOffersLoadedForId, setTenantOffersLoadedForId] = useState<string | null>(null)
+  const [tenantWorkspace, setTenantWorkspace] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    data: AdminTenantWorkspace | null
+    error: string | null
+    loadedForTenantId: string | null
+  }>({ status: 'idle', data: null, error: null, loadedForTenantId: null })
+  const [statsSummary, setStatsSummary] = useState<AdminStatisticsSummary | null>(null)
+  const [statsStatus, setStatsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const [statsError, setStatsError] = useState<string | null>(null)
+
+  const heatmapTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [heatmapTooltip, setHeatmapTooltip] = useState<{
+    left: number
+    top: number
+    dateStr: string
+    runs: number
+    live: boolean
+    swatch: string
+  } | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (heatmapTipHideRef.current) clearTimeout(heatmapTipHideRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeView !== 'organization') {
+      setHeatmapTooltip(null)
+      if (heatmapTipHideRef.current) {
+        clearTimeout(heatmapTipHideRef.current)
+        heatmapTipHideRef.current = null
+      }
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    setHeatmapTooltip(null)
+    if (heatmapTipHideRef.current) {
+      clearTimeout(heatmapTipHideRef.current)
+      heatmapTipHideRef.current = null
+    }
+  }, [selectedOrgId])
 
   useEffect(() => {
     let mounted = true
@@ -334,57 +641,354 @@ export default function AdminPage() {
     }
   }, [])
 
-  const selectedOrg = useMemo(
-    () => DUMMY_ORGS.find((org) => org.id === selectedOrgId) ?? DUMMY_ORGS[0],
-    [selectedOrgId],
-  )
+  useEffect(() => {
+    if (!ready) return
+    let cancelled = false
+    setAdminTenantsStatus('loading')
+    setAdminTenantsError(null)
+    ;(async () => {
+      try {
+        const res = await fetchAdminTenants()
+        if (cancelled) return
+        setAdminTenants(res.items ?? [])
+        setAdminTenantsStatus('ok')
+      } catch (e: unknown) {
+        if (cancelled) return
+        setAdminTenantsStatus('error')
+        setAdminTenantsError(e instanceof Error ? e.message : 'Failed to load organizations')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [ready])
+
+  /** DB-backed orgs once loaded; until then dummy list keeps layout stable. */
+  const clientOrgs: DummyOrg[] = useMemo(() => {
+    if (adminTenantsStatus === 'ok') {
+      if (adminTenants.length === 0) return DUMMY_ORGS
+      return adminTenants.map((t) => ({ id: t.id, name: t.name }))
+    }
+    return DUMMY_ORGS
+  }, [adminTenants, adminTenantsStatus])
+
+  const hasLiveOrgList = adminTenantsStatus === 'ok' && adminTenants.length > 0
+
+  useEffect(() => {
+    if (adminTenantsStatus !== 'ok') return
+    if (adminTenants.length === 0) {
+      setSelectedOrgId(DUMMY_ORGS[0]!.id)
+      setOrgFilters(DUMMY_ORGS.map((o) => o.id))
+      return
+    }
+    const ids = new Set(adminTenants.map((t) => t.id))
+    setSelectedOrgId((prev) => (ids.has(prev) ? prev : adminTenants[0]!.id))
+    setOrgFilters((prev) => {
+      const next = prev.filter((id) => ids.has(id))
+      if (next.length > 0) return next
+      return [adminTenants[0]!.id]
+    })
+  }, [adminTenants, adminTenantsStatus])
+
+  const usingLiveProjects =
+    adminTenantsStatus === 'ok' && adminTenants.length > 0 && adminTenants.some((t) => t.id === selectedOrgId)
+
+  useEffect(() => {
+    setTenantOffers([])
+    setTenantOffersLoadedForId(null)
+    setTenantOffersStatus('idle')
+    setTenantOffersError(null)
+    if (!usingLiveProjects) return
+    const tenantId = selectedOrgId
+    let cancelled = false
+    setTenantOffersStatus('loading')
+    setTenantOffersError(null)
+    ;(async () => {
+      try {
+        const res = await fetchAdminTenantOffers(tenantId, { limit: 100 })
+        if (cancelled) return
+        setTenantOffers(res.items ?? [])
+        setTenantOffersLoadedForId(tenantId)
+        setTenantOffersStatus('ok')
+      } catch (e: unknown) {
+        if (cancelled) return
+        setTenantOffersStatus('error')
+        setTenantOffersError(e instanceof Error ? e.message : 'Could not load projects.')
+        setTenantOffers([])
+        setTenantOffersLoadedForId(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedOrgId, usingLiveProjects])
+
+  useEffect(() => {
+    setTenantWorkspace({ status: 'idle', data: null, error: null, loadedForTenantId: null })
+    if (!usingLiveProjects) return
+    const tenantId = selectedOrgId
+    let cancelled = false
+    setTenantWorkspace({ status: 'loading', data: null, error: null, loadedForTenantId: null })
+    ;(async () => {
+      try {
+        const data = await fetchAdminTenantWorkspace(tenantId)
+        if (cancelled) return
+        setTenantWorkspace({ status: 'ok', data, error: null, loadedForTenantId: tenantId })
+      } catch (e: unknown) {
+        if (cancelled) return
+        setTenantWorkspace({
+          status: 'error',
+          data: null,
+          error: e instanceof Error ? e.message : 'Could not load organization.',
+          loadedForTenantId: null,
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedOrgId, usingLiveProjects])
+
+  useEffect(() => {
+    if (!ready || activeView !== 'statistics') return
+    if (!hasLiveOrgList) {
+      setStatsStatus('idle')
+      setStatsSummary(null)
+      setStatsError(null)
+      return
+    }
+    if (!dateFrom || !dateTo) return
+    let cancelled = false
+    setStatsStatus('loading')
+    setStatsError(null)
+    const filtered = orgFilters.filter((id) => adminTenants.some((t) => t.id === id))
+    const tenantIds = filtered.length > 0 ? filtered : adminTenants.map((t) => t.id)
+    ;(async () => {
+      try {
+        const data = await fetchAdminStatisticsSummary({ from: dateFrom, to: dateTo, tenantIds })
+        if (cancelled) return
+        setStatsSummary(data)
+        setStatsStatus('ok')
+      } catch (e: unknown) {
+        if (cancelled) return
+        setStatsStatus('error')
+        setStatsError(e instanceof Error ? e.message : 'Could not load statistics.')
+        setStatsSummary(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    ready,
+    activeView,
+    hasLiveOrgList,
+    dateFrom,
+    dateTo,
+    orgFilters.join(','),
+    adminTenants.map((t) => t.id).join(','),
+  ])
+
+  const liveWorkspace =
+    usingLiveProjects &&
+    tenantWorkspace.status === 'ok' &&
+    tenantWorkspace.loadedForTenantId === selectedOrgId &&
+    tenantWorkspace.data
+      ? tenantWorkspace.data
+      : null
+
+  const selectedOrg = useMemo(() => {
+    const o = clientOrgs.find((org) => org.id === selectedOrgId)
+    if (o) return o
+    return clientOrgs[0] ?? DUMMY_ORGS[0]
+  }, [clientOrgs, selectedOrgId])
+
   const selectedOrgNames = useMemo(
-    () => DUMMY_ORGS.filter((org) => orgFilters.includes(org.id)).map((org) => org.name),
-    [orgFilters],
+    () => clientOrgs.filter((org) => orgFilters.includes(org.id)).map((org) => org.name),
+    [orgFilters, clientOrgs],
   )
-  const selectedOrgMeta = useMemo(() => ORG_META[selectedOrgId] ?? ORG_META['org-1'], [selectedOrgId])
+
+  const throughputChartPoints = useMemo(() => {
+    if (!hasLiveOrgList) {
+      return THROUGHPUT_SERIES.map((p) => ({
+        label: p.label,
+        offers: p.offers,
+        avgTime: p.avgTime,
+      }))
+    }
+    if (statsStatus === 'ok' && statsSummary) {
+      return statsSummary.throughput.map((p) => ({
+        label: p.label,
+        offers: p.offers,
+        avgTime: p.avg_time_label,
+      }))
+    }
+    return Array.from({ length: 8 }, (_, i) => ({
+      label: `·${i + 1}`,
+      offers: 0,
+      avgTime: '—',
+    }))
+  }, [hasLiveOrgList, statsStatus, statsSummary])
+
+  const statisticsKpi = useMemo(() => {
+    type Row = { value: string; delta: string }
+    const pendingStats =
+      hasLiveOrgList && (statsStatus === 'loading' || (statsStatus === 'idle' && !statsSummary))
+    const loadingRow: Row = { value: pendingStats ? '…' : '—', delta: '—' }
+    const zeroSpark = Array.from({ length: 8 }, () => 0)
+    if (!hasLiveOrgList) {
+      return {
+        refreshLabel: 'just now',
+        throughputSub: { offers: '1,381', avg: '6m 17s' },
+        offers: { value: '2,184', delta: '+12.8%' } satisfies Row,
+        proc: { value: '6m 42s', delta: '-8.1%' } satisfies Row,
+        clients: { value: '38 / 4', delta: '+6.2%' } satisfies Row,
+        incidents: { value: '27', delta: '-11.4%' } satisfies Row,
+        sparkOffers: [...KPI_SPARK_OFFERS],
+        sparkProc: [...KPI_SPARK_PROC_SECONDS],
+        sparkClients: [...KPI_SPARK_CLIENTS_NET],
+        sparkIncidents: [...KPI_SPARK_INCIDENTS],
+        sparkCaption: '8-week trend',
+        procCaption: 'Daily avg (lower is better)',
+        clientsCaption: 'Net new / week',
+      }
+    }
+    if (statsStatus === 'ok' && statsSummary) {
+      const t = statsSummary.totals
+      const procDelta =
+        t.mean_wall_seconds_current != null && t.mean_wall_seconds_previous != null
+          ? formatDeltaPct(t.mean_wall_seconds_current, t.mean_wall_seconds_previous)
+          : '—'
+      const segCaption = 'Segments in selected range'
+      return {
+        refreshLabel: formatRefreshLabel(statsSummary.refreshed_at),
+        throughputSub: {
+          offers: t.offers_current.toLocaleString('en-US'),
+          avg: formatMeanWallSeconds(t.mean_wall_seconds_current),
+        },
+        offers: {
+          value: t.offers_current.toLocaleString('en-US'),
+          delta: formatDeltaPct(t.offers_current, t.offers_previous),
+        },
+        proc: {
+          value: formatMeanWallSeconds(t.mean_wall_seconds_current),
+          delta: procDelta,
+        },
+        clients: {
+          value: `${t.profiles_acquired_current}/${t.profiles_churn_current}`,
+          delta: formatDeltaPct(t.profiles_acquired_current, t.profiles_acquired_previous),
+        },
+        incidents: {
+          value: String(t.incidents_current),
+          delta: formatDeltaPct(t.incidents_current, t.incidents_previous),
+        },
+        sparkOffers: [...statsSummary.kpi_series.offers],
+        sparkProc: [...statsSummary.kpi_series.avg_wall_seconds],
+        sparkClients: [...statsSummary.kpi_series.clients_net],
+        sparkIncidents: [...statsSummary.kpi_series.incidents],
+        sparkCaption: segCaption,
+        procCaption: 'Mean wall time per segment',
+        clientsCaption: 'New members per segment (churn not tracked)',
+      }
+    }
+    return {
+      refreshLabel: statsStatus === 'loading' ? '…' : '—',
+      throughputSub: { offers: '—', avg: '—' },
+      offers: loadingRow,
+      proc: loadingRow,
+      clients: loadingRow,
+      incidents: loadingRow,
+      sparkOffers: zeroSpark,
+      sparkProc: zeroSpark,
+      sparkClients: zeroSpark,
+      sparkIncidents: zeroSpark,
+      sparkCaption: '—',
+      procCaption: '—',
+      clientsCaption: '—',
+    }
+  }, [hasLiveOrgList, statsStatus, statsSummary])
+
+  const selectedOrgMeta = useMemo(() => {
+    const hardcoded = ORG_META[selectedOrgId]
+    if (hardcoded) return hardcoded
+    const t = adminTenants.find((x) => x.id === selectedOrgId)
+    const base = t ? buildSyntheticOrgMeta(t) : ORG_META['org-1']
+    if (!t || !liveWorkspace) return base
+    const ws = liveWorkspace
+    const displayName = ws.tenant.name?.trim() || t.name || ws.tenant.slug
+    const raw = (ws.tenant.slug || displayName).replace(/[^a-z0-9]/gi, '')
+    const codePrefix = raw.slice(0, 3).toUpperCase() || 'ORG'
+    const initials =
+      displayName
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((w) => w[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'OR'
+    const dash = (s: string) => (s.trim() ? s : '—')
+    return {
+      ...base,
+      companyName: displayName,
+      phone: dash(ws.branding.phone),
+      email: dash(ws.branding.email),
+      address: dash(ws.branding.address),
+      logoLabel: initials,
+      codePrefix,
+      plan: ws.tokens.tier_label,
+      tokenBalance: ws.tokens.unlimited ? '999999' : String(ws.tokens.remaining ?? 0),
+      users: ws.profiles.map((p) => ({
+        name: p.full_name?.trim() || p.email?.trim() || '—',
+        role: profileRoleToUi(p.role),
+      })),
+    }
+  }, [selectedOrgId, adminTenants, liveWorkspace])
+
+  /** Uploaded tenant logo (API) — shown in client workspace header instead of static placeholder. */
+  const selectedOrgTenantLogoUrl = useMemo(() => {
+    if (adminTenantsStatus !== 'ok') return null
+    return adminTenants.find((t) => t.id === selectedOrgId)?.logo_url ?? null
+  }, [adminTenants, adminTenantsStatus, selectedOrgId])
 
   const orgTokenBalanceDisplay = useMemo(() => {
+    if (liveWorkspace) {
+      const tok = liveWorkspace.tokens
+      if (tok.unlimited || tok.limit === null) return '∞'
+      if (tok.remaining !== null) return tok.remaining.toLocaleString('en-US')
+      return '—'
+    }
     const stored = tokenBalancesByOrg[selectedOrgId]
     const n = stored ?? parseTokenBalanceString(selectedOrgMeta.tokenBalance)
     return n.toLocaleString('en-US')
-  }, [tokenBalancesByOrg, selectedOrgId, selectedOrgMeta])
+  }, [liveWorkspace, tokenBalancesByOrg, selectedOrgId, selectedOrgMeta])
 
-  const orgUsersList = useMemo(
-    () => orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgId),
-    [orgEditableUsers, selectedOrgId],
-  )
+  const orgUsersList = useMemo((): OrgUserEditable[] => {
+    if (liveWorkspace) {
+      return liveWorkspace.profiles.map((p) => ({
+        name: p.full_name?.trim() || p.email?.trim() || '—',
+        email: p.email?.trim() ?? '',
+        role: profileRoleToUi(p.role),
+        password: '',
+        sourceProfileId: p.id,
+      }))
+    }
+    return orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgMeta)
+  }, [liveWorkspace, orgEditableUsers, selectedOrgId, selectedOrgMeta])
 
   useEffect(() => {
     if (activeView !== 'organization') return
+    if (liveWorkspace) return
     setOrgEditableUsers((prev) => {
       if (prev[selectedOrgId]) return prev
-      return { ...prev, [selectedOrgId]: seedOrgUsersFromMeta(selectedOrgId) }
+      return { ...prev, [selectedOrgId]: seedOrgUsersFromMeta(selectedOrgMeta) }
     })
-  }, [activeView, selectedOrgId])
+  }, [activeView, selectedOrgId, selectedOrgMeta, liveWorkspace])
 
   useEffect(() => {
     setSelectedProjectRef(null)
   }, [selectedOrgId])
-  const orgDailyRunsYear = useMemo(() => {
-    const seed = selectedOrgId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
-    const today = new Date()
-    return Array.from({ length: 365 }).map((_, idx) => {
-      const date = new Date(today)
-      date.setDate(today.getDate() - (364 - idx))
-      const runs = (seed + idx * 13 + (idx % 7) * 5) % 11
-      return { date, runs }
-    })
-  }, [selectedOrgId])
-  const orgRunsWeeks = useMemo(() => {
-    const weeks: Array<Array<{ date: Date; runs: number }>> = []
-    for (let i = 0; i < orgDailyRunsYear.length; i += 7) {
-      weeks.push(orgDailyRunsYear.slice(i, i + 7))
-    }
-    return weeks
-  }, [orgDailyRunsYear])
 
-  const orgDummyProjects = useMemo(() => {
+  const orgDummyProjects = useMemo((): AdminOrgProjectRow[] => {
     const seed = selectedOrgId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
     const pfx = selectedOrgMeta.codePrefix
     const userCount = Math.max(1, selectedOrgMeta.users.length)
@@ -401,29 +1005,109 @@ export default function AdminPage() {
       const status = statusRoll === 0 ? 'Running' : statusRoll === 1 ? 'Queued' : 'Completed'
       const ownerIdx = idx % userCount
       const ownerUser = selectedOrgMeta.users[ownerIdx]
+      const ref = `${pfx}-${yyyy}-${String(120 + idx).padStart(3, '0')}`
+      const slug = offerCycle[idx % 3]
+      const rawStatus = status === 'Running' ? 'processing' : status === 'Queued' ? 'draft' : 'ready'
+      const hist = historyStatusPresentation(rawStatus)
       return {
-        ref: `${pfx}-${yyyy}-${String(120 + idx).padStart(3, '0')}`,
-        dateLabel: `${dd}.${mm}.${yyyy}`,
+        id: ref,
+        ref,
+        offerKindLabel: adminOfferKindLabelEn({}, slug),
+        dateLabel: `${dd}.${mm}.${yyyy} · 12:00`,
         title: ORG_PROJECT_TITLES[idx % ORG_PROJECT_TITLES.length],
         duration: ORG_PROJECT_DURATIONS[idx % ORG_PROJECT_DURATIONS.length],
-        status: status as 'Running' | 'Queued' | 'Completed',
+        status: status as AdminOrgProjectStatus,
+        rawOfferStatus: rawStatus,
+        historyStatusLabel: hist.label,
+        historyStatusBadgeClass: hist.className,
         owner: ownerUser?.name,
         ownerMemberId: `adm-${selectedOrgId}-u${ownerIdx}`,
-        offerSlug: offerCycle[idx % 3],
+        offerSlug: slug,
         createdAt: d,
+        createdAtIso: d.toISOString(),
+        pipelineFinishedAtIso: null,
+        durationWallSeconds: null,
+        lastRunDurationSeconds: null,
+        isLiveRow: false,
       }
     })
   }, [selectedOrgId, selectedOrgMeta])
 
-  const projFilterOrgMembers = useMemo(
-    () =>
-      orgUsersList.map((u, idx) => ({
-        id: `adm-${selectedOrgId}-u${idx}`,
-        email: null as string | null,
-        full_name: u.name,
-      })),
-    [orgUsersList, selectedOrgId],
+  const tenantOffersMatchSelection =
+    usingLiveProjects && tenantOffersStatus === 'ok' && tenantOffersLoadedForId === selectedOrgId
+
+  /** Last 365 calendar days: demo = seeded random; live = counts from loaded offers (created + pipeline finished per day). */
+  const orgDailyRunsYear = useMemo(() => {
+    const days = 365
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    if (usingLiveProjects) {
+      if (!tenantOffersMatchSelection) {
+        return Array.from({ length: days }).map((_, idx) => {
+          const date = new Date(today)
+          date.setDate(today.getDate() - (days - 1 - idx))
+          return { date, runs: 0 }
+        })
+      }
+      const counts = new Map<string, number>()
+      for (const o of tenantOffers) {
+        bumpDayCount(counts, o.created_at)
+        if (o.pipeline_finished_at) bumpDayCount(counts, o.pipeline_finished_at)
+      }
+      return Array.from({ length: days }).map((_, idx) => {
+        const date = new Date(today)
+        date.setDate(today.getDate() - (days - 1 - idx))
+        return { date, runs: counts.get(toYMD(date)) ?? 0 }
+      })
+    }
+
+    const seed = selectedOrgId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
+    return Array.from({ length: days }).map((_, idx) => {
+      const date = new Date(today)
+      date.setDate(today.getDate() - (days - 1 - idx))
+      const runs = (seed + idx * 13 + (idx % 7) * 5) % 11
+      return { date, runs }
+    })
+  }, [selectedOrgId, usingLiveProjects, tenantOffersMatchSelection, tenantOffers])
+
+  const orgRunsWeeks = useMemo(() => {
+    const weeks: Array<Array<{ date: Date; runs: number }>> = []
+    for (let i = 0; i < orgDailyRunsYear.length; i += 7) {
+      weeks.push(orgDailyRunsYear.slice(i, i + 7))
+    }
+    return weeks
+  }, [orgDailyRunsYear])
+
+  const activityHeatmapMax = useMemo(
+    () => Math.max(1, ...orgDailyRunsYear.map((d) => d.runs)),
+    [orgDailyRunsYear],
   )
+
+  const orgProjectsBase = useMemo((): AdminOrgProjectRow[] => {
+    if (usingLiveProjects) {
+      if (!tenantOffersMatchSelection) return []
+      return tenantOffers.map(mapAdminTenantOfferToRow)
+    }
+    return orgDummyProjects
+  }, [usingLiveProjects, tenantOffersMatchSelection, tenantOffers, orgDummyProjects])
+
+  const projFilterOrgMembers = useMemo(() => {
+    if (tenantOffersMatchSelection) {
+      const m = new Map<string, { id: string; email: string | null; full_name: string }>()
+      for (const o of tenantOffers) {
+        if (o.owner_id) {
+          m.set(o.owner_id, { id: o.owner_id, email: null, full_name: o.owner_name?.trim() || '—' })
+        }
+      }
+      return Array.from(m.values())
+    }
+    return orgUsersList.map((u, idx) => ({
+      id: `adm-${selectedOrgId}-u${idx}`,
+      email: null as string | null,
+      full_name: u.name,
+    }))
+  }, [tenantOffersMatchSelection, tenantOffers, orgUsersList, selectedOrgId])
 
   const hasActiveProjFilters =
     Boolean(projAppliedOfferTypeId) ||
@@ -432,13 +1116,11 @@ export default function AdminPage() {
     projAppliedUserIds.length > 0
 
   const filteredOrgProjects = useMemo(() => {
-    let list = orgDummyProjects
+    let list = orgProjectsBase
     if (projAppliedOfferTypeId) {
       const opt = ADMIN_OFFER_TYPE_OPTIONS.find((o) => o.id === projAppliedOfferTypeId)
-      const slug = opt?.slug
-      if (slug === 'mengenermittlung') list = list.filter((p) => p.offerSlug === 'mengenermittlung')
-      else if (slug === 'dachstuhl') list = list.filter((p) => p.offerSlug === 'dachstuhl')
-      else if (slug === 'neubau') list = list.filter((p) => p.offerSlug === 'neubau')
+      const slug = opt?.slug as string | undefined
+      list = list.filter((p) => offerSlugMatchesAdminFilter(p.offerSlug, slug))
     }
     if (projAppliedDateFrom) {
       const from = new Date(projAppliedDateFrom)
@@ -464,7 +1146,7 @@ export default function AdminPage() {
     }
     return list
   }, [
-    orgDummyProjects,
+    orgProjectsBase,
     projAppliedOfferTypeId,
     projAppliedDateFrom,
     projAppliedDateTo,
@@ -472,10 +1154,18 @@ export default function AdminPage() {
     projSearch,
   ])
 
+  const showTenantProjectsLoading =
+    usingLiveProjects &&
+    tenantOffersStatus !== 'error' &&
+    (tenantOffersStatus === 'loading' ||
+      tenantOffersStatus === 'idle' ||
+      (tenantOffersStatus === 'ok' && tenantOffersLoadedForId !== selectedOrgId))
+  const showTenantProjectsError = usingLiveProjects && tenantOffersStatus === 'error'
+
   const selectedOrgProject = useMemo(() => {
     if (!selectedProjectRef) return null
-    return orgDummyProjects.find((p) => p.ref === selectedProjectRef) ?? null
-  }, [selectedProjectRef, orgDummyProjects])
+    return orgProjectsBase.find((p) => p.id === selectedProjectRef) ?? null
+  }, [selectedProjectRef, orgProjectsBase])
 
   const projectUploadedFiles = useMemo(() => {
     if (!selectedOrgProject) return []
@@ -797,6 +1487,10 @@ export default function AdminPage() {
 .admin-heatmap-legend-swatch {
   height: clamp(0.4rem, 0.75vw, 0.55rem);
   width: clamp(1rem, 2.5vw, 1.5rem);
+  border-radius: 9999px;
+}
+.admin-heatmap-cell {
+  cursor: default;
 }
 `,
         }}
@@ -844,7 +1538,18 @@ export default function AdminPage() {
             </button>
           </div>
           <div className="hide-scroll flex min-h-0 flex-1 flex-col space-y-2 overflow-y-auto pr-1">
-            {DUMMY_ORGS.map((org) => {
+            {adminTenantsStatus === 'loading' ? (
+              <p className="rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-xs text-sand/55">Loading organizations…</p>
+            ) : null}
+            {adminTenantsStatus === 'error' && adminTenantsError ? (
+              <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-2 text-xs text-red-200/90">{adminTenantsError}</p>
+            ) : null}
+            {!hasLiveOrgList && adminTenantsStatus === 'ok' ? (
+              <p className="rounded-lg border border-[#FF9F0F]/25 bg-black/20 px-2 py-2 text-[11px] leading-snug text-sand/60">
+                No organizations in the database. Demo names are shown until data exists.
+              </p>
+            ) : null}
+            {clientOrgs.map((org) => {
               const active = org.id === selectedOrgId
               return (
                 <button
@@ -871,6 +1576,9 @@ export default function AdminPage() {
           >
             {activeView === 'statistics' ? (
               <>
+                {hasLiveOrgList && statsStatus === 'error' && statsError ? (
+                  <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-200/95">{statsError}</div>
+                ) : null}
                 <div className="rounded-xl border border-white/10 bg-coffee-700/60 p-3 backdrop-blur-sm">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -878,12 +1586,13 @@ export default function AdminPage() {
                       <h2 className="text-xl font-semibold text-sand md:text-2xl">Statistics Control Center</h2>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm text-sand/70">Last refresh: just now</div>
+                      <div className="text-sm text-sand/70">Last refresh: {statisticsKpi.refreshLabel}</div>
                       <div className="inline-flex items-center gap-2 rounded-xl border border-[#FF9F0F]/40 bg-[#FF9F0F]/10 px-2.5 py-1.5">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 text-[#FFD29A] text-[11px] font-bold">€</span>
                         <div className="leading-tight">
                           <div className="text-[10px] uppercase tracking-wide text-sand/70">Avg. cost/run</div>
                           <div className="text-sm font-bold text-white">{(AVG_COST_PER_RUN_CENTS / 100).toFixed(2)}€</div>
+                          <div className="text-[9px] text-sand/45">Model estimate</div>
                         </div>
                       </div>
                     </div>
@@ -919,10 +1628,10 @@ export default function AdminPage() {
                       <div className="mb-1.5 inline-flex rounded-lg border border-white/10 bg-black/25 p-1">
                         <button
                           type="button"
-                          onClick={() => setOrgFilters(DUMMY_ORGS.map((org) => org.id))}
+                          onClick={() => setOrgFilters(clientOrgs.map((org) => org.id))}
                           className={[
                             'rounded-md px-2.5 py-1 text-xs font-medium transition',
-                            orgFilters.length === DUMMY_ORGS.length ? 'bg-[#FF9F0F] text-white' : 'text-sand/80 hover:bg-white/8',
+                            orgFilters.length === clientOrgs.length ? 'bg-[#FF9F0F] text-white' : 'text-sand/80 hover:bg-white/8',
                           ].join(' ')}
                         >
                           All organizations
@@ -939,7 +1648,7 @@ export default function AdminPage() {
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-1">
-                        {DUMMY_ORGS.map((org) => (
+                        {clientOrgs.map((org) => (
                           <button
                             key={`filter-${org.id}`}
                             type="button"
@@ -959,11 +1668,43 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <KpiCard title="Total offers generated" value="2,184" delta="+12.8%" icon={<TrendingUp size={14} />} />
-                  <KpiCard title="Avg processing / day" value="6m 42s" delta="-8.1%" icon={<Gauge size={14} />} />
-                  <KpiCard title="Clients acquired / churn" value="38 / 4" delta="+6.2%" icon={<Building2 size={14} />} />
-                  <KpiCard title="System incidents" value="27" delta="-11.4%" icon={<Activity size={14} />} />
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  <KpiCard
+                    title="Total offers generated"
+                    value={statisticsKpi.offers.value}
+                    delta={statisticsKpi.offers.delta}
+                    icon={<TrendingUp size={14} />}
+                    series={statisticsKpi.sparkOffers}
+                    sparkCaption={statisticsKpi.sparkCaption}
+                    valueFormat="count"
+                  />
+                  <KpiCard
+                    title="Avg. pipeline time"
+                    value={statisticsKpi.proc.value}
+                    delta={statisticsKpi.proc.delta}
+                    icon={<Gauge size={14} />}
+                    series={statisticsKpi.sparkProc}
+                    sparkCaption={statisticsKpi.procCaption}
+                    valueFormat="duration"
+                  />
+                  <KpiCard
+                    title="Members added / churn"
+                    value={statisticsKpi.clients.value}
+                    delta={statisticsKpi.clients.delta}
+                    icon={<Building2 size={14} />}
+                    series={statisticsKpi.sparkClients}
+                    sparkCaption={statisticsKpi.clientsCaption}
+                    valueFormat="count"
+                  />
+                  <KpiCard
+                    title="System incidents"
+                    value={statisticsKpi.incidents.value}
+                    delta={statisticsKpi.incidents.delta}
+                    icon={<Activity size={14} />}
+                    series={statisticsKpi.sparkIncidents}
+                    sparkCaption={statisticsKpi.sparkCaption}
+                    valueFormat="count"
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 xl:min-h-[360px] xl:grid-cols-[1.6fr_1fr]">
@@ -976,10 +1717,10 @@ export default function AdminPage() {
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/20 p-3 xl:h-[calc(100%-2rem)]">
                       <div className="mb-2 flex items-center justify-between text-xs text-sand/70">
-                        <span>Total offers: 1,381</span>
-                        <span>Avg processing: 6m 17s</span>
+                        <span>Total offers: {statisticsKpi.throughputSub.offers}</span>
+                        <span>Mean pipeline time: {statisticsKpi.throughputSub.avg}</span>
                       </div>
-                      <OffersThroughputChart points={THROUGHPUT_SERIES} />
+                      <OffersThroughputChart points={throughputChartPoints} />
                     </div>
                   </div>
 
@@ -1052,15 +1793,12 @@ export default function AdminPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sand/45">Project</p>
                           <span
-                            className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-                              selectedOrgProject.status === 'Running'
-                                ? 'border-[#FF9F0F]/50 bg-[#FF9F0F]/14 text-[#FFD29A]'
-                                : selectedOrgProject.status === 'Queued'
-                                  ? 'border-[#c9944a]/40 bg-[#c9944a]/10 text-sand/80'
-                                  : 'border-white/22 bg-white/10 text-sand/88'
-                            }`}
+                            className={`rounded-md border px-2 py-0.5 text-[9px] font-semibold tracking-wide ${selectedOrgProject.historyStatusBadgeClass}`}
                           >
-                            {selectedOrgProject.status}
+                            {selectedOrgProject.historyStatusLabel}
+                          </span>
+                          <span className="rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 px-2 py-0.5 text-xs font-semibold tracking-wide text-[#FFD29A] sm:text-sm">
+                            {selectedOrgProject.offerKindLabel}
                           </span>
                         </div>
                         <h2 className="mt-1.5 truncate text-lg font-semibold text-sand sm:text-xl">
@@ -1068,6 +1806,19 @@ export default function AdminPage() {
                           <span className="font-mono text-[#FFD29A]/95">/ {selectedOrgProject.ref}</span>
                         </h2>
                         <p className="mt-1 line-clamp-2 text-xs text-sand/60">{selectedOrgProject.title}</p>
+                        {selectedOrgProject.isLiveRow ? (
+                          <p className="mt-2 text-[11px] leading-relaxed text-sand/55">
+                            <span className="text-sand/45">Started:</span> {formatEnDateTime(selectedOrgProject.createdAtIso)}
+                            <span className="mx-1.5 text-sand/30">·</span>
+                            <span className="text-sand/45">Finished:</span>{' '}
+                            {selectedOrgProject.pipelineFinishedAtIso
+                              ? formatEnDateTime(selectedOrgProject.pipelineFinishedAtIso)
+                              : '—'}
+                            <span className="mx-1.5 text-sand/30">·</span>
+                            <span className="text-sand/45">Duration:</span>{' '}
+                            <span title={selectedOrgProject.durationTooltip}>{selectedOrgProject.duration}</span>
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     <div className="flex w-full min-w-0 shrink-0 flex-row flex-wrap items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end">
@@ -1098,7 +1849,9 @@ export default function AdminPage() {
 
                 <div className="hide-scroll flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4">
                   <section className="rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,.04)]">
-                    <div className="mb-3 text-[11px] text-sand/50">Run overview · dummy data</div>
+                    <div className="mb-3 text-[11px] text-sand/50">
+                      Run overview · {selectedOrgProject.isLiveRow ? 'live data' : 'demo data'}
+                    </div>
                     <div className="grid min-h-0 gap-3 lg:grid-cols-[minmax(0,200px)_minmax(220px,1fr)_minmax(96px,20%)] lg:items-stretch">
                       {/* Left: uploaded files list */}
                       <div className="flex min-h-[200px] min-w-0 flex-col rounded-lg border border-white/10 bg-black/30 p-2.5">
@@ -1231,27 +1984,40 @@ export default function AdminPage() {
             ) : (
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-black/40 bg-panel/80 shadow-soft">
                 <div className="shrink-0 border-b border-black/40 bg-black/20 px-4 py-3.5">
-                  <div className="flex items-start gap-3">
-                    <div className="mt-0.5 h-12 w-1 shrink-0 rounded-full bg-linear-to-b from-[#FF9F0F] via-[#FFB84D] to-[#c9944a]" aria-hidden />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sand/45">Client workspace</p>
-                        <span className="rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/15 px-2 py-0.5 text-[10px] font-semibold text-[#FFD29A]">
-                          {selectedOrgMeta.plan}
-                        </span>
-                        <span className="rounded-md border border-white/12 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-sand/70">
-                          {orgDailyRunsYear.reduce((acc, item) => acc + item.runs, 0)} runs / yr
-                        </span>
+                  {/* Logo is absolutely positioned so its intrinsic size never increases row height; it only scales within the text column's height. */}
+                  <div className="relative">
+                    <div className="flex gap-3 pr-[clamp(5.5rem,28vw,13.5rem)] sm:pr-52">
+                      <div
+                        className="mt-0.5 h-12 w-1 shrink-0 self-start rounded-full bg-linear-to-b from-[#FF9F0F] via-[#FFB84D] to-[#c9944a]"
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-sand/45">Client workspace</p>
+                          <span className="rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/15 px-2 py-0.5 text-[10px] font-semibold text-[#FFD29A]">
+                            {selectedOrgMeta.plan}
+                          </span>
+                          <span className="rounded-md border border-white/12 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-sand/70">
+                            {orgDailyRunsYear.reduce((acc, item) => acc + item.runs, 0)}{' '}
+                            {usingLiveProjects && tenantOffersMatchSelection ? 'events / yr' : 'runs / yr'}
+                          </span>
+                        </div>
+                        <h2 className="mt-1.5 truncate text-lg font-semibold text-sand sm:text-xl">{selectedOrg.name}</h2>
+                        <p className="mt-1 text-xs text-sand/60">
+                          {usingLiveProjects && tenantOffersMatchSelection
+                            ? 'Live heatmap: offer created + pipeline finished per day (from loaded offers, up to 100).'
+                            : usingLiveProjects
+                              ? 'Activity heatmap loads with your projects…'
+                              : 'Offer pipeline overview · demo activity (365 days).'}
+                        </p>
                       </div>
-                      <h2 className="mt-1.5 truncate text-lg font-semibold text-sand sm:text-xl">{selectedOrg.name}</h2>
-                      <p className="mt-1 text-xs text-sand/60">Offer pipeline overview · last 365 days activity</p>
                     </div>
-                    <div className="shrink-0 self-end">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- public /clients and /logo.png */}
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex w-[clamp(5.5rem,28vw,13.5rem)] items-center justify-end sm:w-52">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- public paths or signed tenant logo URL */}
                       <img
-                        src={selectedOrgMeta.logoSrc ?? HOLZBOT_LOGO_PLACEHOLDER}
+                        src={selectedOrgTenantLogoUrl ?? selectedOrgMeta.logoSrc ?? HOLZBOT_LOGO_PLACEHOLDER}
                         alt={selectedOrgMeta.companyName}
-                        className="max-h-10 w-auto max-w-[min(100%,280px)] object-contain object-right object-bottom sm:max-h-12"
+                        className="pointer-events-auto max-h-full max-w-full object-contain object-right"
                       />
                     </div>
                   </div>
@@ -1266,34 +2032,37 @@ export default function AdminPage() {
                         </div>
                         <div>
                           <div className="text-sm font-semibold text-sand">Activity</div>
-                          <div className="text-[11px] text-sand/55">Runs per day · last 365 days (7 rows × weeks)</div>
+                          <div className="text-[11px] text-sand/55">
+                            {usingLiveProjects && tenantOffersMatchSelection
+                              ? 'Daily event count · darker = busier (scaled to this org’s max in view)'
+                              : 'Runs per day · last 365 days (7 rows × weeks · demo)'}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 rounded-md border border-black/40 bg-black/25 px-2 py-1">
                         <span className="text-[10px] text-sand/50">Less</span>
                         <div className="flex gap-[clamp(0.2rem,0.5vw,0.35rem)]">
-                          {[0.12, 0.35, 0.58, 0.82, 0.94].map((a, i) => (
+                          {ACTIVITY_HEATMAP_STEPS.map((hex, i) => (
                             <div
                               key={i}
-                              className="admin-heatmap-legend-swatch shrink-0 rounded-sm border border-black/50"
-                              style={{ backgroundColor: `rgba(255,159,15,${a})` }}
+                              className="admin-heatmap-legend-swatch shrink-0 border border-black/55"
+                              style={{ backgroundColor: hex }}
                             />
                           ))}
                         </div>
                         <span className="text-[10px] text-sand/50">More</span>
                       </div>
                     </div>
-                    <div className="w-full rounded-lg border border-dashed border-[#FF9F0F]/20 bg-black/35 p-[clamp(0.35rem,1vw,0.65rem)]">
+                    <div className="w-full overflow-visible rounded-lg border border-dashed border-[#FF9F0F]/20 bg-black/35 p-[clamp(0.35rem,1vw,0.65rem)]">
                       <div
-                        className="grid h-[clamp(6.25rem,20vh,11rem)] w-full min-h-0 min-w-0"
+                        className="grid h-[clamp(6.25rem,20vh,11rem)] w-full min-h-0 min-w-0 overflow-visible"
                         style={{
                           gridTemplateColumns: `repeat(${orgRunsWeeks.length}, minmax(0, 1fr))`,
                           gridTemplateRows: 'repeat(7, minmax(0, 1fr))',
-                          gap: 'clamp(2px, 0.45vw, 5px)',
+                          gap: 'clamp(3px, 0.55vw, 6px)',
                         }}
                       >
                         {orgRunsWeeks.flatMap((week, weekIdx) => {
-                          const [r, g, b] = ORG_HEATMAP_RGB[weekIdx % ORG_HEATMAP_RGB.length]
                           const padded: Array<{ date: Date; runs: number } | null> = [...week]
                           while (padded.length < 7) padded.push(null)
                           return padded.slice(0, 7).map((item, dayIdx) => {
@@ -1303,24 +2072,53 @@ export default function AdminPage() {
                               return (
                                 <div
                                   key={`${selectedOrgId}-w${weekIdx}-d${dayIdx}-empty`}
-                                  className="min-h-0 min-w-0 rounded-[2px] border border-transparent bg-black/15"
-                                  style={{ gridColumn, gridRow }}
+                                  className="min-h-0 min-w-0 rounded-md border border-black/35"
+                                  style={{ gridColumn, gridRow, backgroundColor: ACTIVITY_HEATMAP_EMPTY }}
                                   aria-hidden
                                 />
                               )
                             }
-                            const intensity = item.runs / 10
-                            const a = 0.14 + intensity * 0.78
+                            const stepIdx = activityHeatmapStepIndex(item.runs, activityHeatmapMax)
+                            const fill =
+                              stepIdx >= 0 ? ACTIVITY_HEATMAP_STEPS[stepIdx] : ACTIVITY_HEATMAP_EMPTY
+                            const dayLabel = item.date.toLocaleDateString('en-GB')
+                            const liveTip = usingLiveProjects && tenantOffersMatchSelection
+                            const hasActivity = item.runs > 0
                             return (
                               <div
                                 key={`${selectedOrgId}-w${weekIdx}-d${dayIdx}`}
-                                title={`${item.date.toLocaleDateString('en-GB')}: ${item.runs} runs`}
-                                className="min-h-0 min-w-0 rounded-[2px] border border-black/45 shadow-sm"
+                                className="admin-heatmap-cell min-h-0 min-w-0 rounded-md border border-black/50 shadow-sm"
                                 style={{
                                   gridColumn,
                                   gridRow,
-                                  backgroundColor: `rgba(${r},${g},${b},${a})`,
+                                  backgroundColor: fill,
                                 }}
+                                {...(hasActivity
+                                  ? {
+                                      onMouseEnter: (e: MouseEvent<HTMLDivElement>) => {
+                                        if (heatmapTipHideRef.current) {
+                                          clearTimeout(heatmapTipHideRef.current)
+                                          heatmapTipHideRef.current = null
+                                        }
+                                        const r = e.currentTarget.getBoundingClientRect()
+                                        setHeatmapTooltip({
+                                          left: r.left + r.width / 2,
+                                          top: r.top,
+                                          dateStr: dayLabel,
+                                          runs: item.runs,
+                                          live: Boolean(liveTip),
+                                          swatch: fill,
+                                        })
+                                      },
+                                      onMouseLeave: () => {
+                                        if (heatmapTipHideRef.current) clearTimeout(heatmapTipHideRef.current)
+                                        heatmapTipHideRef.current = setTimeout(() => {
+                                          setHeatmapTooltip(null)
+                                          heatmapTipHideRef.current = null
+                                        }, 100)
+                                      },
+                                    }
+                                  : {})}
                               />
                             )
                           })
@@ -1345,8 +2143,8 @@ export default function AdminPage() {
                           if (!projSearchOpen) setProjFilterOpen(false)
                         }}
                         className={`rounded-lg p-1.5 transition-colors ${projSearchOpen ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/70 hover:bg-white/10 hover:text-sand'}`}
-                        title="Suchen"
-                        aria-label="Suchen"
+                        title="Search"
+                        aria-label="Search"
                       >
                         <Search size={18} />
                       </button>
@@ -1394,7 +2192,7 @@ export default function AdminPage() {
                             type="text"
                             value={projSearch}
                             onChange={(e) => setProjSearch(e.target.value)}
-                            placeholder="Suchen…"
+                            placeholder="Search…"
                             className="w-full rounded-lg border border-white/10 bg-white/5 py-2 pl-8 pr-8 text-sm text-white placeholder-sand/50 focus:border-[#FF9F0F]/50 focus:outline-none focus:ring-1 focus:ring-[#FF9F0F]/30"
                             autoFocus
                           />
@@ -1402,7 +2200,7 @@ export default function AdminPage() {
                             type="button"
                             onClick={() => setProjSearchOpen(false)}
                             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-sand/50 hover:text-sand"
-                            aria-label="Suche schließen"
+                            aria-label="Close search"
                           >
                             <X size={14} />
                           </button>
@@ -1411,45 +2209,60 @@ export default function AdminPage() {
                     )}
                   </AnimatePresence>
                   <div className="hide-scroll grid min-h-0 flex-1 auto-rows-min grid-cols-1 content-start gap-2.5 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
-                    {filteredOrgProjects.length === 0 ? (
+                    {showTenantProjectsLoading ? (
                       <div className="col-span-full rounded-lg border border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-sand/60">
-                        No projects match these filters.
+                        Loading projects…
+                      </div>
+                    ) : showTenantProjectsError ? (
+                      <div className="col-span-full rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-8 text-center text-sm text-red-200/90">
+                        {tenantOffersError ?? 'Failed to load projects.'}
+                      </div>
+                    ) : filteredOrgProjects.length === 0 ? (
+                      <div className="col-span-full rounded-lg border border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-sand/60">
+                        {tenantOffersMatchSelection &&
+                        tenantOffers.length === 0 &&
+                        !hasActiveProjFilters &&
+                        !projSearch.trim()
+                          ? 'No projects for this organization.'
+                          : 'No projects match these filters.'}
                       </div>
                     ) : (
                       filteredOrgProjects.map((proj) => {
-                        const statusStyles =
-                          proj.status === 'Running'
-                            ? 'border-[#FF9F0F]/50 bg-[#FF9F0F]/14 text-[#FFD29A]'
-                            : proj.status === 'Queued'
-                              ? 'border-[#c9944a]/40 bg-[#c9944a]/10 text-sand/80'
-                              : 'border-white/22 bg-white/10 text-sand/88'
                         return (
                           <button
-                            key={proj.ref}
+                            key={proj.id}
                             type="button"
-                            onClick={() => setSelectedProjectRef(proj.ref)}
+                            onClick={() => setSelectedProjectRef(proj.id)}
                             className="relative flex min-h-[min(7.5rem,18vh)] flex-col overflow-hidden rounded-md border border-black/40 bg-coffee-750/95 pl-3 pr-3 pt-2.5 pb-2.5 text-left shadow-soft transition hover:border-caramel hover:bg-coffee-700/95"
                             style={{ borderLeftWidth: 4, borderLeftColor: '#FF9F0F' }}
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <span className="truncate font-mono text-[11px] text-[#FFD29A]/95">{proj.ref}</span>
-                              <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${statusStyles}`}>
-                                {proj.status}
+                              <span className="truncate text-sm font-semibold leading-snug text-[#FFD29A] sm:text-[15px]">
+                                {proj.offerKindLabel}
+                              </span>
+                              <span
+                                className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold tracking-wide ${proj.historyStatusBadgeClass}`}
+                              >
+                                {proj.historyStatusLabel}
                               </span>
                             </div>
-                            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-sand/55">
+                            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-sand/55">
                               <span>{proj.dateLabel}</span>
                               {proj.owner ? (
                                 <>
                                   <span className="text-sand/35">·</span>
-                                  <span className="truncate text-sand/75">{proj.owner}</span>
+                                  <span className="max-w-[9rem] truncate text-sand/75">{proj.owner}</span>
                                 </>
                               ) : null}
+                              <span className="text-sand/35">·</span>
+                              <span className="truncate font-mono text-[10px] text-sand/45" title={proj.ref}>
+                                {proj.ref}
+                              </span>
                             </div>
                             <div className="mt-1 line-clamp-2 text-sm font-medium leading-snug text-sand">{proj.title}</div>
                             <div className="mt-auto flex items-center gap-1.5 border-t border-white/5 pt-2 text-[11px] text-sand/65">
                               <Clock3 size={12} className="shrink-0 text-[#FFB84D]/70" />
-                              <span>{proj.duration}</span>
+                              <span title={proj.durationTooltip}>{proj.duration}</span>
                             </div>
                           </button>
                         )
@@ -1592,6 +2405,16 @@ export default function AdminPage() {
                 Organization data
               </div>
               <div className="hide-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+                {usingLiveProjects && tenantWorkspace.status === 'loading' && (
+                  <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/65">
+                    Loading organization details…
+                  </div>
+                )}
+                {usingLiveProjects && tenantWorkspace.status === 'error' && tenantWorkspace.error && (
+                  <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">
+                    {tenantWorkspace.error}
+                  </div>
+                )}
                 <div className="rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-2.5">
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sand/55">Company</div>
                   <div className="mb-3 flex items-center gap-2">
@@ -1600,7 +2423,17 @@ export default function AdminPage() {
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-sand">{selectedOrgMeta.companyName}</div>
-                      <div className="text-xs text-sand/65">{selectedOrgMeta.plan} plan</div>
+                      <div className="text-xs text-sand/65">
+                        {liveWorkspace ? selectedOrgMeta.plan : `${selectedOrgMeta.plan} plan`}
+                      </div>
+                      {liveWorkspace && (
+                        <>
+                          <div className="mt-0.5 truncate font-mono text-[10px] text-sand/50">{liveWorkspace.tenant.slug}</div>
+                          <div className="mt-0.5 text-[10px] text-sand/50">
+                            {liveWorkspace.stats.offer_count} projects · {liveWorkspace.profiles.length} users
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5 text-xs">
@@ -1616,22 +2449,45 @@ export default function AdminPage() {
                       <FolderKanban size={12} className="shrink-0 text-[#FFB84D]" />
                       {selectedOrgMeta.address}
                     </div>
+                    {liveWorkspace && liveWorkspace.branding.website.trim() !== '' && (
+                      <div className="flex items-center gap-2 text-sand/85">
+                        <Globe size={12} className="shrink-0 text-[#FFB84D]" />
+                        <span className="truncate">{liveWorkspace.branding.website}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-2.5">
-                  <div className="mb-2 text-sm font-semibold text-sand">Token balance</div>
+                  <div className="mb-2 text-sm font-semibold text-sand">Monthly project quota</div>
+                  {liveWorkspace && (
+                    <p className="mb-2 text-[11px] leading-snug text-sand/55">
+                      {liveWorkspace.tokens.display}
+                      <span className="text-sand/45"> · period {liveWorkspace.tokens.period_ym} (Europe/Berlin)</span>
+                      {!liveWorkspace.tokens.unlimited && liveWorkspace.tokens.limit != null && (
+                        <span className="block text-sand/45">
+                          {liveWorkspace.tokens.used} used of {liveWorkspace.tokens.limit} this month
+                        </span>
+                      )}
+                    </p>
+                  )}
                   <div className="mb-3 flex items-center justify-between rounded-lg border border-white/10 bg-black/20 px-3 py-2">
                     <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#FFD29A]">
                       <Coins size={14} className="text-[#FFB84D]" />
                       {orgTokenBalanceDisplay}
                     </div>
-                    <span className="text-xs text-sand/65">tokens</span>
+                    <span className="text-xs text-sand/65">{liveWorkspace ? 'remaining' : 'tokens'}</span>
                   </div>
                   <button
                     type="button"
+                    disabled={!!liveWorkspace}
+                    title={
+                      liveWorkspace
+                        ? 'Quota is defined in tenant config (usage.token_tier); contact backend / Supabase to change.'
+                        : undefined
+                    }
                     onClick={() => setTokensModalOpen(true)}
-                    className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2"
+                    className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:brightness-100"
                   >
                     <Coins size={15} />
                     Add more tokens
@@ -1640,24 +2496,37 @@ export default function AdminPage() {
 
                 <div className="rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-2.5">
                   <div className="mb-2 text-sm font-semibold text-sand">Users</div>
-                  <p className="mb-2 text-[11px] text-sand/55">Click a member to edit name, email, password, and role.</p>
+                  <p className="mb-2 text-[11px] text-sand/55">
+                    {liveWorkspace
+                      ? 'Live directory from the database. Editing here does not persist (use Supabase or a future admin API).'
+                      : 'Click a member to edit name, email, password, and role.'}
+                  </p>
                   <div className="space-y-2">
                     {orgUsersList.map((u, idx) => (
                       <button
-                        key={`${selectedOrgId}-${u.name}-${idx}`}
+                        key={u.sourceProfileId ?? `${selectedOrgId}-${u.name}-${idx}`}
                         type="button"
                         onClick={() => {
-                          const list = orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgId)
-                          if (!orgEditableUsers[selectedOrgId]) {
+                          const list = orgUsersList
+                          if (!liveWorkspace && !orgEditableUsers[selectedOrgId]) {
                             setOrgEditableUsers((p) => ({ ...p, [selectedOrgId]: list }))
                           }
-                          setEditMemberDraft({ ...list[idx] })
+                          setEditMemberDraft({ ...list[idx]! })
                           setEditMemberIndex(idx)
                           setEditMemberModalOpen(true)
                         }}
-                        className="flex w-full items-center justify-between rounded-xl border border-white/15 bg-black/20 px-3 py-2.5 text-left text-sm font-medium text-sand transition hover:border-[#FF9F0F]/40"
+                        className="flex w-full items-center justify-between gap-2 rounded-xl border border-white/15 bg-black/20 px-3 py-2.5 text-left text-sm font-medium text-sand transition hover:border-[#FF9F0F]/40"
                       >
-                        <div className="text-sand">{u.name}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sand">{u.name}</div>
+                          {u.email ? (
+                            <div className="truncate font-mono text-[10px] text-sand/50">{u.email}</div>
+                          ) : null}
+                          {liveWorkspace && u.sourceProfileId &&
+                          liveWorkspace.profiles.find((p) => p.id === u.sourceProfileId)?.tokens_unlimited ? (
+                            <div className="mt-0.5 text-[9px] text-sand/40">User: unlimited projects</div>
+                          ) : null}
+                        </div>
                         <span
                           className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
                             u.role === 'Admin'
@@ -1698,6 +2567,50 @@ export default function AdminPage() {
         </aside>
       </div>
       </div>
+
+      {typeof document !== 'undefined' &&
+        heatmapTooltip &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[10060] w-max max-w-[min(200px,calc(100vw-20px))]"
+            style={{
+              left: heatmapTooltip.left,
+              top: heatmapTooltip.top,
+              transform: 'translate(-50%, calc(-100% - 8px))',
+            }}
+            role="tooltip"
+          >
+            <div className="relative overflow-visible rounded-lg border border-[#FF9F0F]/50 bg-[#1a1511]/98 px-2 py-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur-sm ring-1 ring-black/45">
+              <div
+                className="pointer-events-none absolute inset-x-2 top-0 h-px bg-linear-to-r from-transparent via-[#FF9F0F]/30 to-transparent"
+                aria-hidden
+              />
+              <div className="flex items-center gap-2">
+                <div
+                  className="h-6 w-1.5 shrink-0 rounded-full border border-black/40"
+                  style={{ backgroundColor: heatmapTooltip.swatch }}
+                />
+                <div className="min-w-0 leading-tight">
+                  <p className="font-mono text-[11px] font-semibold text-[#FFD29A]">{heatmapTooltip.dateStr}</p>
+                  <p className="mt-0.5 text-xs font-bold tabular-nums text-sand">
+                    {heatmapTooltip.runs}{' '}
+                    <span className="font-semibold text-sand/75">
+                      {heatmapTooltip.runs === 1 ? 'event' : 'events'}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 text-[9px] leading-snug text-sand/50">
+                    {heatmapTooltip.live ? 'Creates + finishes that day' : 'Demo'}
+                  </p>
+                </div>
+              </div>
+              <div
+                className="pointer-events-none absolute left-1/2 top-full -mt-px h-1.5 w-1.5 -translate-x-1/2 rotate-45 border border-[#FF9F0F]/40 border-t-0 border-l-0 bg-[#1a1511]"
+                aria-hidden
+              />
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {typeof document !== 'undefined' &&
         createPortal(
@@ -1928,14 +2841,16 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
+                disabled={!!liveWorkspace}
                 onClick={() => {
+                  if (liveWorkspace) return
                   const add = Math.max(0, parseInt(tokensAddAmount, 10) || 0)
                   const base =
                     tokenBalancesByOrg[selectedOrgId] ?? parseTokenBalanceString(selectedOrgMeta.tokenBalance)
                   setTokenBalancesByOrg((prev) => ({ ...prev, [selectedOrgId]: base + add }))
                   setTokensModalOpen(false)
                 }}
-                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A]"
+                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Apply
               </button>
@@ -1962,47 +2877,59 @@ export default function AdminPage() {
               </button>
             </div>
             <div className="space-y-3 p-4">
+              {editMemberDraft.sourceProfileId ? (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
+                  This account is stored in Supabase. Changes here are not saved yet.
+                </p>
+              ) : null}
               <label className="block">
                 <span className="wiz-label">Name</span>
                 <input
                   type="text"
+                  readOnly={!!editMemberDraft.sourceProfileId}
                   value={editMemberDraft.name}
                   onChange={(e) => setEditMemberDraft((d) => (d ? { ...d, name: e.target.value } : d))}
-                  className="sun-input"
+                  className={`sun-input${editMemberDraft.sourceProfileId ? ' cursor-default opacity-80' : ''}`}
                 />
               </label>
               <label className="block">
                 <span className="wiz-label">Email</span>
                 <input
                   type="email"
+                  readOnly={!!editMemberDraft.sourceProfileId}
                   value={editMemberDraft.email}
                   onChange={(e) => setEditMemberDraft((d) => (d ? { ...d, email: e.target.value } : d))}
-                  className="sun-input"
+                  className={`sun-input${editMemberDraft.sourceProfileId ? ' cursor-default opacity-80' : ''}`}
                 />
               </label>
               <label className="block">
                 <span className="wiz-label">Password</span>
                 <input
                   type="password"
+                  readOnly={!!editMemberDraft.sourceProfileId}
                   value={editMemberDraft.password}
                   onChange={(e) => setEditMemberDraft((d) => (d ? { ...d, password: e.target.value } : d))}
-                  className="sun-input"
+                  className={`sun-input${editMemberDraft.sourceProfileId ? ' cursor-default opacity-80' : ''}`}
                   placeholder="New password (UI only)"
                   autoComplete="new-password"
                 />
               </label>
               <label className="block">
                 <span className="wiz-label">Role</span>
-                <SelectSun
-                  value={editMemberDraft.role}
-                  onChange={(v) =>
-                    setEditMemberDraft((d) =>
-                      d ? { ...d, role: v as 'Admin' | 'Member' } : d,
-                    )
-                  }
-                  options={['Admin', 'Member']}
-                  placeholder="Select role"
-                />
+                {editMemberDraft.sourceProfileId ? (
+                  <div className="sun-input cursor-default opacity-80">{editMemberDraft.role}</div>
+                ) : (
+                  <SelectSun
+                    value={editMemberDraft.role}
+                    onChange={(v) =>
+                      setEditMemberDraft((d) =>
+                        d ? { ...d, role: v as 'Admin' | 'Member' } : d,
+                      )
+                    }
+                    options={['Admin', 'Member']}
+                    placeholder="Select role"
+                  />
+                )}
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
@@ -2019,16 +2946,17 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
+                disabled={!!editMemberDraft.sourceProfileId}
                 onClick={() => {
-                  if (editMemberIndex == null || !editMemberDraft) return
-                  const list = [...(orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgId))]
+                  if (editMemberIndex == null || !editMemberDraft || editMemberDraft.sourceProfileId) return
+                  const list = [...(orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgMeta))]
                   list[editMemberIndex] = { ...editMemberDraft }
                   setOrgEditableUsers((prev) => ({ ...prev, [selectedOrgId]: list }))
                   setEditMemberModalOpen(false)
                   setEditMemberDraft(null)
                   setEditMemberIndex(null)
                 }}
-                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A]"
+                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Save changes
               </button>
@@ -2040,27 +2968,112 @@ export default function AdminPage() {
   )
 }
 
+function formatSparkTooltipSeconds(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  return `${m}m ${String(s).padStart(2, '0')}s`
+}
+
+function KpiSparkline({
+  values,
+  valueFormat,
+}: {
+  values: readonly number[]
+  valueFormat: 'count' | 'duration'
+}) {
+  const rawId = useId()
+  const gradId = `kpi-spark-${rawId.replace(/\W/g, '')}`
+  if (values.length < 2) return null
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = Math.max(1e-9, max - min)
+  const w = 100
+  const h = 26
+  const padY = 2.5
+  const coords = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w
+    const y = padY + (1 - (v - min) / range) * (h - 2 * padY)
+    return { x, y, v }
+  })
+  const polyline = coords.map((c) => `${c.x},${c.y}`).join(' ')
+  const floorY = h - 0.5
+  const area = `${polyline} ${w},${floorY} 0,${floorY}`
+
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      className="h-8 w-full max-w-[122px] shrink-0 text-[#FFB84D]"
+      role="img"
+      aria-label="Trend sparkline for the last eight weeks"
+    >
+      <title>
+        {values.map((v, i) => `W${i + 1}: ${valueFormat === 'duration' ? formatSparkTooltipSeconds(v) : String(Math.round(v))}`).join('; ')}
+      </title>
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(255, 184, 77, 0.28)" />
+          <stop offset="100%" stopColor="rgba(255, 159, 15, 0.02)" />
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill={`url(#${gradId})`} />
+      <polyline
+        points={polyline}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {coords.map((c, i) => (
+        <circle key={i} cx={c.x} cy={c.y} r="1.3" fill="#FF9F0F" stroke="rgba(255, 210, 154, 0.85)" strokeWidth="0.6" />
+      ))}
+    </svg>
+  )
+}
+
 function KpiCard({
   title,
   value,
   delta,
   icon,
+  series,
+  sparkCaption,
+  valueFormat = 'count',
 }: {
   title: string
   value: string
   delta: string
   icon: React.ReactNode
+  series?: readonly number[]
+  sparkCaption?: string
+  valueFormat?: 'count' | 'duration'
 }) {
+  const showSpark = series && series.length >= 2
   return (
-    <div className="rounded-xl border border-black/40 bg-coffee-700/90 p-3 shadow-soft backdrop-blur-sm">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-sm text-sand/70">{title}</div>
-        <div className="inline-flex h-5 w-5 items-center justify-center rounded border border-[#FF9F0F]/35 bg-[#FF9F0F]/15 text-[#FFB84D]">
+    <div className="rounded-xl border border-black/40 bg-coffee-700/90 p-2.5 shadow-soft backdrop-blur-sm">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <div className="min-w-0 truncate text-[12px] leading-tight text-sand/70">{title}</div>
+        <div className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border border-[#FF9F0F]/35 bg-[#FF9F0F]/15 text-[#FFB84D]">
           {icon}
         </div>
       </div>
-      <div className="text-2xl font-bold text-[#FFB84D]">{value}</div>
-      <div className="mt-1 text-sm text-sand/75">{delta} vs previous period</div>
+      <div className="grid grid-cols-[minmax(0,1fr)_118px] items-end gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xl font-bold leading-none text-[#FFB84D]">{value}</div>
+          <div className="mt-1 inline-flex items-center gap-1.5">
+            <span className="rounded-full border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[#FFD29A]">{delta}</span>
+            <span className="text-[10px] leading-none text-sand/50">vs prev</span>
+          </div>
+        </div>
+        {showSpark ? (
+          <div className="min-w-0">
+            <KpiSparkline values={series} valueFormat={valueFormat} />
+            {sparkCaption ? (
+              <span className="mt-0.5 block truncate text-right text-[8px] leading-tight text-sand/40">{sparkCaption}</span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

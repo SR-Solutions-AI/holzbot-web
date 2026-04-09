@@ -61,7 +61,7 @@ function statusLabelAndColor(status?: string | null): { label: string; className
       className: 'bg-yellow-400/15 text-yellow-300 border border-yellow-400/40',
     }
   }
-  if (s === 'done' || s === 'finished' || s === 'fertig') {
+  if (s === 'done' || s === 'finished' || s === 'fertig' || s === 'ready') {
     return {
       label: 'Fertig',
       className: 'bg-[#FF9F0F]/15 text-[#FF9F0F] border border-[#FF9F0F]/60',
