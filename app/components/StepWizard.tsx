@@ -2472,6 +2472,14 @@ export default function StepWizard() {
           </div>
         ) : showPackagePicker ? (
           <div className="w-full max-w-full self-stretch flex flex-1 min-h-0 flex-col justify-center px-2 page-enter">
+            <div className="mb-5 sm:mb-6 px-3 text-center">
+              <p className="text-[11px] sm:text-xs uppercase tracking-[0.18em] text-white/45 font-semibold mb-1.5">Projektwahl</p>
+              <h2 className="text-white/95 text-2xl sm:text-3xl font-semibold tracking-tight leading-snug">
+                {packagePickerMengenSub
+                  ? 'Für welches Projekt brauchen Sie eine Mengenübersicht?'
+                  : 'Für welches Projekt brauchen Sie eine Preisschätzung?'}
+              </h2>
+            </div>
             {tokensBlocked ? (
               <p className="text-center text-amber-100/90 text-sm sm:text-base font-medium mb-4 max-w-xl mx-auto px-3 leading-snug">
                 Sie haben für diesen Monat keine Projekte mehr im Rahmen Ihres Limits. Am 1. des nächsten Monats stehen
@@ -2491,16 +2499,16 @@ export default function StepWizard() {
                 aria-hidden={packagePickerMengenSub}
               >
                 <div
-                  className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 justify-items-center items-stretch w-full max-w-5xl ${
+                  className={`flex flex-wrap justify-center gap-3 items-stretch w-full max-w-5xl ${
                     tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                   }`}
                 >
-                  {/* 1) Mengenermittlung */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  {/* 1) Mengenübersicht */}
+                  <div className="order-last bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                     <div className="flex items-center justify-center mb-3">
-                      <img src="/images/blueprint.png" alt="Mengenermittlung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      <img src="/images/blueprint.png" alt="Mengenübersicht" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
-                    <div className="text-white font-extrabold text-lg text-center">Mengenermittlung</div>
+                    <div className="text-white font-extrabold text-lg text-center">Mengenübersicht</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Nur Maß-/Mengen-PDF – ohne Preisangebot</div>
                     <div className="flex-1" />
                     <button
@@ -2524,7 +2532,7 @@ export default function StepWizard() {
                       <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Dachstühle</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Dachstühle</div>
                     <div className="flex-1" />
                     <button
                       type="button"
@@ -2548,7 +2556,7 @@ export default function StepWizard() {
                       <img src="/images/house.png" alt="Neubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Neubau</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung eines Schätzungsangebots für Neubauten</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Neubauten</div>
                     <div className="flex-1" />
                     <button
                       type="button"
@@ -2565,6 +2573,40 @@ export default function StepWizard() {
                       <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
+
+                  {/* 4) Aufstockung */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)]">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/aufstockung.png" alt="Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Aufstockung</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Aufstockungen</div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => {}}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    >
+                      Kalkulation starten
+                    </button>
+                  </div>
+
+                  {/* 5) Zubau */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)]">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/zubau.png" alt="Zubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Zubau</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Zubauten</div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => {}}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                    >
+                      Kalkulation starten
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2576,28 +2618,27 @@ export default function StepWizard() {
                 }`}
                 aria-hidden={!packagePickerMengenSub}
               >
-                <button
-                  type="button"
-                  onClick={() => setPackagePickerMengenSub(false)}
-                  className="absolute left-0 top-0 z-20 flex items-center gap-1.5 text-sm text-sand/80 hover:text-sand transition-colors py-1"
-                >
-                  <ChevronLeft size={18} />
-                  Zurück zur Auswahl
-                </button>
                 <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
-                  <p className="text-center text-sand/90 text-sm max-w-md mb-6">
-                    Projekttyp wählen – danach nur Plan hochladen und im Editor prüfen.
-                  </p>
                   <div
-                    className={`grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-[680px] justify-items-stretch items-stretch ${
+                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(2,minmax(320px,320px))] gap-4 w-full max-w-[656px] justify-center justify-items-stretch items-stretch ${
                       tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                     }`}
                   >
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="sm:col-span-2 lg:col-span-2">
+                      <button
+                        type="button"
+                        onClick={() => setPackagePickerMengenSub(false)}
+                        className="flex items-center gap-1.5 text-sm text-sand/80 hover:text-sand transition-colors py-1"
+                      >
+                        <ChevronLeft size={18} />
+                        Zurück zur Auswahl
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Neubau Mengenermittlung</div>
+                      <div className="text-white font-extrabold text-lg text-center">Neubau Mengenübersicht</div>
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
@@ -2617,11 +2658,47 @@ export default function StepWizard() {
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
                       <div className="flex items-center justify-center mb-3">
-                        <img src="/images/roof-blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                        <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl Mengenermittlung</div>
+                      <div className="text-white font-extrabold text-lg text-center">Aufstockung Mengenübersicht</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {}}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/zubau.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Zubau Mengenübersicht</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {}}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/roof-blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl Mengenübersicht</div>
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
@@ -2641,6 +2718,7 @@ export default function StepWizard() {
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
+
                   </div>
                 </div>
               </div>
