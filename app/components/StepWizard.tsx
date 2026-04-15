@@ -635,6 +635,8 @@ export default function StepWizard() {
   const [tokensBlocked, setTokensBlocked] = useState(false)
   /** Pachet WIP: click pe Aufstockung/Zubau afișează banner „în dezvoltare". */
   const [wipNotice, setWipNotice] = useState<string | null>(null)
+  /** Email cont curent — pentru gating Aufstockung/Zubau. */
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
 
   /** „Angebot bearbeiten“: ohne Upload-Schritt (Variablen / Variablen+Erkennungen). */
   const [editOfferSkipUpload, setEditOfferSkipUpload] = useState(false)
@@ -975,7 +977,7 @@ export default function StepWizard() {
       const uploadOnly = (formStepsDachstuhl as any[]).filter((s) => s.key === 'upload')
       setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[]))
       setIdx(0)
-    } else if (measurementsOnlyFlow && selectedPackage === 'neubau') {
+    } else if (measurementsOnlyFlow && (selectedPackage === 'neubau' || selectedPackage === 'aufstockung')) {
       const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
       setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsFromJson as any[]))
       setIdx(0)
@@ -1206,6 +1208,8 @@ export default function StepWizard() {
     const load = async () => {
       try {
         const me = await apiFetch('/me')
+        const email = typeof me?.user?.email === 'string' ? me.user.email.toLowerCase().trim() : null
+        setCurrentUserEmail(email)
         const t = me?.tokens as { unlimited?: boolean; limit?: number | null; used?: number } | undefined
         if (!t) {
           setTokensBlocked(false)
@@ -2460,6 +2464,8 @@ export default function StepWizard() {
   }
 
   // 3. Main Wizard UI — direct Paket auswählen; după Haus-Angebot starten → wizard
+  /** Contul holzbau@holzbot.com are acces complet; restul văd mesaj WIP pentru Aufstockung/Zubau. */
+  const isDevAccount = currentUserEmail === 'holzbau@holzbot.com'
   const showPackagePicker = !computing && !pdfUrl && !offerId && selectedPackage === null
   const showForm = (selectedPackage === 'neubau' || selectedPackage === 'dachstuhl' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || offerId) && !computing && !pdfUrl
   const showProgressHeader = !computing && !pdfUrl && !showPackagePicker && showForm
@@ -2685,9 +2691,9 @@ export default function StepWizard() {
                   </div>
 
                   {/* 3) Aufstockung — row 1, col 5-6 */}
-                  <div className="sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)]">
+                  <div className="sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                     <div className="flex items-center justify-center mb-3">
-                      <img src="/images/aufstockung.png" alt="Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                      <img src="/images/aufstockung.png" alt="Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Aufstockung</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Aufstockungen</div>
@@ -2695,10 +2701,18 @@ export default function StepWizard() {
                     <button
                       type="button"
                       disabled={tokensBlocked}
-                      onClick={() => setWipNotice('aufstockung')}
+                      onClick={() => {
+                        if (!isDevAccount) { setWipNotice('aufstockung'); return }
+                        if (tokensBlocked) return
+                        setMeasurementsOnlyFlow(false)
+                        roofOnlyOfferRef.current = false
+                        setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
+                        setSelectedPackage('aufstockung')
+                      }}
                       className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
                       Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
 
@@ -2712,10 +2726,19 @@ export default function StepWizard() {
                     <div className="flex-1" />
                     <button
                       type="button"
-                      onClick={() => setWipNotice('zubau')}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                      disabled={tokensBlocked}
+                      onClick={() => {
+                        if (!isDevAccount) { setWipNotice('zubau'); return }
+                        if (tokensBlocked) return
+                        setMeasurementsOnlyFlow(false)
+                        roofOnlyOfferRef.current = false
+                        setForm(prev => ({ ...prev, wizardPackage: 'neubau' }))
+                        setSelectedPackage('neubau')
+                      }}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
                       Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
 
@@ -2803,8 +2826,17 @@ export default function StepWizard() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => {}}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (!isDevAccount) { setPackagePickerMengenSub(false); setWipNotice('aufstockung'); return }
+                          if (tokensBlocked) return
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = false
+                          setPackagePickerMengenSub(false)
+                          setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
+                          setSelectedPackage('aufstockung')
+                        }}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
@@ -2821,8 +2853,17 @@ export default function StepWizard() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => {}}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (!isDevAccount) { setPackagePickerMengenSub(false); setWipNotice('zubau'); return }
+                          if (tokensBlocked) return
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = false
+                          setPackagePickerMengenSub(false)
+                          setForm(prev => ({ ...prev, wizardPackage: 'neubau' }))
+                          setSelectedPackage('neubau')
+                        }}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
@@ -3129,8 +3170,13 @@ export default function StepWizard() {
             <div className="wizard-footer flex items-center justify-between mt-4 gap-2 flex-wrap">
               <div className="flex items-center gap-2 min-w-0">
                 <button 
-                  onClick={onBack} 
-                  disabled={isFirst || saving}
+                  onClick={isFirst && !editOfferSkipUpload
+                    ? () => {
+                        if (!offerId) { void handleResetToNewProject() }
+                        else { setCancelDialog('delete_offer') }
+                      }
+                    : onBack}
+                  disabled={saving || (isFirst && editOfferSkipUpload)}
                   className={`
                     flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ease-in-out
                     border border-[#D8A25E]/30 text-[#D8A25E] bg-transparent
@@ -3139,7 +3185,7 @@ export default function StepWizard() {
                   `}
                 >
                   <ChevronLeft size={19} /> 
-                  {DE.common.btnBack}
+                  {isFirst && !editOfferSkipUpload ? 'Zurück zur Übersicht' : DE.common.btnBack}
                 </button>
                 {editOfferSkipUpload ? (
                   <button
@@ -4119,10 +4165,11 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     (source: unknown[], targetFloors: string[] = listaEtaje) =>
       targetFloors.map((_, idx) => {
         const floorType = String(targetFloors[idx] ?? '').toLowerCase()
-        if (floorType === 'parter') return 'existing'
         const v = String(source?.[idx] ?? '').toLowerCase()
         if (v === 'new') return 'new'
         if (v === 'existing') return 'existing'
+        // Parter defaults to 'existing'; all other unset floors default based on position (last = new)
+        if (floorType === 'parter') return 'existing'
         return idx === targetFloors.length - 1 ? 'new' : 'existing'
       }),
     [listaEtaje],
@@ -4397,13 +4444,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                   <input
                     type="checkbox"
                     className="sun-checkbox"
-                    checked={
-                      String(etaj ?? '').toLowerCase() === 'parter' ||
-                      String(aufstockungFloorKinds[idx] ?? '').toLowerCase() !== 'new'
-                    }
-                    disabled={String(etaj ?? '').toLowerCase() === 'parter'}
+                    checked={String(aufstockungFloorKinds[idx] ?? '').toLowerCase() !== 'new'}
                     onChange={(e) => {
-                      if (String(etaj ?? '').toLowerCase() === 'parter') return
                       setForm((prev: Record<string, any>) => {
                         const current = normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [])
                         current[idx] = e.target.checked ? 'existing' : 'new'
@@ -4411,11 +4453,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                       })
                     }}
                   />
-                  <span className="text-xs text-sand/90">
-                    {String(etaj ?? '').toLowerCase() === 'parter'
-                      ? 'Erdgeschoss (immer Bestand)'
-                      : 'Bereits bestehendes Geschoss'}
-                  </span>
+                  <span className="text-xs text-sand/90">Bereits bestehendes Geschoss</span>
                 </label>
               )}
               {etaj === 'mansarda_mit' && (
