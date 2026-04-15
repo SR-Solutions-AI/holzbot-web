@@ -20,6 +20,16 @@
     outline: 2px solid var(--color-sun);
     outline-offset: 2px;
   }
+
+  /* Statik custom price: forms plugin adds default blue-ish focus ring */
+  input.editor-statik-eur-holz:focus,
+  input.editor-statik-eur-holz:focus-visible {
+    outline: none !important;
+    border-color: rgb(255 159 15 / 0.5);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 170, 110, 0.14),
+      0 0 0 2px rgba(255, 159, 15, 0.4) !important;
+  }
 }
 
 /* ======= Design tokens ======= */

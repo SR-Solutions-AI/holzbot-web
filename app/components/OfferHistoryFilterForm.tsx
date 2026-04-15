@@ -8,14 +8,15 @@ import { DatePickerPopover } from './DatePickerPopover'
 export type OfferHistoryOfferTypeOption = { id: string; slug: string }
 export type OfferHistoryOrgMember = { id: string; email: string | null; full_name: string | null }
 
-/** Same 3 types as Step Wizard package picker: Mengenermittlung, Dachstuhl, Neubau */
-export const WIZARD_OFFER_SLUGS = ['mengenermittlung', 'mengen', 'dachstuhl', 'neubau', 'full_house'] as const
+/** Same wizard package types as Step Wizard package picker. */
+export const WIZARD_OFFER_SLUGS = ['mengenermittlung', 'mengen', 'dachstuhl', 'neubau', 'aufstockung', 'full_house'] as const
 
 const SLUG_TO_LABEL: Record<string, string> = {
   mengenermittlung: 'Mengenermittlung',
   mengen: 'Mengenermittlung',
   dachstuhl: 'Dachstuhl Angebot',
   neubau: 'Neubau Angebot',
+  aufstockung: 'Aufstockung Angebot',
   full_house: 'Neubau Angebot',
 }
 
@@ -63,6 +64,7 @@ export function OfferHistoryFilterForm({
   const orderedWizardTypes = [
     offerTypeOptions.find((o) => o.slug === 'mengenermittlung' || o.slug === 'mengen'),
     offerTypeOptions.find((o) => o.slug === 'dachstuhl'),
+    offerTypeOptions.find((o) => o.slug === 'aufstockung'),
     offerTypeOptions.find((o) => o.slug === 'neubau' || o.slug === 'full_house'),
   ].filter(Boolean) as OfferHistoryOfferTypeOption[]
 

@@ -41,8 +41,13 @@ function getOfferTypeBadgeLabel(item: OfferListItem): string {
   const isRoofOffer = item.meta?.roof_only_offer === true || wizardPkg === 'dachstuhl'
   const isMeasurementsOnly = item.meta?.measurements_only_offer === true
 
-  if (isMeasurementsOnly) return isRoofOffer ? 'Dachstuhl Mengenermittlung' : 'Neubau Mengenermittlung'
+  if (isMeasurementsOnly) {
+    if (isRoofOffer) return 'Dachstuhl Mengenübersicht'
+    if (wizardPkg === 'aufstockung') return 'Aufstockung Mengenübersicht'
+    return 'Neubau Mengenübersicht'
+  }
   if (isRoofOffer) return 'Dachstuhl Angebot'
+  if (wizardPkg === 'aufstockung') return 'Aufstockung Angebot'
   return offerTypeLabel(item.offer_type_slug)
 }
 
