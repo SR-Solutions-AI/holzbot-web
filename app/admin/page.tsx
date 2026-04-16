@@ -44,6 +44,7 @@ import {
 import { DatePickerPopover } from '../components/DatePickerPopover'
 import { SelectSun } from '../components/SunSelect'
 import { OfferHistoryFilterForm } from '../components/OfferHistoryFilterForm'
+import PdfThumbnail from '../components/PdfThumbnail'
 import {
   fetchAdminTenants,
   fetchAdminTenantOffers,
@@ -356,6 +357,51 @@ function bumpDayCount(map: Map<string, number>, iso: string) {
   map.set(key, (map.get(key) ?? 0) + 1)
 }
 
+/** Live tenant offers use UUID `offers.id`; demo seed rows use synthetic refs. */
+function isOfferUuid(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(id || '').trim())
+}
+
+type AdminEditorSnapshotItem = {
+  id: string
+  url: string
+  filename: string
+  plan_id?: string
+  editor: 'detections_review' | 'roof'
+  created_at: string
+}
+
+type AdminProjectEditorSnapshotsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; items: AdminEditorSnapshotItem[] }
+
+type AdminProjectExportAssets = {
+  loading: boolean
+  error: string | null
+  planUrl: string | null
+  planMime: string | null
+  pdfUrl: string | null
+  adminPdfUrl: string | null
+  calculationMethodPdfUrl: string | null
+  roofMeasurementsPdfUrl: string | null
+}
+
+function editorSnapshotsPreviewItem(items: AdminEditorSnapshotItem[]): AdminEditorSnapshotItem | null {
+  if (!items.length) return null
+  const det = items.filter((x) => x.editor === 'detections_review')
+  if (det.length) return det[det.length - 1]
+  const roof = items.filter((x) => x.editor === 'roof')
+  if (roof.length) return roof[roof.length - 1]
+  return items[items.length - 1]
+}
+
+function editorLabelEn(editor: AdminEditorSnapshotItem['editor']): string {
+  if (editor === 'detections_review') return 'Blueprint editor'
+  return 'Roof editor'
+}
+
 type AdminOrgProjectStatus = 'Running' | 'Queued' | 'Completed' | 'Failed' | 'Cancelled'
 
 type AdminOrgProjectRow = {
@@ -589,6 +635,20 @@ export default function AdminPage() {
   const [statsSummary, setStatsSummary] = useState<AdminStatisticsSummary | null>(null)
   const [statsStatus, setStatsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [statsError, setStatsError] = useState<string | null>(null)
+
+  /** Live offer: editor review snapshots + export URLs (same documents as user dashboard). */
+  const [projectEditorSnapshots, setProjectEditorSnapshots] = useState<AdminProjectEditorSnapshotsState>({ status: 'idle' })
+  const [projectExportAssets, setProjectExportAssets] = useState<AdminProjectExportAssets>({
+    loading: false,
+    error: null,
+    planUrl: null,
+    planMime: null,
+    pdfUrl: null,
+    adminPdfUrl: null,
+    calculationMethodPdfUrl: null,
+    roofMeasurementsPdfUrl: null,
+  })
+  const [projectEditorModalOpen, setProjectEditorModalOpen] = useState(false)
 
   const heatmapTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [heatmapTooltip, setHeatmapTooltip] = useState<{
@@ -1175,6 +1235,86 @@ export default function AdminPage() {
     return orgProjectsBase.find((p) => p.id === selectedProjectRef) ?? null
   }, [selectedProjectRef, orgProjectsBase])
 
+  useEffect(() => {
+    const p = selectedOrgProject
+    if (!p?.isLiveRow || !isOfferUuid(p.id)) {
+      setProjectEditorSnapshots({ status: 'idle' })
+      setProjectExportAssets({
+        loading: false,
+        error: null,
+        planUrl: null,
+        planMime: null,
+        pdfUrl: null,
+        adminPdfUrl: null,
+        calculationMethodPdfUrl: null,
+        roofMeasurementsPdfUrl: null,
+      })
+      setProjectEditorModalOpen(false)
+      return
+    }
+    const offerId = p.id
+    let cancelled = false
+    setProjectEditorSnapshots({ status: 'loading' })
+    setProjectExportAssets({
+      loading: true,
+      error: null,
+      planUrl: null,
+      planMime: null,
+      pdfUrl: null,
+      adminPdfUrl: null,
+      calculationMethodPdfUrl: null,
+      roofMeasurementsPdfUrl: null,
+    })
+    ;(async () => {
+      try {
+        const [snapRes, expRes] = await Promise.all([
+          apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/editor-snapshots`),
+          apiFetch(`/offers/${encodeURIComponent(offerId)}/export`),
+        ])
+        if (cancelled) return
+        const items = (snapRes?.items ?? []) as AdminEditorSnapshotItem[]
+        setProjectEditorSnapshots({ status: 'ok', items })
+        const plan = expRes?.files?.plan
+        setProjectExportAssets({
+          loading: false,
+          error: null,
+          planUrl: plan?.download_url ?? null,
+          planMime: plan?.meta?.mime ?? null,
+          pdfUrl: expRes?.files?.pdf?.download_url ?? expRes?.pdf ?? expRes?.download_url ?? null,
+          adminPdfUrl: expRes?.files?.adminPdf?.download_url ?? null,
+          calculationMethodPdfUrl: expRes?.files?.calculationMethodPdf?.download_url ?? null,
+          roofMeasurementsPdfUrl: expRes?.files?.roofMeasurementsPdf?.download_url ?? null,
+        })
+      } catch (e: unknown) {
+        if (cancelled) return
+        const msg = e instanceof Error ? e.message : 'Failed to load offer assets'
+        setProjectEditorSnapshots({ status: 'error', message: msg })
+        setProjectExportAssets({
+          loading: false,
+          error: msg,
+          planUrl: null,
+          planMime: null,
+          pdfUrl: null,
+          adminPdfUrl: null,
+          calculationMethodPdfUrl: null,
+          roofMeasurementsPdfUrl: null,
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedOrgProject])
+
+  useEffect(() => {
+    if (!projectEditorModalOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setProjectEditorModalOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [projectEditorModalOpen])
+
   const projectUploadedFiles = useMemo(() => {
     if (!selectedOrgProject) return []
     const d = selectedOrgProject.dateLabel
@@ -1196,6 +1336,73 @@ export default function AdminPage() {
       { step: 'Extracted pricing', at: `${d} · 09:17`, duration: '55s', user: u },
     ]
   }, [selectedOrgProject])
+
+  const adminProjectEditorPreview = useMemo(() => {
+    if (projectEditorSnapshots.status !== 'ok') return null
+    return editorSnapshotsPreviewItem(projectEditorSnapshots.items)
+  }, [projectEditorSnapshots])
+
+  const adminProjectDownloadFiles = useMemo(() => {
+    const ref = selectedOrgProject?.ref ?? 'offer'
+    const ex = projectExportAssets
+    type Row = {
+      key: string
+      label: string
+      hint: string
+      url: string | null
+      thumbKind: 'pdf' | 'image' | 'none'
+      imageMime?: string | null
+    }
+    const rows: Row[] = []
+    if (ex.planUrl) {
+      const mime = ex.planMime ?? ''
+      rows.push({
+        key: 'plan',
+        label: mime.includes('pdf') ? `Plan · ${ref}` : `Plan image · ${ref}`,
+        hint: 'Architectural plan (same as in the offer)',
+        url: ex.planUrl,
+        thumbKind: mime.includes('pdf') ? 'pdf' : 'image',
+        imageMime: mime,
+      })
+    }
+    if (ex.pdfUrl) {
+      rows.push({
+        key: 'pdf',
+        label: `Angebot_${ref}.pdf`,
+        hint: 'Client offer PDF (same download as in Live Feed)',
+        url: ex.pdfUrl,
+        thumbKind: 'pdf',
+      })
+    }
+    if (ex.roofMeasurementsPdfUrl) {
+      rows.push({
+        key: 'roof_m',
+        label: `Roof_measurements_${ref}.pdf`,
+        hint: 'Roof takeoff / measurements PDF',
+        url: ex.roofMeasurementsPdfUrl,
+        thumbKind: 'pdf',
+      })
+    }
+    if (ex.calculationMethodPdfUrl) {
+      rows.push({
+        key: 'calc_method',
+        label: `Calculation_method_${ref}.pdf`,
+        hint: 'Calculation method (English)',
+        url: ex.calculationMethodPdfUrl,
+        thumbKind: 'pdf',
+      })
+    }
+    if (ex.adminPdfUrl) {
+      rows.push({
+        key: 'admin_pdf',
+        label: `Admin_${ref}.pdf`,
+        hint: 'Internal admin PDF with raw data',
+        url: ex.adminPdfUrl,
+        thumbKind: 'pdf',
+      })
+    }
+    return rows
+  }, [projectExportAssets, selectedOrgProject?.ref])
 
   const toggleProjUserFilter = (id: string) => {
     setProjDraftUserIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -1939,22 +2146,70 @@ export default function AdminPage() {
                         </div>
                       </div>
 
-                      {/* Right: Editor */}
+                      {/* Right: user-completed editor snapshots (preview → modal with all) */}
                       <div className="flex min-h-0 flex-col rounded-lg border border-dashed border-[#FF9F0F]/30 bg-black/20 p-2.5">
-                        <div className="mb-3 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wide text-sand/70">
+                        <div className="mb-2 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wide text-sand/70">
                           <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/12 text-[#FFB84D]">
                             <SquarePen size={13} strokeWidth={2} aria-hidden />
                           </span>
-                          Editor
+                          Editors
                         </div>
-                        <div className="relative w-full overflow-hidden rounded-xl border border-[#FF9F0F]/30 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,.04)]">
-                          {/* eslint-disable-next-line @next/next/no-img-element -- static public asset */}
-                          <img
-                            src="/images/admin-floor-plan-preview.png"
-                            alt="Erdgeschoss — floor plan preview"
-                            className="h-auto max-h-[min(280px,55vh)] w-full object-contain object-center p-1 lg:max-h-40 lg:p-0.5"
-                          />
+                        <div className="mb-1.5 text-center text-[10px] leading-snug text-sand/50">
+                          {selectedOrgProject.isLiveRow && isOfferUuid(selectedOrgProject.id)
+                            ? 'Preview from user review. Tap to open all snapshots.'
+                            : 'Demo project — connect a live offer to load editor snapshots.'}
                         </div>
+                        <button
+                          type="button"
+                          disabled={
+                            !selectedOrgProject.isLiveRow ||
+                            !isOfferUuid(selectedOrgProject.id) ||
+                            projectEditorSnapshots.status === 'loading' ||
+                            (projectEditorSnapshots.status === 'ok' && projectEditorSnapshots.items.length === 0)
+                          }
+                          onClick={() => setProjectEditorModalOpen(true)}
+                          className="relative flex min-h-[120px] w-full flex-1 flex-col overflow-hidden rounded-xl border border-[#FF9F0F]/30 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition hover:border-[#FF9F0F]/50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {projectEditorSnapshots.status === 'loading' ? (
+                            <div className="flex flex-1 items-center justify-center px-2 py-6 text-[11px] text-sand/60">
+                              Loading editor snapshots…
+                            </div>
+                          ) : projectEditorSnapshots.status === 'error' ? (
+                            <div className="flex flex-1 items-center justify-center px-2 py-4 text-center text-[11px] text-red-300/95">
+                              {projectEditorSnapshots.message}
+                            </div>
+                          ) : adminProjectEditorPreview ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={adminProjectEditorPreview.url}
+                                alt={adminProjectEditorPreview.filename}
+                                className="h-auto max-h-[min(280px,55vh)] w-full flex-1 object-contain object-center p-1 lg:max-h-40 lg:p-0.5"
+                              />
+                              <div className="border-t border-white/10 bg-black/55 px-2 py-1 text-center text-[9px] text-sand/75">
+                                {editorLabelEn(adminProjectEditorPreview.editor)}
+                                {projectEditorSnapshots.status === 'ok' && projectEditorSnapshots.items.length > 1
+                                  ? ` · +${projectEditorSnapshots.items.length - 1} more`
+                                  : null}
+                              </div>
+                            </>
+                          ) : selectedOrgProject.isLiveRow && isOfferUuid(selectedOrgProject.id) ? (
+                            <div className="flex flex-1 flex-col items-center justify-center gap-1 px-2 py-6 text-center text-[11px] text-sand/55">
+                              <span>No editor snapshots stored for this offer yet.</span>
+                              <span className="text-[10px] text-sand/40">(Runs without blueprint/roof review leave this empty.)</span>
+                            </div>
+                          ) : (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element -- static public asset */}
+                              <img
+                                src="/images/admin-floor-plan-preview.png"
+                                alt="Demo floor plan preview"
+                                className="h-auto max-h-[min(280px,55vh)] w-full object-contain object-center p-1 opacity-60 lg:max-h-40 lg:p-0.5"
+                              />
+                              <div className="border-t border-white/10 px-2 py-1 text-center text-[9px] text-sand/50">Demo placeholder</div>
+                            </>
+                          )}
+                        </button>
                       </div>
                     </div>
                   </section>
@@ -2376,31 +2631,94 @@ export default function AdminPage() {
               <div className="hide-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
                 <p className="text-[11px] leading-relaxed text-sand/55">
                   Downloads for <span className="font-mono text-[#FFD29A]/90">{selectedOrgProject.ref}</span>
+                  {selectedOrgProject.isLiveRow && isOfferUuid(selectedOrgProject.id) ? (
+                    <span className="mt-1 block text-[10px] text-sand/45">
+                      Same signed URLs as in the customer dashboard (export API).
+                    </span>
+                  ) : null}
                 </p>
-                {[
-                  { label: `Angebot_${selectedOrgProject.ref}.pdf`, hint: 'Client offer PDF' },
-                  { label: `Mengenermittlung_${selectedOrgProject.ref}.pdf`, hint: 'Quantities & takeoff' },
-                ].map((f) => (
-                  <button
-                    key={f.label}
-                    type="button"
-                    className="group w-full rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition hover:border-[#FF9F0F]/45 hover:bg-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF9F0F]/35"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-14 w-11 shrink-0 flex-col items-center justify-center rounded-lg border border-red-400/35 bg-red-500/10 text-[9px] font-black uppercase tracking-wider text-red-200/95">
-                        PDF
+                {selectedOrgProject.isLiveRow && isOfferUuid(selectedOrgProject.id) ? (
+                  <>
+                    {projectExportAssets.loading ? (
+                      <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-4 text-center text-xs text-sand/60">
+                        Loading export files…
                       </div>
-                      <div className="min-w-0 flex-1 pt-0.5">
-                        <div className="truncate text-sm font-semibold text-sand group-hover:text-white">{f.label}</div>
-                        <div className="mt-0.5 text-[11px] text-sand/55">{f.hint}</div>
-                        <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#FFB84D]">
-                          <Download size={13} aria-hidden />
-                          Download
+                    ) : null}
+                    {projectExportAssets.error && !projectExportAssets.loading ? (
+                      <div className="rounded-xl border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">
+                        {projectExportAssets.error}
+                      </div>
+                    ) : null}
+                    {!projectExportAssets.loading &&
+                    !projectExportAssets.error &&
+                    adminProjectDownloadFiles.length === 0 ? (
+                      <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-4 text-center text-[11px] text-sand/55">
+                        No generated files in storage for this offer yet.
+                      </div>
+                    ) : null}
+                    {adminProjectDownloadFiles.map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        disabled={!f.url}
+                        onClick={() => {
+                          if (f.url) window.open(f.url, '_blank', 'noopener,noreferrer')
+                        }}
+                        className="group w-full rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition hover:border-[#FF9F0F]/45 hover:bg-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF9F0F]/35 disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="relative h-14 w-11 shrink-0 overflow-hidden rounded-lg border border-white/15 bg-black/30">
+                            {f.thumbKind === 'image' && f.url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={f.url} alt="" className="h-full w-full object-cover" />
+                            ) : f.thumbKind === 'pdf' && f.url ? (
+                              <PdfThumbnail src={f.url} width={44} height={56} className="h-full w-full" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-[8px] font-bold uppercase text-sand/50">
+                                File
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1 pt-0.5">
+                            <div className="truncate text-sm font-semibold text-sand group-hover:text-white">{f.label}</div>
+                            <div className="mt-0.5 text-[11px] text-sand/55">{f.hint}</div>
+                            <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#FFB84D]">
+                              <Download size={13} aria-hidden />
+                              Open / download
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                      </button>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    {[
+                      { label: `Angebot_${selectedOrgProject.ref}.pdf`, hint: 'Client offer PDF (demo label)' },
+                      { label: `Mengenermittlung_${selectedOrgProject.ref}.pdf`, hint: 'Quantities & takeoff (demo label)' },
+                    ].map((f) => (
+                      <button
+                        key={f.label}
+                        type="button"
+                        className="group w-full rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-3 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition hover:border-[#FF9F0F]/45 hover:bg-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF9F0F]/35"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-14 w-11 shrink-0 flex-col items-center justify-center rounded-lg border border-red-400/35 bg-red-500/10 text-[9px] font-black uppercase tracking-wider text-red-200/95">
+                            PDF
+                          </div>
+                          <div className="min-w-0 flex-1 pt-0.5">
+                            <div className="truncate text-sm font-semibold text-sand group-hover:text-white">{f.label}</div>
+                            <div className="mt-0.5 text-[11px] text-sand/55">{f.hint}</div>
+                            <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#FFB84D]">
+                              <Download size={13} aria-hidden />
+                              Demo only
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
                 <div className="rounded-xl border border-dashed border-white/12 bg-black/10 px-3 py-4 text-center text-[11px] text-sand/45">
                   More formats (CSV, JSON) · coming soon
                 </div>
@@ -2655,6 +2973,82 @@ export default function AdminPage() {
               </motion.div>
             )}
           </AnimatePresence>,
+          document.body,
+        )}
+
+      {typeof document !== 'undefined' &&
+        projectEditorModalOpen &&
+        selectedOrgProject &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[10070] flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setProjectEditorModalOpen(false)}
+            role="presentation"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Editor snapshots"
+              className="flex max-h-[min(640px,90vh)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#352A22]/96 shadow-2xl backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="min-w-0 text-sm font-semibold text-white/90">
+                  <span className="truncate">Editor snapshots</span>
+                  <span className="mt-0.5 block font-mono text-xs font-normal text-[#FFD29A]/90">
+                    {selectedOrgProject.ref}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg px-3 py-1 text-lg leading-none text-white/75 transition hover:bg-white/10"
+                  onClick={() => setProjectEditorModalOpen(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-8">
+                {projectEditorSnapshots.status === 'ok' ? (
+                  <>
+                    {(['detections_review', 'roof'] as const).map((editor) => {
+                      const items = projectEditorSnapshots.items.filter((i) => i.editor === editor)
+                      if (!items.length) return null
+                      return (
+                        <div key={editor} className="space-y-3">
+                          <div className="text-sm font-semibold text-[#FFD29A]">{editorLabelEn(editor)}</div>
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                            {items.map((img) => (
+                              <a
+                                key={img.id}
+                                href={img.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group overflow-hidden rounded-lg border border-white/15 bg-black/25 transition hover:border-[#FF9F0F]/40"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={img.url}
+                                  alt={img.filename}
+                                  className="aspect-[4/3] w-full object-contain bg-black/20"
+                                />
+                                <div className="truncate border-t border-black/40 bg-black/50 px-2 py-1 text-[10px] text-sand/80">
+                                  {img.filename}
+                                  {img.plan_id ? ` · ${img.plan_id}` : ''}
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </>
+                ) : (
+                  <div className="py-10 text-center text-sm text-white/60">No snapshot data.</div>
+                )}
+              </div>
+            </div>
+          </div>,
           document.body,
         )}
 

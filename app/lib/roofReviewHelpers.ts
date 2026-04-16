@@ -6,13 +6,23 @@ import {
   type RoofTypeId,
 } from './roofTypeOptions'
 
+/** Legacy `S0`… or `Dach-Basis #1` → display sequence number (1-based). */
+function roofBasisDisplayNumberFromLabel(name: string): number | null {
+  const t = (name || '').trim()
+  const s = /^S(\d+)$/i.exec(t)
+  if (s) return parseInt(s[1], 10) + 1
+  const d = /^Dach-Basis\s*#\s*(\d+)$/i.exec(t)
+  if (d) return parseInt(d[1], 10)
+  return null
+}
+
 export function nextRoofLabel(rects: RoomPolygon[]): string {
-  let max = -1
+  let maxNum = 0
   for (const r of rects) {
-    const m = /^S(\d+)$/.exec((r.roomName || '').trim())
-    if (m) max = Math.max(max, parseInt(m[1], 10))
+    const n = roofBasisDisplayNumberFromLabel(r.roomName || '')
+    if (n != null) maxNum = Math.max(maxNum, n)
   }
-  return `S${max + 1}`
+  return `Dach-Basis #${maxNum + 1}`
 }
 
 export function normalizeRect(r: {

@@ -2079,11 +2079,9 @@ export default function LiveFeed() {
             <div className="flex items-center gap-2 min-w-0 flex-1">
               <span
                 className={`shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border ${
-                  offerFlow === 'dachstuhl'
-                    ? 'border-amber-500/45 text-amber-200/95 bg-amber-500/10'
-                    : offerFlow === 'aufstockung'
-                      ? 'border-orange-500/45 text-orange-100/95 bg-orange-500/10'
-                      : 'border-white/15 text-sand/75 bg-white/[0.06]'
+                  isMeasurementsOnlyOffer
+                    ? 'border-[#FF9F0F]/30 text-sand/75 bg-[#FF9F0F]/[0.07]'
+                    : 'border-[#FF9F0F]/45 text-[#E8C4A8] bg-[#FF9F0F]/10'
                 }`}
               >
                 {isMeasurementsOnlyOffer

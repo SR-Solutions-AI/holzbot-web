@@ -6,7 +6,7 @@
  * - Tipuri uși/geamuri = doors_types.json (Gemini) + euristică aspect – aceeași clasificare ca în LiveFeed.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo, type SetStateAction } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, type SetStateAction } from 'react'
 import {
   LayoutGrid,
   DoorOpen,
@@ -37,9 +37,72 @@ import {
 } from './RoofReviewEditor'
 import { apiFetch } from '../lib/supabaseClient'
 import { displayFloorTabLabelDe } from '@/lib/displayFloorTabLabelDe'
+import { type DisplayCurrency } from '@/lib/displayCurrency'
 import { SelectSun } from './SunSelect'
 /** Unire vârfuri consecutive foarte apropiate (în px imagine) – la randarea poligoanelor prima dată. */
 const MERGE_VERTEX_DIST_PX = 14
+
+/** roof-review-data poate folosi alte imageWidth/Height decât detections-review; același PNG, coordonate scalate. */
+function scaleRoofRectsToDetectionsSpace(
+  rects: RoomPolygon[],
+  fromW: number,
+  fromH: number,
+  toW: number,
+  toH: number,
+): RoomPolygon[] {
+  if (fromW <= 0 || fromH <= 0 || toW <= 0 || toH <= 0 || (fromW === toW && fromH === toH)) return rects
+  const sx = toW / fromW
+  const sy = toH / fromH
+  return rects.map((r) => ({
+    ...r,
+    points: r.points.map((pt) => [pt[0] * sx, pt[1] * sy] as Point),
+  }))
+}
+
+function roofOverlayMaxExtent(rects: RoomPolygon[]): { maxX: number; maxY: number } {
+  let maxX = 0
+  let maxY = 0
+  for (const r of rects) {
+    for (const p of r.points) {
+      maxX = Math.max(maxX, p[0])
+      maxY = Math.max(maxY, p[1])
+    }
+  }
+  return { maxX, maxY }
+}
+
+/**
+ * Rândul i din GET roof-review-data corespunde rasterului i din manifest, dar poligoanele sunt în
+ * `p.imageWidth`×`p.imageHeight` (același fișier ca detections pentru acel etaj). Seed-ul la același
+ * index poate fi alt etaj dacă ordinea diferă — potrivim după dimensiuni, apoi scalăm către seed-ul găsit.
+ */
+function matchRoofRowToSeedIndex(
+  p: { imageWidth?: number; imageHeight?: number },
+  seeds: Array<{ imageWidth: number; imageHeight: number }> | undefined,
+  rowIndex: number,
+): number {
+  if (!seeds?.length) return rowIndex
+  const fromW = Number(p.imageWidth) || 0
+  const fromH = Number(p.imageHeight) || 0
+  if (fromW <= 0 || fromH <= 0) return rowIndex
+  const exact = seeds.findIndex(
+    (s) => Number(s.imageWidth) === fromW && Number(s.imageHeight) === fromH,
+  )
+  if (exact >= 0) return exact
+  let best = rowIndex
+  let bestD = Infinity
+  for (let j = 0; j < seeds.length; j++) {
+    const sw = Number(seeds[j].imageWidth) || 0
+    const sh = Number(seeds[j].imageHeight) || 0
+    if (sw <= 0 || sh <= 0) continue
+    const d = Math.abs(sw - fromW) + Math.abs(sh - fromH)
+    if (d < bestD) {
+      bestD = d
+      best = j
+    }
+  }
+  return best
+}
 
 /** Tip canonic pentru uși/ferestre: door | window | sliding_door | garage_door | stairs. */
 function normalizeDoorType(type: string | undefined): string {
@@ -85,11 +148,20 @@ function mergeEditorConstraints(raw: Partial<EditorConstraints> | undefined | nu
   }
 }
 
-const STATIK_MODE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'none', label: 'Keine' },
-  { value: 'stahlbetonverbunddecke', label: 'Stahlbetonverbunddecke (PDB m²)' },
-  { value: 'sonderkonstruktion', label: 'Eigener Stückpreis' },
-]
+const STATIK_MODE_VALUES = ['none', 'stahlbetonverbunddecke', 'sonderkonstruktion'] as const
+
+function statikModeSelectLabel(v: string): string {
+  switch (v) {
+    case 'none':
+      return 'Keine Ertüchtigung notwendig'
+    case 'stahlbetonverbunddecke':
+      return 'Stahlbetonverbunddecke'
+    case 'sonderkonstruktion':
+      return 'Sonderkonstruktion'
+    default:
+      return v
+  }
+}
 
 const ALL_ROOM_TYPE_OPTIONS = ['Garage', 'Balkon', 'Wintergarten', 'Raum gedämmt', 'Raum ungedämmt'] as const
 type RoomTypeOption = (typeof ALL_ROOM_TYPE_OPTIONS)[number]
@@ -130,7 +202,7 @@ type PlanData = {
   rooms: RoomPolygon[]
   doors: DoorRect[]
   roofDemolitions?: RoofDemolitionPoly[]
-  stairOpenings?: Array<DoorRect & { price_key?: string; quantity?: number }>
+  stairOpenings?: Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
   customDemolitionPrice?: number | null
   statikChoice?: StatikChoice
 }
@@ -229,6 +301,46 @@ function withDemolitionAreas(
   }))
 }
 
+/** Prima scară validă din listă (fallback între etaje). */
+function firstValidMppFromPlansList(plans: Array<{ metersPerPixel?: number | null }>): number | null {
+  for (const pl of plans) {
+    const m = pl?.metersPerPixel
+    if (typeof m === 'number' && m > 0) return m
+  }
+  return null
+}
+
+/**
+ * Dacă API-ul nu are încă metersPerPixel pentru acest raster: m/px din înălțimea ușilor/ferestrelor
+ * (același plan ca „camerele” — cerință Aufstockung când există și acoperiș pe etaj).
+ */
+function inferMppFromDoorHeights(plan: { doors?: DoorRect[] } | null | undefined): number | null {
+  const doors = plan?.doors
+  if (!Array.isArray(doors) || doors.length === 0) return null
+  for (const d of doors) {
+    const h = typeof d.height_m === 'number' && d.height_m > 0 ? d.height_m : null
+    if (!h || !d.bbox || d.bbox.length < 4) continue
+    const [, y1, , y2] = d.bbox
+    const pxH = Math.abs(y2 - y1)
+    if (pxH > 1) return h / pxH
+  }
+  return null
+}
+
+/** m/px pentru un plan din snapshot (încărcare API sau prev state): etaj propriu → uși → orice etaj cu scară. */
+function resolveMppForPlanIdxInSnapshot(
+  planIdx: number,
+  plans: Array<{ metersPerPixel?: number | null; doors?: DoorRect[] }>,
+): number | null {
+  const plan = plans[planIdx]
+  if (!plan) return firstValidMppFromPlansList(plans)
+  const own = plan.metersPerPixel
+  if (typeof own === 'number' && own > 0) return own
+  const inferred = inferMppFromDoorHeights(plan)
+  if (typeof inferred === 'number' && inferred > 0) return inferred
+  return firstValidMppFromPlansList(plans)
+}
+
 function isValidFloorPlanPerm(perm: unknown, n: number): perm is number[] {
   if (!Array.isArray(perm) || perm.length !== n || n === 0) return false
   const ints = perm.map((x) => Math.round(Number(x)))
@@ -247,6 +359,20 @@ function normalizeFloorKindForAufstockung(k: unknown): 'new' | 'existing' {
 
 function padFloorKindsToN(kinds: Array<string | 'new' | 'existing' | undefined>, n: number): ('new' | 'existing')[] {
   return Array.from({ length: n }, (_, i) => normalizeFloorKindForAufstockung(kinds[i]))
+}
+
+function isFixedExistingFloorLabel(labelRaw: unknown): boolean {
+  const label = String(labelRaw ?? '').toLowerCase()
+  return (
+    label.includes('keller') ||
+    label.includes('kellergeschoss') ||
+    label.includes('untergeschoss') ||
+    label.includes('basement') ||
+    label.includes('grundriss kg') ||
+    label.includes('erdgeschoss') ||
+    label.includes('ground floor') ||
+    label.includes('grundriss eg')
+  )
 }
 const isTooManyRequestsError = (err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err ?? '')
@@ -402,6 +528,8 @@ type DetectionsReviewEditorProps = {
   roofImages?: ReviewImage[]
   roofOnlyOffer?: boolean
   forceAufstockungFlow?: boolean
+  /** Währungslabel wie PDF / Angebots-Einstellungen (EUR | CHF). */
+  displayCurrency?: DisplayCurrency
   onConfirm: () => void | Promise<void>
   onCancel: () => void
 }
@@ -412,6 +540,7 @@ export function DetectionsReviewEditor({
   roofImages,
   roofOnlyOffer = false,
   forceAufstockungFlow = false,
+  displayCurrency = 'EUR',
   onConfirm,
   onCancel,
 }: DetectionsReviewEditorProps) {
@@ -452,6 +581,12 @@ export function DetectionsReviewEditor({
   /** Popup „Neues Fenster – Höhe“: focus + Enter = Speichern */
   const newWindowHeightInputRef = useRef<HTMLInputElement>(null)
   const [roofDimsToolbarSlotEl, setRoofDimsToolbarSlotEl] = useState<HTMLDivElement | null>(null)
+  /** Preview Dach din roof-review-data pentru strat comun Aufstockung (Aufstandsfläche + Treppenöffnung + Dach). */
+  const [roofPreviewByPlan, setRoofPreviewByPlan] = useState<RoomPolygon[][]>([])
+  /** Dreptunghiuri Dach sincronizate live din RoofReviewEditor (evită overlay învechit față de poll-ul API). */
+  const [roofLiveOverlayByPlan, setRoofLiveOverlayByPlan] = useState<Record<number, RoomPolygon[]>>({})
+  /** Zoom/pan partajat între canvas-ul de fază 1 și RoofReviewEditor (Aufstockung Dach-Stack). */
+  const [roofStackView, setRoofStackView] = useState({ zoom: 1, pan: { x: 0, y: 0 } })
   const statikCustomPriceRef = useRef<HTMLInputElement>(null)
   const [statikPriceDraft, setStatikPriceDraft] = useState('')
   const lastStatikModeRef = useRef<StatikChoice['mode']>('none')
@@ -570,32 +705,35 @@ export function DetectionsReviewEditor({
   const effectiveForceAufstockung =
     forceAufstockungFlow || String(wizardPackageFromApi).toLowerCase().trim() === 'aufstockung'
   const effectiveFloorKinds = useMemo(() => {
-    const normalized = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing')) as ('new' | 'existing')[]
+    const normalizedRaw = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing')) as ('new' | 'existing')[]
     const hintN = plansData.length > 0 ? plansData.length : Math.max(1, images.length)
-    if (normalized.length > 0) {
+    const forceExistingByLabel = (kinds: ('new' | 'existing')[]) =>
+      kinds.map((kind, idx) =>
+        isFixedExistingFloorLabel(displayFloorTabLabelDe(floorLabels[idx] ?? `Plan ${idx + 1}`)) ? 'existing' : kind,
+      ) as ('new' | 'existing')[]
+
+    if (normalizedRaw.length > 0) {
       // Right-align: prepend 'existing' for implicit EG when listaEtaje starts above ground.
-      if (normalized.length < hintN) {
-        const pad = hintN - normalized.length
-        return [...Array<'existing'>(pad).fill('existing'), ...normalized]
+      if (normalizedRaw.length < hintN) {
+        const pad = hintN - normalizedRaw.length
+        return forceExistingByLabel([...Array<'existing'>(pad).fill('existing'), ...normalizedRaw])
       }
-      return normalized
+      return forceExistingByLabel(normalizedRaw.slice(0, hintN))
     }
-    if (!effectiveForceAufstockung) return normalized
+    if (!effectiveForceAufstockung) return normalizedRaw
     // Fallback when no floor-kinds saved yet: all floors default to 'existing'.
     // User can mark specific floors as Aufstockung in the reorder panel.
-    return Array.from({ length: hintN }, (): 'existing' => 'existing')
-  }, [floorKinds, effectiveForceAufstockung, plansData.length, images.length])
+    return forceExistingByLabel(Array.from({ length: hintN }, (): 'existing' => 'existing'))
+  }, [floorKinds, effectiveForceAufstockung, plansData.length, images.length, floorLabels])
 
-  /** m²/px from the first new-floor plan that has a valid scale — used for area calculations on existing floors. */
-  const mppFromNewFloors = useMemo(() => {
-    for (let i = 0; i < plansData.length; i++) {
-      if (String(effectiveFloorKinds[i] ?? 'new').toLowerCase() === 'new') {
-        const mpp = plansData[i]?.metersPerPixel
-        if (typeof mpp === 'number' && mpp > 0) return mpp
-      }
-    }
-    return null
-  }, [plansData, effectiveFloorKinds])
+  /** Aufstockung: m/px per etaj; dacă lipsește, din uși/ferestre pe același plan, apoi orice etaj cu scară. */
+  const resolveMppForPlanIndex = useCallback(
+    (planIdx: number, preferred?: number | null) => {
+      if (typeof preferred === 'number' && preferred > 0) return preferred
+      return resolveMppForPlanIdxInSnapshot(planIdx, plansData)
+    },
+    [plansData],
+  )
 
   const getTabForPlan = useCallback(
     (planIdx: number): ReviewTab => {
@@ -645,7 +783,8 @@ export function DetectionsReviewEditor({
           }
           const constraints = mergeEditorConstraints(res.editorConstraints)
           const plans = Array.isArray(res?.plans) ? res.plans : []
-          const normalized = plans.map((p) => {
+          const normalized = plans.map((p, planIdx) => {
+            const mppThisPlan = resolveMppForPlanIdxInSnapshot(planIdx, plans)
             const rawDemo = Array.isArray(p.roofDemolitions) ? p.roofDemolitions : []
             const roofDemolitions: RoofDemolitionPoly[] = rawDemo
               .map((d: { points?: Point[]; price_key?: string; priceKey?: string; area_m2?: number; area?: number }) => ({
@@ -661,17 +800,36 @@ export function DetectionsReviewEditor({
               .filter((d) => d.points.length >= 3)
             const rawStairs = Array.isArray(p.stairOpenings) ? p.stairOpenings : []
             const stairOpenings = rawStairs
-              .map((s: { bbox?: DoorRect['bbox']; price_key?: string; quantity?: number }) => {
-                const b = s.bbox
-                if (!Array.isArray(b) || b.length < 4) return null
-                return {
-                  bbox: b as DoorRect['bbox'],
-                  type: 'stair_opening',
-                  price_key: typeof s.price_key === 'string' ? s.price_key : 'aufstockung_stair_opening_piece',
-                  quantity: typeof s.quantity === 'number' ? s.quantity : 1,
-                }
-              })
-              .filter(Boolean) as Array<DoorRect & { price_key?: string; quantity?: number }>
+              .map(
+                (s: {
+                  bbox?: DoorRect['bbox']
+                  price_key?: string
+                  quantity?: number
+                  area_m2?: number
+                }) => {
+                  const b = s.bbox
+                  if (!Array.isArray(b) || b.length < 4) return null
+                  let price_key =
+                    typeof s.price_key === 'string' ? s.price_key : 'aufstockung_stair_opening_piece'
+                  if (price_key === 'aufstockung_stair_opening_m2') {
+                    price_key = 'aufstockung_stair_opening_piece'
+                  }
+                  let area_m2: number | undefined =
+                    typeof s.area_m2 === 'number' && Number.isFinite(s.area_m2) ? s.area_m2 : undefined
+                  if ((area_m2 === undefined || area_m2 <= 0) && mppThisPlan != null && mppThisPlan > 0) {
+                    const wPx = Math.max(0, (b[2] as number) - (b[0] as number))
+                    const hPx = Math.max(0, (b[3] as number) - (b[1] as number))
+                    area_m2 = round2(wPx * hPx * mppThisPlan * mppThisPlan)
+                  }
+                  return {
+                    bbox: b as DoorRect['bbox'],
+                    type: 'stair_opening' as const,
+                    price_key,
+                    ...(typeof area_m2 === 'number' && area_m2 > 0 ? { area_m2 } : {}),
+                  }
+                },
+              )
+              .filter(Boolean) as Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
             return {
             ...p,
             metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
@@ -781,19 +939,26 @@ export function DetectionsReviewEditor({
     if (n > 0 && ord.length === n && isValidFloorPlanPerm(ord, n)) {
       body.floorPlanOrder = ord
     }
-    if (floorKinds.length > 0) {
-      body.floorKinds = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing'))
+    const floorKindsNormalized = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing'))
+    const floorKindsAligned = floorLabels.length > 0 && floorKindsNormalized.length > 0 && floorKindsNormalized.length < floorLabels.length
+      ? [...new Array(floorLabels.length - floorKindsNormalized.length).fill('existing'), ...floorKindsNormalized]
+      : floorKindsNormalized
+    const floorKindsSanitized = floorKindsAligned.map((kind, idx) =>
+      isFixedExistingFloorLabel(displayFloorTabLabelDe(floorLabels[idx] ?? `Plan ${idx + 1}`)) ? 'existing' : kind,
+    )
+    if (floorKindsSanitized.length > 0) {
+      body.floorKinds = floorKindsSanitized
     }
     // Backward compatibility for old consumers: keep top-level statikChoice mirrored
     // from first existing floor (or none if not present).
-    const firstExistingIdx = floorKinds.findIndex((k) => String(k).toLowerCase() !== 'new')
+    const firstExistingIdx = floorKindsSanitized.findIndex((k) => String(k).toLowerCase() !== 'new')
     if (firstExistingIdx >= 0 && firstExistingIdx < snapshot.length) {
       body.statikChoice = snapshot[firstExistingIdx]?.statikChoice ?? { mode: 'none' }
     } else {
       body.statikChoice = { mode: 'none' }
     }
     return JSON.stringify(body)
-  }, [floorKinds])
+  }, [floorKinds, floorLabels])
 
   const persistDetectionsPayload = useCallback(async (payload: string): Promise<boolean> => {
     if (!offerId) return false
@@ -886,7 +1051,10 @@ export function DetectionsReviewEditor({
     setPlansData((prev) => {
       const next = [...prev]
       if (planIdx >= next.length) return next
-      const mpp = mppOverride ?? next[planIdx]?.metersPerPixel
+      const mpp =
+        typeof mppOverride === 'number' && mppOverride > 0
+          ? mppOverride
+          : resolveMppForPlanIdxInSnapshot(planIdx, next)
       next[planIdx] = { ...next[planIdx], roofDemolitions: withDemolitionAreas(polys, mpp) }
       return next
     })
@@ -915,13 +1083,30 @@ export function DetectionsReviewEditor({
       const next = [...prev]
       if (planIdx >= next.length) return next
       const old =
-        (next[planIdx].stairOpenings as Array<DoorRect & { price_key?: string; quantity?: number }>) ?? []
-      const out = rects.map((r, i) => ({
-        ...r,
-        type: 'stair_opening',
-        price_key: old[i]?.price_key ?? 'aufstockung_stair_opening_piece',
-        quantity: old[i]?.quantity ?? 1,
-      }))
+        (next[planIdx].stairOpenings as Array<
+          DoorRect & { price_key?: string; quantity?: number; area_m2?: number }
+        >) ?? []
+      const mpp = resolveMppForPlanIdxInSnapshot(planIdx, prev)
+      const out = rects.map((r, i) => {
+        const prevPk = old[i]?.price_key
+        const pk =
+          prevPk === 'aufstockung_stair_opening_m2'
+            ? 'aufstockung_stair_opening_piece'
+            : prevPk ?? 'aufstockung_stair_opening_piece'
+        let area_m2: number | undefined
+        if (Array.isArray(r.bbox) && r.bbox.length >= 4 && mpp != null && mpp > 0) {
+          const [x1, y1, x2, y2] = r.bbox
+          const wPx = Math.max(0, x2 - x1)
+          const hPx = Math.max(0, y2 - y1)
+          area_m2 = round2(wPx * hPx * mpp * mpp)
+        }
+        return {
+          ...r,
+          type: 'stair_opening' as const,
+          price_key: pk,
+          ...(typeof area_m2 === 'number' && area_m2 > 0 ? { area_m2 } : {}),
+        }
+      })
       next[planIdx] = { ...next[planIdx], stairOpenings: out }
       return next
     })
@@ -1000,7 +1185,8 @@ export function DetectionsReviewEditor({
         const list = plan.roofDemolitions ?? []
         if (idx >= list.length) return prev
         const next = list.filter((_, i) => i !== idx)
-        out[pi] = { ...plan, roofDemolitions: withDemolitionAreas(next, plan.metersPerPixel) }
+        const mpp = resolveMppForPlanIdxInSnapshot(pi, prev)
+        out[pi] = { ...plan, roofDemolitions: withDemolitionAreas(next, mpp) }
         return out
       }
       if (tabNow === 'phase1_stair') {
@@ -1042,8 +1228,7 @@ export function DetectionsReviewEditor({
     const t = getTabForPlan(planIndexClamped)
     if (t === 'phase1_demolition') {
       pushHistory()
-      const isExistingFloor = String(effectiveFloorKinds[planIndexClamped] ?? 'new').toLowerCase() !== 'new'
-      const mpp = isExistingFloor ? (mppFromNewFloors ?? currentPlan.metersPerPixel) : currentPlan.metersPerPixel
+      const mpp = resolveMppForPlanIndex(planIndexClamped, currentPlan.metersPerPixel)
       const area_m2 = polygonAreaM2FromPx(newPolygonPoints, mpp)
       const prev = currentPlan.roofDemolitions ?? []
       const fallbackKey = DEMOLITION_PRICE_OPTIONS[0]?.key ?? 'aufstockung_roof_demolition_m2'
@@ -1054,20 +1239,19 @@ export function DetectionsReviewEditor({
     }
     setPendingNewRoomPoints([...newPolygonPoints])
     setNewPolygonPoints(null)
-  }, [newPolygonPoints, currentPlan, getTabForPlan, planIndexClamped, pushHistory, effectiveFloorKinds, mppFromNewFloors, setRoofDemolitions])
+  }, [newPolygonPoints, currentPlan, getTabForPlan, planIndexClamped, pushHistory, resolveMppForPlanIndex, setRoofDemolitions])
 
   const handlePickDemolitionPriceKey = useCallback(
     (price_key: string) => {
       if (!pendingDemolitionPoints || pendingDemolitionPoints.length < 3 || !currentPlan) return
       pushHistory()
-      const isExistingFloor = String(effectiveFloorKinds[planIndexClamped] ?? 'new').toLowerCase() !== 'new'
-      const mpp = isExistingFloor ? (mppFromNewFloors ?? currentPlan.metersPerPixel) : currentPlan.metersPerPixel
+      const mpp = resolveMppForPlanIndex(planIndexClamped, currentPlan.metersPerPixel)
       const area_m2 = polygonAreaM2FromPx(pendingDemolitionPoints, mpp)
       const prev = currentPlan.roofDemolitions ?? []
       setRoofDemolitions(planIndexClamped, [...prev, { points: pendingDemolitionPoints, price_key, area_m2 }], mpp)
       setPendingDemolitionPoints(null)
     },
-    [pendingDemolitionPoints, currentPlan, pushHistory, setRoofDemolitions, planIndexClamped, effectiveFloorKinds, mppFromNewFloors],
+    [pendingDemolitionPoints, currentPlan, pushHistory, setRoofDemolitions, planIndexClamped, resolveMppForPlanIndex],
   )
 
   const handlePickNewRoomType = useCallback((roomType: RoomTypeOption) => {
@@ -1162,13 +1346,18 @@ export function DetectionsReviewEditor({
 
     if (t === 'phase1_stair') {
       pushHistory()
+      const mpp = resolveMppForPlanIndex(planIndexClamped, plan.metersPerPixel)
+      const wPx = Math.max(0, bbox[2] - bbox[0])
+      const hPx = Math.max(0, bbox[3] - bbox[1])
+      const area_m2 =
+        typeof mpp === 'number' && mpp > 0 ? round2(wPx * hPx * mpp * mpp) : 0
       setStairOpenings(planIndexClamped, [
         ...(plan.stairOpenings ?? []),
         {
           bbox,
           type: 'stair_opening',
           price_key: 'aufstockung_stair_opening_piece',
-          quantity: 1,
+          area_m2,
         },
       ])
       return
@@ -1194,13 +1383,104 @@ export function DetectionsReviewEditor({
         dimensionsEdited: true,
       },
     ])
-  }, [newPolygonPoints, planIndexClamped, getTabForPlan, plansData, newDoorType, pushHistory, setDoors, setStairOpenings])
+  }, [
+    newPolygonPoints,
+    planIndexClamped,
+    getTabForPlan,
+    plansData,
+    newDoorType,
+    pushHistory,
+    setDoors,
+    setStairOpenings,
+    resolveMppForPlanIndex,
+  ])
 
   const activeTab = getTabForPlan(planIndexClamped)
   const isAufstockungFlow = effectiveFloorKinds.length > 0
   const currentFloorKind = String(effectiveFloorKinds[planIndexClamped] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
   /** Bestand etaj în Aufstockung: Dach-Rückbau + Treppenöffnung; Zubau: Räume / Türen / Dach wie Neubau. */
   const existingFloorEditing = isAufstockungFlow && currentFloorKind === 'existing'
+
+  const handleRoofRectanglesOverlaySync = useCallback(
+    (
+      planIdx: number,
+      rectangles: RoomPolygon[],
+      sourceImageDims?: { imageWidth: number; imageHeight: number },
+    ) => {
+      const plan = plansDataRef.current[planIdx]
+      const toW = Number(plan?.imageWidth) || 0
+      const toH = Number(plan?.imageHeight) || 0
+      const fromW = Number(sourceImageDims?.imageWidth) || 0
+      const fromH = Number(sourceImageDims?.imageHeight) || 0
+      const scaled =
+        fromW > 0 && fromH > 0 && toW > 0 && toH > 0
+          ? scaleRoofRectsToDetectionsSpace(rectangles, fromW, fromH, toW, toH)
+          : rectangles
+      if (scaled.length > 0 && toW > 0 && toH > 0) {
+        const { maxX, maxY } = roofOverlayMaxExtent(scaled)
+        const OUT = 1.08
+        if (maxX > toW * OUT || maxY > toH * OUT) {
+          setRoofLiveOverlayByPlan((prev) => {
+            const next = { ...prev }
+            delete next[planIdx]
+            return next
+          })
+          return
+        }
+      }
+      setRoofLiveOverlayByPlan((prev) => ({ ...prev, [planIdx]: scaled }))
+    },
+    [],
+  )
+
+  useEffect(() => {
+    setRoofLiveOverlayByPlan({})
+  }, [offerId])
+
+  useEffect(() => {
+    if (!offerId || !existingFloorEditing) {
+      setRoofPreviewByPlan([])
+      setRoofLiveOverlayByPlan({})
+      return
+    }
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = (await apiFetch(`/offers/${offerId}/compute/roof-review-data?ts=${Date.now()}`)) as {
+          plans?: Array<{ imageWidth?: number; imageHeight?: number; rectangles?: RoomPolygon[] }>
+        }
+        if (cancelled) return
+        const rawPlans = res.plans ?? []
+        const seeds = roofEmbeddedSeeds
+        const nSlots = Math.max(rawPlans.length, seeds?.length ?? 0)
+        const next: RoomPolygon[][] = Array.from({ length: nSlots }, () => [])
+        for (let i = 0; i < rawPlans.length; i++) {
+          const p = rawPlans[i]
+          const rects = Array.isArray(p.rectangles) ? p.rectangles : []
+          const fromW = Number(p.imageWidth) || 0
+          const fromH = Number(p.imageHeight) || 0
+          const seedIdx = matchRoofRowToSeedIndex(p, seeds, i)
+          const seed = seeds?.[seedIdx]
+          const toW = Number(seed?.imageWidth) || 0
+          const toH = Number(seed?.imageHeight) || 0
+          const scaled =
+            seed && toW > 0 && toH > 0 && fromW > 0 && fromH > 0
+              ? scaleRoofRectsToDetectionsSpace(rects, fromW, fromH, toW, toH)
+              : rects
+          next[seedIdx] = scaled
+        }
+        setRoofPreviewByPlan(next)
+      } catch {
+        if (!cancelled) setRoofPreviewByPlan([])
+      }
+    }
+    void load()
+    const t = window.setInterval(load, 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [offerId, existingFloorEditing, plansDimKey, roofEmbeddedSeeds])
 
   const roofSurfaceTabForChild: RoofSurfaceTab =
     activeTab === 'roof_windows' ? 'windows' : 'surfaces'
@@ -1317,7 +1597,7 @@ export function DetectionsReviewEditor({
         ? tool === 'select'
           ? 'Fläche wählen und verschieben'
           : tool === 'add'
-            ? 'Polygon für Dachrückbau – ersten Punkt erneut klicken zum Schließen, dann Rückbautyp wählen'
+            ? 'Polygon für Aufstockungs-Basis – ersten Punkt erneut klicken zum Schließen, dann Rückbautyp wählen'
             : tool === 'remove'
               ? 'Fläche zum Entfernen anklicken'
               : tool === 'edit'
@@ -1371,8 +1651,41 @@ export function DetectionsReviewEditor({
   )
 
   const showRoofWorkspace = activeTab === 'roof' || activeTab === 'roof_windows'
+  /** Dach: bei Aufstockung Bestand Plan + Phase-1-Overlays unter dem Roof-Vector-Layer; sonst nur RoofReviewEditor. */
   const showRoomsCanvas =
-    plansData.length > 0 && activeTab !== 'roof' && activeTab !== 'roof_windows'
+    plansData.length > 0 &&
+    (activeTab !== 'roof' && activeTab !== 'roof_windows' || existingFloorEditing)
+
+  const stackRoofOverPhase1 =
+    existingFloorEditing && showRoofWorkspace && Boolean(offerId) && roofImgs.length > 0
+
+  const stackBlueprintImageUrl = images[planIndexClamped]?.url ?? images[0]?.url ?? ''
+  useEffect(() => {
+    if (!stackRoofOverPhase1) return
+    setRoofStackView({ zoom: 1, pan: { x: 0, y: 0 } })
+  }, [stackRoofOverPhase1, planIndexClamped, stackBlueprintImageUrl])
+
+  const [phase1LayoutRevealKey, setPhase1LayoutRevealKey] = useState(0)
+  useLayoutEffect(() => {
+    if (!existingFloorEditing) return
+    setPhase1LayoutRevealKey((k) => k + 1)
+  }, [existingFloorEditing, planIndexClamped, activeTab, stackRoofOverPhase1])
+
+  const roofOverlayRoomsForPhase1 = useMemo(() => {
+    if (!existingFloorEditing) return []
+    const idx = planIndexClamped
+    if (stackRoofOverPhase1 && (activeTab === 'roof' || activeTab === 'roof_windows')) return []
+    return roofLiveOverlayByPlan[idx] !== undefined
+      ? roofLiveOverlayByPlan[idx]!
+      : (roofPreviewByPlan[idx] ?? [])
+  }, [
+    existingFloorEditing,
+    planIndexClamped,
+    activeTab,
+    stackRoofOverPhase1,
+    roofLiveOverlayByPlan,
+    roofPreviewByPlan,
+  ])
 
   const showWerkzeuge = !loading && plansData.length > 0
 
@@ -1436,7 +1749,22 @@ export function DetectionsReviewEditor({
                   const floorKindLabel =
                     String(effectiveFloorKinds[planIdx] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
                   const bottomPlanIdx = reorderFloorsMode ? (floorOrderDraft[0] ?? -1) : (floorPlanOrder[0] ?? -1)
+                  const normalizedLabel = String(label ?? '').toLowerCase()
+                  const isBasementFloor =
+                    normalizedLabel.includes('keller') ||
+                    normalizedLabel.includes('kellergeschoss') ||
+                    normalizedLabel.includes('untergeschoss') ||
+                    normalizedLabel.includes('basement') ||
+                    normalizedLabel.includes('grundriss kg')
+                  const isGroundFloorLabel =
+                    normalizedLabel.includes('erdgeschoss') ||
+                    normalizedLabel.includes('ground floor') ||
+                    normalizedLabel.includes('grundriss eg')
                   const isBottomPhysicalFloor = reorderFloorsMode && isAufstockungFlow && planIdx === bottomPlanIdx
+                  const isFixedExistingFloor =
+                    reorderFloorsMode &&
+                    isAufstockungFlow &&
+                    (isGroundFloorLabel || isBasementFloor || isBottomPhysicalFloor)
                   const draftKind = normalizeFloorKindForAufstockung(floorKindsDraft[planIdx])
                   return (
                     <div
@@ -1514,8 +1842,10 @@ export function DetectionsReviewEditor({
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={(e) => e.stopPropagation()}
                         >
-                          {isBottomPhysicalFloor ? (
-                            <span className="text-xs text-sand/90">Erdgeschoss (immer Bestand)</span>
+                          {isFixedExistingFloor ? (
+                            <span className="text-xs text-sand/90">
+                              {isBasementFloor ? 'Keller (immer Bestand)' : 'Erdgeschoss (immer Bestand)'}
+                            </span>
                           ) : (
                             <>
                               <span className="text-[10px] text-sand/50">Bestand oder Aufstockung</span>
@@ -1575,8 +1905,26 @@ export function DetectionsReviewEditor({
                         setReorderKindsError(null)
                         if (isAufstockungFlow) {
                           let nextKinds = padFloorKindsToN(floorKindsDraft, n)
+                          const fixedExistingByLabel = new Set<number>()
+                          for (let i = 0; i < n; i++) {
+                            const rawLabel = displayFloorTabLabelDe(floorLabels[i] ?? `Plan ${i + 1}`).toLowerCase()
+                            const isBasement =
+                              rawLabel.includes('keller') ||
+                              rawLabel.includes('kellergeschoss') ||
+                              rawLabel.includes('untergeschoss') ||
+                              rawLabel.includes('basement') ||
+                              rawLabel.includes('grundriss kg')
+                            const isGround =
+                              rawLabel.includes('erdgeschoss') ||
+                              rawLabel.includes('ground floor') ||
+                              rawLabel.includes('grundriss eg')
+                            if (isBasement || isGround) fixedExistingByLabel.add(i)
+                          }
                           const bottom = nextOrder[0]
-                          if (bottom >= 0 && bottom < n) nextKinds[bottom] = 'existing'
+                          if (bottom >= 0 && bottom < n) fixedExistingByLabel.add(bottom)
+                          fixedExistingByLabel.forEach((idx) => {
+                            if (idx >= 0 && idx < n) nextKinds[idx] = 'existing'
+                          })
                           if (!nextKinds.some((k) => k === 'new')) {
                             setReorderKindsError('Bitte markieren Sie mindestens ein neues Geschoss.')
                             return
@@ -1683,7 +2031,7 @@ export function DetectionsReviewEditor({
             }}
             title={
               activeTab === 'phase1_demolition'
-                ? 'Dachrückbau-Fläche (Polygon) hinzufügen'
+                ? 'Aufstockungs-Basis (Polygon) hinzufügen'
                 : activeTab === 'phase1_stair'
                   ? 'Treppenöffnung (Rechteck) hinzufügen'
                   : activeTab === 'rooms'
@@ -1817,7 +2165,10 @@ export function DetectionsReviewEditor({
               className="ml-auto flex w-full max-w-56 flex-col gap-2"
               title="Nur auf Bestandsgeschossen sichtbar."
             >
-              <div className="flex flex-col gap-1">
+              <div
+                className="flex flex-col gap-1"
+                title={`Stahlbetonverbunddecke: Preis ${displayCurrency}/m² in der Preisdatenbank (aufstockung_statik_stahlbetonverbunddecke_m2)`}
+              >
                 <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
                   Statik / Verstärkung
                 </span>
@@ -1839,8 +2190,9 @@ export function DetectionsReviewEditor({
                         setPlanStatikChoice(planIndexClamped, { mode: 'none' })
                       }
                     }}
-                    options={STATIK_MODE_OPTIONS}
+                    options={[...STATIK_MODE_VALUES]}
                     placeholder="Typ wählen"
+                    displayFor={statikModeSelectLabel}
                   />
                 ) : (
                   <div className="flex w-full items-stretch gap-1">
@@ -1856,7 +2208,7 @@ export function DetectionsReviewEditor({
                       ref={statikCustomPriceRef}
                       type="text"
                       inputMode="decimal"
-                      placeholder="EUR / Stück"
+                      placeholder={`Preis in ${displayCurrency}`}
                       autoComplete="off"
                       className="editor-statik-eur-holz min-w-0 flex-1 rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
                       value={statikPriceDraft}
@@ -1879,13 +2231,14 @@ export function DetectionsReviewEditor({
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
-                  Abbruch-Eigenpreis
+                  Abbruchkosten (Dach und evtl. Wände)
                 </span>
                 <input
                   ref={demolitionPriceInputRef}
                   type="text"
                   inputMode="decimal"
-                  placeholder="EUR (optional)"
+                  placeholder={`Gesamt in ${displayCurrency}`}
+                  title={`Gesamtpauschale in ${displayCurrency} für alle Aufstandsflächen-Polygone dieses Plans`}
                   autoComplete="off"
                   className="editor-statik-eur-holz min-w-0 w-full rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
                   value={demolitionPriceDraft}
@@ -1959,7 +2312,7 @@ export function DetectionsReviewEditor({
             return (
               <div className="w-full flex flex-col flex-1 min-h-0 min-w-0 gap-1.5">
                 {plan && imageUrlForPlan && existingFloorEditing && (
-                <div className="shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0">
+                <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
                     <button
                       type="button"
@@ -2021,7 +2374,7 @@ export function DetectionsReviewEditor({
                 </div>
                 )}
                 {plan && imageUrlForPlan && !existingFloorEditing && (
-                <div className="shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0">
+                <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
                     <button
                       type="button"
@@ -2075,8 +2428,21 @@ export function DetectionsReviewEditor({
                 </div>
                 )}
                 <div className="flex-1 min-h-0 min-w-0 flex flex-col gap-2">
+                  <div
+                    className={
+                      stackRoofOverPhase1
+                        ? 'relative flex w-full flex-1 min-h-0 overflow-hidden rounded-lg border border-[#FF9F0F]/50 bg-black/30 ring-1 ring-[#FF9F0F]/30'
+                        : 'contents'
+                    }
+                  >
                   {showRoomsCanvas && plan && imageUrlForPlan && (
-                <div className="relative w-full flex-1 min-h-0 rounded-lg overflow-hidden border border-[#FF9F0F]/50 ring-1 ring-[#FF9F0F]/30 bg-black/30">
+                <div
+                  className={
+                    stackRoofOverPhase1
+                      ? 'pointer-events-none absolute inset-0 z-0 min-h-0 overflow-hidden'
+                      : 'relative w-full flex-1 min-h-0 rounded-lg overflow-hidden border border-[#FF9F0F]/50 ring-1 ring-[#FF9F0F]/30 bg-black/30'
+                  }
+                >
                   {(pendingNewRoomPoints ||
                     pendingNewDoorBbox ||
                     (roomTypePopoverIndex !== null && plansData[planIndexClamped]?.rooms[roomTypePopoverIndex])) && (
@@ -2232,18 +2598,39 @@ export function DetectionsReviewEditor({
                     onDoorsChange={(doors: DoorRect[]) => setDoors(i, doors)}
                     onDoorHover={undefined}
                     onDoorActivate={undefined}
+                    blendAufstockungPhase1Overlays={
+                      existingFloorEditing &&
+                      (planTab === 'phase1_demolition' ||
+                        planTab === 'phase1_stair' ||
+                        planTab === 'roof' ||
+                        planTab === 'roof_windows')
+                    }
+                    useAufstockungsBasisDemolitionLabels={existingFloorEditing}
+                    roofOverlayRooms={roofOverlayRoomsForPhase1}
+                    layoutRevealKey={existingFloorEditing ? phase1LayoutRevealKey : 0}
+                    stackedView={stackRoofOverPhase1 ? roofStackView : null}
                   />
                 </div>
                 )}
                 {offerId && roofImgs.length > 0 && (
                   <div
-                    className={`w-full flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden ${showRoofWorkspace ? '' : 'hidden'}`}
+                    className={`${
+                      stackRoofOverPhase1
+                        ? 'absolute inset-0 z-10 flex flex-col min-h-0 overflow-hidden'
+                        : 'w-full flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden'
+                    } ${showRoofWorkspace ? '' : 'hidden'}`}
                   >
                     <RoofReviewEditor
                       key={offerId ? `roof-embed-${offerId}` : 'roof-embed'}
                       ref={roofEditorRef}
                       embedded
                       chromeInParent
+                      vectorOverlayOnly={stackRoofOverPhase1}
+                      stackedView={stackRoofOverPhase1 ? roofStackView : null}
+                      onStackedViewChange={stackRoofOverPhase1 ? setRoofStackView : undefined}
+                      onRoofRectanglesOverlaySync={
+                        existingFloorEditing && offerId ? handleRoofRectanglesOverlaySync : undefined
+                      }
                       dimsToolbarPortalTarget={roofDimsToolbarSlotEl}
                       tool={tool}
                       setTool={setTool}
@@ -2259,6 +2646,7 @@ export function DetectionsReviewEditor({
                     />
                   </div>
                 )}
+                  </div>
                 {planTab === 'doors' && (
                   <div className="shrink-0 rounded-xl border border-[#FF9F0F]/40 bg-black/25 p-2">
                     <p className="text-sand/80 text-xs font-normal leading-snug text-center">

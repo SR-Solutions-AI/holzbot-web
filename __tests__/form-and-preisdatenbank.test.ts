@@ -164,8 +164,10 @@ describe('Preisdatenbank – acoperire completă', () => {
       const step = holzbauSchema.steps.find((s) => s.key === 'ferestreUsi')
       const field = step?.fields.find((f) => 'name' in f && f.name === 'slidingDoorType')
       expect(field).toBeDefined()
-      expect(field?.tag).toBe('sliding_door_type')
-      expect(field?.options).toEqual([
+      expect(field && 'options' in field && Array.isArray(field.options)).toBe(true)
+      const selectField = field as { tag?: string; options: string[] }
+      expect(selectField.tag).toBe('sliding_door_type')
+      expect(selectField.options).toEqual([
         'Standard',
         'Hebeschiebetür',
         'Panorama',
