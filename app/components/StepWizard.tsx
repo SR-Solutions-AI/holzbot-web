@@ -2986,7 +2986,7 @@ export default function StepWizard() {
             <div
               className={`absolute inset-0 z-30 flex flex-col items-center justify-center px-4 transition-all duration-300 ease-out ${
                 wipNotice !== null
-                  ? 'opacity-100 scale-100 pointer-events-auto bg-black/90 backdrop-blur-sm'
+                  ? 'opacity-100 scale-100 pointer-events-auto bg-[#2A1E17]/94 backdrop-blur-sm ring-1 ring-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
                   : 'opacity-0 scale-[0.97] pointer-events-none translate-y-2 bg-transparent'
               }`}
               aria-hidden={wipNotice === null}
