@@ -9,7 +9,15 @@ export type OfferHistoryOfferTypeOption = { id: string; slug: string }
 export type OfferHistoryOrgMember = { id: string; email: string | null; full_name: string | null }
 
 /** Same wizard package types as Step Wizard package picker. */
-export const WIZARD_OFFER_SLUGS = ['mengenermittlung', 'mengen', 'dachstuhl', 'neubau', 'aufstockung', 'full_house'] as const
+export const WIZARD_OFFER_SLUGS = [
+  'mengenermittlung',
+  'mengen',
+  'dachstuhl',
+  'neubau',
+  'aufstockung',
+  'zubau',
+  'full_house',
+] as const
 
 const SLUG_TO_LABEL: Record<string, string> = {
   mengenermittlung: 'Mengenermittlung',
@@ -17,6 +25,7 @@ const SLUG_TO_LABEL: Record<string, string> = {
   dachstuhl: 'Dachstuhl Angebot',
   neubau: 'Neubau Angebot',
   aufstockung: 'Aufstockung Angebot',
+  zubau: 'Zubau Angebot',
   full_house: 'Neubau Angebot',
 }
 
@@ -65,6 +74,7 @@ export function OfferHistoryFilterForm({
     offerTypeOptions.find((o) => o.slug === 'mengenermittlung' || o.slug === 'mengen'),
     offerTypeOptions.find((o) => o.slug === 'dachstuhl'),
     offerTypeOptions.find((o) => o.slug === 'aufstockung'),
+    offerTypeOptions.find((o) => o.slug === 'zubau'),
     offerTypeOptions.find((o) => o.slug === 'neubau' || o.slug === 'full_house'),
   ].filter(Boolean) as OfferHistoryOfferTypeOption[]
 

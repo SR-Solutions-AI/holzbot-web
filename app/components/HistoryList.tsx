@@ -11,7 +11,14 @@ type OfferListItem = {
   id: string
   title?: string | null
   status?: string | null
-  meta?: { referinta?: string | null; offer_no?: string | null; roof_only_offer?: boolean | null; wizard_package?: string | null; measurements_only_offer?: boolean | null } | null
+  meta?: {
+    referinta?: string | null
+    offer_no?: string | null
+    roof_only_offer?: boolean | null
+    wizard_package?: string | null
+    measurements_only_offer?: boolean | null
+    aufstockung_floor_kinds?: unknown
+  } | null
   created_at: string
   created_by?: string | null
   offer_type_slug?: string | null
@@ -37,17 +44,23 @@ function translateText(text?: string | null): string {
 }
 
 function getOfferTypeBadgeLabel(item: OfferListItem): string {
-  const wizardPkg = (item.meta?.wizard_package || '').toString().toLowerCase()
-  const isRoofOffer = item.meta?.roof_only_offer === true || wizardPkg === 'dachstuhl'
+  const flow = inferOfferFlow({
+    roof_only_offer: item.meta?.roof_only_offer,
+    wizard_package: item.meta?.wizard_package,
+    offer_type_slug: item.offer_type_slug,
+    aufstockung_floor_kinds: item.meta?.aufstockung_floor_kinds,
+  })
   const isMeasurementsOnly = item.meta?.measurements_only_offer === true
 
   if (isMeasurementsOnly) {
-    if (isRoofOffer) return 'Dachstuhl Mengenübersicht'
-    if (wizardPkg === 'aufstockung') return 'Aufstockung Mengenübersicht'
+    if (flow === 'dachstuhl') return 'Dachstuhl Mengenübersicht'
+    if (flow === 'aufstockung') return 'Aufstockung Mengenübersicht'
+    if (flow === 'zubau') return 'Zubau Mengenübersicht'
     return 'Neubau Mengenübersicht'
   }
-  if (isRoofOffer) return 'Dachstuhl Angebot'
-  if (wizardPkg === 'aufstockung') return 'Aufstockung Angebot'
+  if (flow === 'dachstuhl') return 'Dachstuhl Angebot'
+  if (flow === 'aufstockung') return 'Aufstockung Angebot'
+  if (flow === 'zubau') return 'Zubau Angebot'
   return offerTypeLabel(item.offer_type_slug)
 }
 

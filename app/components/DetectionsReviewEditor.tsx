@@ -29,6 +29,7 @@ import {
   type RoomPolygon,
   type DoorRect,
   type RoofDemolitionPoly,
+  type ZubauWallLine,
 } from './DetectionsPolygonCanvas'
 import {
   RoofReviewEditor,
@@ -180,6 +181,9 @@ function mergeClosePolygonPoints(points: Point[], minDistPx: number): Point[] {
 
 export type ReviewTab =
   | 'rooms'
+  | 'zubau_bestand'
+  | 'zubau_extension'
+  | 'zubau_walls'
   | 'doors'
   | 'roof'
   | 'roof_windows'
@@ -203,6 +207,8 @@ type PlanData = {
   doors: DoorRect[]
   roofDemolitions?: RoofDemolitionPoly[]
   stairOpenings?: Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
+  zubauBestandPolygons?: RoofDemolitionPoly[]
+  zubauWallDemolitionLines?: ZubauWallLine[]
   customDemolitionPrice?: number | null
   statikChoice?: StatikChoice
 }
@@ -528,6 +534,7 @@ type DetectionsReviewEditorProps = {
   roofImages?: ReviewImage[]
   roofOnlyOffer?: boolean
   forceAufstockungFlow?: boolean
+  forceZubauFlow?: boolean
   /** Währungslabel wie PDF / Angebots-Einstellungen (EUR | CHF). */
   displayCurrency?: DisplayCurrency
   onConfirm: () => void | Promise<void>
@@ -540,6 +547,7 @@ export function DetectionsReviewEditor({
   roofImages,
   roofOnlyOffer = false,
   forceAufstockungFlow = false,
+  forceZubauFlow = false,
   displayCurrency = 'EUR',
   onConfirm,
   onCancel,
@@ -676,7 +684,27 @@ export function DetectionsReviewEditor({
     })
   }, [editorConstraints.allowRoofWindows])
 
-  const n = plansData.length > 0 ? plansData.length : Math.max(1, images.length)
+  /**
+   * LiveFeed trimite câte un batch cu base+rooms+doors per plan; lista `images` este intercalată
+   * ([base₁, rooms₁, doors₁, base₂, …]). Tab-urile trebuie să folosească doar `detections_review_base.png`
+   * per etaj, altfel planIdx 1 ar lua rooms₁ (sau toate cad pe fallback la images[0]).
+   */
+  const blueprintBaseImages = useMemo(() => {
+    const isBase = (f: { url?: string; caption?: string }) => {
+      const c = String(f.caption ?? '').toLowerCase()
+      const u = String(f.url ?? '').toLowerCase()
+      return (
+        c.endsWith('detections_review_base.png') ||
+        u.includes('/detections_review_base.png') ||
+        u.endsWith('detections_review_base.png')
+      )
+    }
+    const bases = images.filter(isBase)
+    if (bases.length > 0) return bases
+    return images
+  }, [images])
+
+  const n = plansData.length > 0 ? plansData.length : Math.max(1, blueprintBaseImages.length)
   const planIndexClamped = n > 0 ? Math.max(0, Math.min(planIndex, n - 1)) : 0
   const currentPlan = plansData[planIndexClamped]
 
@@ -687,9 +715,16 @@ export function DetectionsReviewEditor({
     setDemolitionPriceDraft(typeof price === 'number' && Number.isFinite(price) ? String(price) : '')
   }, [planIndexClamped])
   // O imagine de bază per plan (fără poligoane); canvas-ul desenează rooms/doors din API
-  const getBaseImageUrl = (planIdx: number) => images[planIdx]?.url ?? images[0]?.url
+  const getBaseImageUrl = (planIdx: number) =>
+    blueprintBaseImages[planIdx]?.url ?? blueprintBaseImages[0]?.url ?? images[0]?.url
   // Același blueprint ca Räume / Fenster; roofImages poate veni mai târziu sau cu alt URL → încărcare lentă / refresh.
-  const roofImgs = roofOnlyOffer && roofImages?.length ? roofImages : images
+  const roofImgs = roofOnlyOffer && roofImages?.length ? roofImages : blueprintBaseImages
+  /**
+   * Tab Dach: fundal = același plan ca la Räume (detections_review_base), nu PNG-uri din etapa roof
+   * (ex. previzualizări 3D / rectangle) — poligoanele utilizatorului sunt vectoriale din roof-review-data.
+   */
+  const roofEditorBasemapImages =
+    blueprintBaseImages.length > 0 ? blueprintBaseImages : roofImgs
 
   const plansDimKey =
     plansData.length === 0
@@ -702,11 +737,13 @@ export function DetectionsReviewEditor({
       imageHeight: Number(p.imageHeight) || 0,
     }))
   }, [plansDimKey])
+  const wpApi = String(wizardPackageFromApi).toLowerCase().trim()
   const effectiveForceAufstockung =
-    forceAufstockungFlow || String(wizardPackageFromApi).toLowerCase().trim() === 'aufstockung'
+    forceAufstockungFlow || forceZubauFlow || wpApi === 'aufstockung' || wpApi === 'zubau'
+  const isZubauFlow = forceZubauFlow || wpApi === 'zubau'
   const effectiveFloorKinds = useMemo(() => {
     const normalizedRaw = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing')) as ('new' | 'existing')[]
-    const hintN = plansData.length > 0 ? plansData.length : Math.max(1, images.length)
+    const hintN = plansData.length > 0 ? plansData.length : Math.max(1, blueprintBaseImages.length)
     const forceExistingByLabel = (kinds: ('new' | 'existing')[]) =>
       kinds.map((kind, idx) =>
         isFixedExistingFloorLabel(displayFloorTabLabelDe(floorLabels[idx] ?? `Plan ${idx + 1}`)) ? 'existing' : kind,
@@ -724,7 +761,7 @@ export function DetectionsReviewEditor({
     // Fallback when no floor-kinds saved yet: all floors default to 'existing'.
     // User can mark specific floors as Aufstockung in the reorder panel.
     return forceExistingByLabel(Array.from({ length: hintN }, (): 'existing' => 'existing'))
-  }, [floorKinds, effectiveForceAufstockung, plansData.length, images.length, floorLabels])
+  }, [floorKinds, effectiveForceAufstockung, plansData.length, blueprintBaseImages.length, floorLabels])
 
   /** Aufstockung: m/px per etaj; dacă lipsește, din uși/ferestre pe același plan, apoi orice etaj cu scară. */
   const resolveMppForPlanIndex = useCallback(
@@ -742,14 +779,32 @@ export function DetectionsReviewEditor({
       if (!editorConstraints.allowRoofWindows && raw === 'roof_windows') return 'roof'
       const auf = effectiveFloorKinds.length > 0
       const fk = String(effectiveFloorKinds[planIdx] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
+      if (auf && fk === 'new' && isZubauFlow) {
+        const zraw = (tabPerPlan[planIdx] ?? 'zubau_extension') as ReviewTab
+        if (zraw === 'rooms' || zraw === 'phase1_demolition' || zraw === 'phase1_stair') return 'zubau_extension'
+        if (
+          zraw === 'zubau_bestand' ||
+          zraw === 'zubau_extension' ||
+          zraw === 'zubau_walls' ||
+          zraw === 'doors' ||
+          zraw === 'roof' ||
+          zraw === 'roof_windows'
+        )
+          return zraw
+        return 'zubau_extension'
+      }
       if (auf && fk === 'existing') {
+        if (isZubauFlow) {
+          if (raw === 'rooms' || raw === 'doors' || raw === 'roof' || raw === 'roof_windows') return raw
+          return 'rooms'
+        }
         if (raw === 'phase1_demolition' || raw === 'phase1_stair' || raw === 'roof' || raw === 'roof_windows') return raw
         return 'phase1_demolition'
       }
       if (raw === 'phase1_demolition' || raw === 'phase1_stair') return 'rooms'
       return raw
     },
-    [roofOnlyOffer, tabPerPlan, editorConstraints.allowRoofWindows, effectiveFloorKinds],
+    [roofOnlyOffer, tabPerPlan, editorConstraints.allowRoofWindows, effectiveFloorKinds, isZubauFlow],
   )
   const setTabForPlan = useCallback((planIdx: number, t: ReviewTab) => {
     setTabPerPlan((prev) => ({ ...prev, [planIdx]: t }))
@@ -830,11 +885,36 @@ export function DetectionsReviewEditor({
                 },
               )
               .filter(Boolean) as Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
+            const rawZubauBest = Array.isArray((p as { zubauBestandPolygons?: unknown }).zubauBestandPolygons)
+              ? ((p as { zubauBestandPolygons: unknown[] }).zubauBestandPolygons as RoofDemolitionPoly[])
+              : []
+            const zubauBestandPolygons: RoofDemolitionPoly[] = rawZubauBest
+              .map((d) => ({
+                points: Array.isArray(d.points) ? mergeClosePolygonPoints(d.points, MERGE_VERTEX_DIST_PX) : [],
+              }))
+              .filter((d) => d.points.length >= 3)
+            const rawZubauWalls = Array.isArray((p as { zubauWallDemolitionLines?: unknown }).zubauWallDemolitionLines)
+              ? ((p as { zubauWallDemolitionLines: unknown[] }).zubauWallDemolitionLines as ZubauWallLine[])
+              : []
+            const zubauWallDemolitionLines: ZubauWallLine[] = rawZubauWalls
+              .map((ln) => {
+                const a = Array.isArray(ln.a) && ln.a.length >= 2 ? ([ln.a[0], ln.a[1]] as Point) : null
+                const b = Array.isArray(ln.b) && ln.b.length >= 2 ? ([ln.b[0], ln.b[1]] as Point) : null
+                if (!a || !b) return null
+                const pk =
+                  typeof ln.price_key === 'string' && ln.price_key.trim()
+                    ? ln.price_key.trim()
+                    : 'aufstockung_demolition_roof_basic_m2'
+                return { a, b, price_key: pk }
+              })
+              .filter(Boolean) as ZubauWallLine[]
             return {
             ...p,
             metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
             roofDemolitions,
             stairOpenings,
+            zubauBestandPolygons,
+            zubauWallDemolitionLines,
             customDemolitionPrice: typeof (p as { customDemolitionPrice?: unknown }).customDemolitionPrice === 'number' ? (p as { customDemolitionPrice?: unknown }).customDemolitionPrice as number : null,
             statikChoice: (() => {
               const planStatik = (p as { statikChoice?: StatikChoice }).statikChoice
@@ -932,6 +1012,8 @@ export function DetectionsReviewEditor({
         doors: p.doors,
         roofDemolitions: Array.isArray(p.roofDemolitions) ? p.roofDemolitions : [],
         stairOpenings: Array.isArray(p.stairOpenings) ? p.stairOpenings : [],
+        zubauBestandPolygons: Array.isArray(p.zubauBestandPolygons) ? p.zubauBestandPolygons : [],
+        zubauWallDemolitionLines: Array.isArray(p.zubauWallDemolitionLines) ? p.zubauWallDemolitionLines : [],
         customDemolitionPrice: typeof p.customDemolitionPrice === 'number' ? p.customDemolitionPrice : null,
         statikChoice: p.statikChoice && p.statikChoice.mode ? p.statikChoice : { mode: 'none' },
       })),
@@ -1056,6 +1138,24 @@ export function DetectionsReviewEditor({
           ? mppOverride
           : resolveMppForPlanIdxInSnapshot(planIdx, next)
       next[planIdx] = { ...next[planIdx], roofDemolitions: withDemolitionAreas(polys, mpp) }
+      return next
+    })
+  }, [])
+
+  const setZubauBestandPolygons = useCallback((planIdx: number, polys: RoofDemolitionPoly[]) => {
+    setPlansData((prev) => {
+      const next = [...prev]
+      if (planIdx >= next.length) return next
+      next[planIdx] = { ...next[planIdx], zubauBestandPolygons: polys }
+      return next
+    })
+  }, [])
+
+  const setZubauWallDemolitionLines = useCallback((planIdx: number, lines: ZubauWallLine[]) => {
+    setPlansData((prev) => {
+      const next = [...prev]
+      if (planIdx >= next.length) return next
+      next[planIdx] = { ...next[planIdx], zubauWallDemolitionLines: lines }
       return next
     })
   }, [])
@@ -1195,6 +1295,18 @@ export function DetectionsReviewEditor({
         out[pi] = { ...plan, stairOpenings: list.filter((_, i) => i !== idx) as typeof list }
         return out
       }
+      if (tabNow === 'zubau_bestand') {
+        const list = plan.zubauBestandPolygons ?? []
+        if (idx >= list.length) return prev
+        out[pi] = { ...plan, zubauBestandPolygons: list.filter((_, i) => i !== idx) }
+        return out
+      }
+      if (tabNow === 'zubau_walls') {
+        const list = plan.zubauWallDemolitionLines ?? []
+        if (idx >= list.length) return prev
+        out[pi] = { ...plan, zubauWallDemolitionLines: list.filter((_, i) => i !== idx) }
+        return out
+      }
       if (tabNow === 'doors') {
         if (idx >= plan.doors.length) return prev
         out[pi] = { ...plan, doors: plan.doors.filter((_, i) => i !== idx) }
@@ -1237,9 +1349,25 @@ export function DetectionsReviewEditor({
       setNewPolygonPoints(null)
       return
     }
+    if (t === 'zubau_bestand') {
+      pushHistory()
+      const prev = currentPlan.zubauBestandPolygons ?? []
+      setZubauBestandPolygons(planIndexClamped, [...prev, { points: [...newPolygonPoints] }])
+      setNewPolygonPoints(null)
+      return
+    }
     setPendingNewRoomPoints([...newPolygonPoints])
     setNewPolygonPoints(null)
-  }, [newPolygonPoints, currentPlan, getTabForPlan, planIndexClamped, pushHistory, resolveMppForPlanIndex, setRoofDemolitions])
+  }, [
+    newPolygonPoints,
+    currentPlan,
+    getTabForPlan,
+    planIndexClamped,
+    pushHistory,
+    resolveMppForPlanIndex,
+    setRoofDemolitions,
+    setZubauBestandPolygons,
+  ])
 
   const handlePickDemolitionPriceKey = useCallback(
     (price_key: string) => {
@@ -1398,8 +1526,9 @@ export function DetectionsReviewEditor({
   const activeTab = getTabForPlan(planIndexClamped)
   const isAufstockungFlow = effectiveFloorKinds.length > 0
   const currentFloorKind = String(effectiveFloorKinds[planIndexClamped] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
-  /** Bestand etaj în Aufstockung: Dach-Rückbau + Treppenöffnung; Zubau: Räume / Türen / Dach wie Neubau. */
+  /** Bestand etaj în Aufstockung: Dach-Rückbau + Treppenöffnung; Zubau: doar vizualizare. */
   const existingFloorEditing = isAufstockungFlow && currentFloorKind === 'existing'
+  const existingFloorReadOnly = existingFloorEditing && isZubauFlow
 
   const handleRoofRectanglesOverlaySync = useCallback(
     (
@@ -1418,7 +1547,7 @@ export function DetectionsReviewEditor({
           : rectangles
       if (scaled.length > 0 && toW > 0 && toH > 0) {
         const { maxX, maxY } = roofOverlayMaxExtent(scaled)
-        const OUT = 1.08
+        const OUT = 2.0
         if (maxX > toW * OUT || maxY > toH * OUT) {
           setRoofLiveOverlayByPlan((prev) => {
             const next = { ...prev }
@@ -1437,10 +1566,10 @@ export function DetectionsReviewEditor({
     setRoofLiveOverlayByPlan({})
   }, [offerId])
 
+  /** Poligoane Dach din roof-review-data: pe Aufstockung Bestand (poll) și în rest (încărcare la schimbare plan) ca fundal sub Räume. */
   useEffect(() => {
-    if (!offerId || !existingFloorEditing) {
+    if (!offerId || plansData.length === 0) {
       setRoofPreviewByPlan([])
-      setRoofLiveOverlayByPlan({})
       return
     }
     let cancelled = false
@@ -1475,12 +1604,17 @@ export function DetectionsReviewEditor({
       }
     }
     void load()
+    if (!existingFloorEditing) {
+      return () => {
+        cancelled = true
+      }
+    }
     const t = window.setInterval(load, 4000)
     return () => {
       cancelled = true
       window.clearInterval(t)
     }
-  }, [offerId, existingFloorEditing, plansDimKey, roofEmbeddedSeeds])
+  }, [offerId, existingFloorEditing, plansDimKey, roofEmbeddedSeeds, plansData.length])
 
   const roofSurfaceTabForChild: RoofSurfaceTab =
     activeTab === 'roof_windows' ? 'windows' : 'surfaces'
@@ -1593,7 +1727,27 @@ export function DetectionsReviewEditor({
               : tool === 'edit'
                 ? 'Punkte und Kanten ziehen'
                 : ''
-      : activeTab === 'phase1_demolition'
+      : activeTab === 'zubau_walls'
+        ? tool === 'select'
+          ? 'Linie wählen; Endpunkte im Bearbeiten-Modus ziehen'
+          : tool === 'add'
+            ? 'Zwei Klicks: Start- und Endpunkt der Abrisslinie'
+            : tool === 'remove'
+              ? 'Linie zum Entfernen anklicken'
+              : tool === 'edit'
+                ? 'Endpunkte ziehen'
+                : ''
+        : activeTab === 'zubau_bestand'
+          ? tool === 'select'
+            ? 'Polygon wählen und verschieben'
+            : tool === 'add'
+              ? 'Polygon zeichnen – ersten Punkt erneut klicken zum Schließen (Marker, ohne Preis)'
+              : tool === 'remove'
+                ? 'Polygon zum Entfernen anklicken'
+                : tool === 'edit'
+                  ? 'Punkte und Kanten ziehen'
+                  : ''
+          : activeTab === 'phase1_demolition'
         ? tool === 'select'
           ? 'Fläche wählen und verschieben'
           : tool === 'add'
@@ -1617,7 +1771,7 @@ export function DetectionsReviewEditor({
             ? 'Element wählen und ziehen zum Verschieben'
             : tool === 'select'
               ? 'Auf Element klicken und ziehen zum Verschieben'
-              : tool === 'add' && activeTab === 'rooms'
+              : tool === 'add' && (activeTab === 'rooms' || activeTab === 'zubau_extension')
                 ? 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
                 : tool === 'add' && activeTab === 'doors'
                   ? 'Zwei Ecken für Öffnung ziehen (Rechteck)'
@@ -1650,6 +1804,20 @@ export function DetectionsReviewEditor({
     [plansData, setRoofDemolitions, pushHistory],
   )
 
+  const handleInsertZubauBestandVertex = useCallback(
+    (planIdx: number, polyIndex: number, afterVertexIndex: number, x: number, y: number) => {
+      const plan = plansData[planIdx]
+      const list = plan?.zubauBestandPolygons ?? []
+      if (!plan || polyIndex >= list.length || afterVertexIndex < 0) return
+      pushHistory()
+      const pts = list[polyIndex].points
+      const newPts = [...pts.slice(0, afterVertexIndex + 1), [x, y] as Point, ...pts.slice(afterVertexIndex + 1)]
+      const next = list.map((d, i) => (i !== polyIndex ? d : { ...d, points: newPts }))
+      setZubauBestandPolygons(planIdx, next)
+    },
+    [plansData, setZubauBestandPolygons, pushHistory],
+  )
+
   const showRoofWorkspace = activeTab === 'roof' || activeTab === 'roof_windows'
   /** Dach: bei Aufstockung Bestand Plan + Phase-1-Overlays unter dem Roof-Vector-Layer; sonst nur RoofReviewEditor. */
   const showRoomsCanvas =
@@ -1657,9 +1825,9 @@ export function DetectionsReviewEditor({
     (activeTab !== 'roof' && activeTab !== 'roof_windows' || existingFloorEditing)
 
   const stackRoofOverPhase1 =
-    existingFloorEditing && showRoofWorkspace && Boolean(offerId) && roofImgs.length > 0
+    existingFloorEditing && showRoofWorkspace && Boolean(offerId) && roofEditorBasemapImages.length > 0
 
-  const stackBlueprintImageUrl = images[planIndexClamped]?.url ?? images[0]?.url ?? ''
+  const stackBlueprintImageUrl = blueprintBaseImages[planIndexClamped]?.url ?? blueprintBaseImages[0]?.url ?? ''
   useEffect(() => {
     if (!stackRoofOverPhase1) return
     setRoofStackView({ zoom: 1, pan: { x: 0, y: 0 } })
@@ -1672,22 +1840,14 @@ export function DetectionsReviewEditor({
   }, [existingFloorEditing, planIndexClamped, activeTab, stackRoofOverPhase1])
 
   const roofOverlayRoomsForPhase1 = useMemo(() => {
-    if (!existingFloorEditing) return []
     const idx = planIndexClamped
     if (stackRoofOverPhase1 && (activeTab === 'roof' || activeTab === 'roof_windows')) return []
     return roofLiveOverlayByPlan[idx] !== undefined
       ? roofLiveOverlayByPlan[idx]!
       : (roofPreviewByPlan[idx] ?? [])
-  }, [
-    existingFloorEditing,
-    planIndexClamped,
-    activeTab,
-    stackRoofOverPhase1,
-    roofLiveOverlayByPlan,
-    roofPreviewByPlan,
-  ])
+  }, [planIndexClamped, activeTab, stackRoofOverPhase1, roofLiveOverlayByPlan, roofPreviewByPlan])
 
-  const showWerkzeuge = !loading && plansData.length > 0
+  const showWerkzeuge = !loading && plansData.length > 0 && !existingFloorReadOnly
 
   const reviewFooterActions = (
     <div className="shrink-0 flex flex-wrap items-center justify-center gap-2 px-2 pt-1 w-full">
@@ -1830,7 +1990,7 @@ export function DetectionsReviewEditor({
                                     : 'border-white/25 text-sand/90 bg-white/5'
                                 }`}
                               >
-                                {floorKindLabel === 'new' ? 'Aufstockung' : 'Bestand'}
+                                {floorKindLabel === 'new' ? (isZubauFlow ? 'Zubau' : 'Aufstockung') : 'Bestand'}
                               </span>
                             )}
                           </span>
@@ -1848,7 +2008,9 @@ export function DetectionsReviewEditor({
                             </span>
                           ) : (
                             <>
-                              <span className="text-[10px] text-sand/50">Bestand oder Aufstockung</span>
+                              <span className="text-[10px] text-sand/50">
+                                {isZubauFlow ? 'Bestand oder Zubau' : 'Bestand oder Aufstockung'}
+                              </span>
                               <div className="flex flex-wrap items-center gap-1">
                                 <button
                                   type="button"
@@ -1882,7 +2044,7 @@ export function DetectionsReviewEditor({
                                     })
                                   }
                                 >
-                                  Aufstockung
+                                  {isZubauFlow ? 'Zubau' : 'Aufstockung'}
                                 </button>
                               </div>
                             </>
@@ -1926,7 +2088,11 @@ export function DetectionsReviewEditor({
                             if (idx >= 0 && idx < n) nextKinds[idx] = 'existing'
                           })
                           if (!nextKinds.some((k) => k === 'new')) {
-                            setReorderKindsError('Bitte markieren Sie mindestens ein neues Geschoss.')
+                            setReorderKindsError(
+                              isZubauFlow
+                                ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau.'
+                                : 'Bitte markieren Sie mindestens ein neues Geschoss.',
+                            )
                             return
                           }
                           setFloorKinds(nextKinds.map((k) => k))
@@ -1979,7 +2145,7 @@ export function DetectionsReviewEditor({
                 {reorderFloorsMode && (
                   <p className="text-[10px] leading-snug text-sand/55">
                     Griffe ziehen
-                    {isAufstockungFlow ? ' · Bestand/Aufstockung' : ''}.
+                    {isAufstockungFlow ? (isZubauFlow ? ' · Bestand/Zubau' : ' · Bestand/Aufstockung') : ''}.
                   </p>
                 )}
                 {reorderKindsError && (
@@ -2266,8 +2432,8 @@ export function DetectionsReviewEditor({
         {loading && plansData.length === 0 ? (
           <div className="w-full flex-1 min-h-0 flex flex-col gap-2">
             <div className="relative w-full flex-1 min-h-[200px] rounded-lg overflow-hidden border border-[#FF9F0F]/50 bg-black/30 flex items-center justify-center">
-              {images[0]?.url && (
-                <img src={images[0].url} alt="" className="absolute inset-0 w-full h-full object-contain opacity-40" />
+              {blueprintBaseImages[0]?.url && (
+                <img src={blueprintBaseImages[0].url} alt="" className="absolute inset-0 w-full h-full object-contain opacity-40" />
               )}
               <div className="relative z-10 flex flex-col items-center gap-2 text-sand/80">
                 <div className="w-8 h-8 border-2 border-[#FF9F0F]/60 border-t-[#FF9F0F] rounded-full animate-spin" />
@@ -2280,7 +2446,7 @@ export function DetectionsReviewEditor({
           <div className="flex-1 min-h-0 flex flex-col w-full gap-2 overflow-y-auto overflow-x-hidden preisdatenbank-scroll">
             <div className="shrink-0 flex flex-col gap-2 w-full flex-1 min-h-0">
               <div className="flex flex-wrap gap-4 justify-center pb-1">
-                {images.slice(0, n).map((img, i) => (
+                {blueprintBaseImages.slice(0, n).map((img, i) => (
                   <div key={`img-${i}`} className="flex flex-col items-center gap-1">
                     <img
                       src={img.url}
@@ -2307,11 +2473,15 @@ export function DetectionsReviewEditor({
                   ? 'demolition'
                   : planTab === 'phase1_stair'
                     ? 'stair_opening'
-                    : 'rooms'
+                    : planTab === 'zubau_bestand'
+                      ? 'zubau_bestand'
+                      : planTab === 'zubau_walls'
+                        ? 'zubau_walls'
+                        : 'rooms'
             if (!plan || !imageUrlForPlan) return null
             return (
               <div className="w-full flex flex-col flex-1 min-h-0 min-w-0 gap-1.5">
-                {plan && imageUrlForPlan && existingFloorEditing && (
+                {plan && imageUrlForPlan && existingFloorEditing && !isZubauFlow && (
                 <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
                     <button
@@ -2373,17 +2543,66 @@ export function DetectionsReviewEditor({
                   </div>
                 </div>
                 )}
-                {plan && imageUrlForPlan && !existingFloorEditing && (
+                {plan && imageUrlForPlan && (!existingFloorEditing || isZubauFlow) && (
                 <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
-                    <button
-                      type="button"
-                      onClick={() => { setTabForPlan(i, 'rooms'); setSelectedPolygonIndex(null); setNewPolygonPoints(null); if (tool === 'add') setTool('select') }}
-                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'rooms' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                    >
-                      <LayoutGrid size={14} strokeWidth={2} />
-                      <span>Räume</span>
-                    </button>
+                    {isZubauFlow && String(effectiveFloorKinds[i] ?? 'new').toLowerCase() === 'new' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTabForPlan(i, 'zubau_bestand')
+                            setSelectedPolygonIndex(null)
+                            setNewPolygonPoints(null)
+                            if (tool === 'add') setTool('select')
+                          }}
+                          className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'zubau_bestand' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                        >
+                          <LayoutGrid size={14} strokeWidth={2} />
+                          <span>Bestand (Marker)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTabForPlan(i, 'zubau_extension')
+                            setSelectedPolygonIndex(null)
+                            setNewPolygonPoints(null)
+                            if (tool === 'add') setTool('select')
+                          }}
+                          className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'zubau_extension' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                        >
+                          <LayoutGrid size={14} strokeWidth={2} />
+                          <span>Erweiterung</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTabForPlan(i, 'zubau_walls')
+                            setSelectedPolygonIndex(null)
+                            setNewPolygonPoints(null)
+                            if (tool === 'add') setTool('select')
+                          }}
+                          className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'zubau_walls' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                        >
+                          <Pencil size={14} strokeWidth={2} />
+                          <span>Wandabbruch</span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTabForPlan(i, 'rooms')
+                          setSelectedPolygonIndex(null)
+                          setNewPolygonPoints(null)
+                          if (tool === 'add') setTool('select')
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'rooms' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                      >
+                        <LayoutGrid size={14} strokeWidth={2} />
+                        <span>Räume</span>
+                      </button>
+                    )}
                     {!roofOnlyOffer && (
                     <button
                       type="button"
@@ -2526,32 +2745,56 @@ export function DetectionsReviewEditor({
                     doors={plan.doors}
                     demolitionPolys={plan.roofDemolitions ?? []}
                     onDemolitionPolysChange={(polys) => setRoofDemolitions(i, polys)}
+                    zubauBestandPolys={plan.zubauBestandPolygons ?? []}
+                    onZubauBestandPolysChange={(polys) => setZubauBestandPolygons(i, polys)}
+                    zubauWallLines={plan.zubauWallDemolitionLines ?? []}
+                    onZubauWallLinesChange={(lines) => setZubauWallDemolitionLines(i, lines)}
                     stairOpeningRects={(plan.stairOpenings ?? []) as DoorRect[]}
                     onStairOpeningRectsChange={(rects) => setStairOpenings(i, rects)}
                     tab={canvasTab}
-                    tool={tool}
+                    tool={existingFloorReadOnly ? 'select' : tool}
                     selectedIndex={selectedPolygonIndex}
-                    newPoints={tool === 'add' ? newPolygonPoints : null}
+                    newPoints={!existingFloorReadOnly && tool === 'add' ? newPolygonPoints : null}
                     newDoorType={newDoorType}
                     onInsertVertex={
-                      planTab === 'rooms'
+                      planTab === 'rooms' || planTab === 'zubau_extension'
                         ? (polyIndex: number, afterVertexIndex: number, x: number, y: number) =>
                             handleInsertVertex(i, polyIndex, afterVertexIndex, x, y)
                         : planTab === 'phase1_demolition'
                           ? (polyIndex: number, afterVertexIndex: number, x: number, y: number) =>
                               handleInsertDemolitionVertex(i, polyIndex, afterVertexIndex, x, y)
-                          : undefined
+                          : planTab === 'zubau_bestand'
+                            ? (polyIndex: number, afterVertexIndex: number, x: number, y: number) =>
+                                handleInsertZubauBestandVertex(i, polyIndex, afterVertexIndex, x, y)
+                            : undefined
                     }
                     onSelect={setSelectedPolygonIndex}
-                    onAddPoint={(x: number, y: number) => setNewPolygonPoints((prev) => prev ? [...prev, [x, y]] : [[x, y]])}
-                    onCloseNewPolygon={handleRequestCloseNewPolygon}
-                    onRoomTypeLabelClick={planTab === 'rooms' ? handleRoomTypeLabelClick : undefined}
+                    onAddPoint={(x: number, y: number) => {
+                      if (existingFloorReadOnly) return
+                      setNewPolygonPoints((prev) => prev ? [...prev, [x, y]] : [[x, y]])
+                    }}
+                    onCloseNewPolygon={() => {
+                      if (existingFloorReadOnly) return
+                      handleRequestCloseNewPolygon()
+                    }}
+                    onRoomTypeLabelClick={
+                      planTab === 'rooms' || planTab === 'zubau_extension' ? handleRoomTypeLabelClick : undefined
+                    }
                     onMoveVertex={(polyIndex: number, vertexIndex: number, x: number, y: number) => {
-                      if (planTab === 'rooms') {
+                      if (existingFloorReadOnly) return
+                      if (planTab === 'rooms' || planTab === 'zubau_extension') {
                         const next = plan.rooms.map((r, ri) =>
                           ri !== polyIndex ? r : { ...r, points: r.points.map((p: Point, vi: number) => vi === vertexIndex ? [x, y] as Point : p) }
                         )
                         setRooms(i, next)
+                      } else if (planTab === 'zubau_bestand') {
+                        const list = plan.zubauBestandPolygons ?? []
+                        const next = list.map((d, ri) =>
+                          ri !== polyIndex
+                            ? d
+                            : { ...d, points: d.points.map((p: Point, vi: number) => (vi === vertexIndex ? ([x, y] as Point) : p)) },
+                        )
+                        setZubauBestandPolygons(i, next)
                       } else if (planTab === 'phase1_demolition') {
                         const list = plan.roofDemolitions ?? []
                         const next = list.map((d, ri) =>
@@ -2592,18 +2835,39 @@ export function DetectionsReviewEditor({
                         setStairOpenings(i, next)
                       }
                     }}
-                    onRemoveSelected={(index?: number) => handleRemoveSelected(index)}
-                    onEditStart={pushHistory}
-                    onRoomsChange={(rooms: RoomPolygon[]) => setRooms(i, rooms)}
-                    onDoorsChange={(doors: DoorRect[]) => setDoors(i, doors)}
+                    onRemoveSelected={(index?: number) => {
+                      if (existingFloorReadOnly) return
+                      handleRemoveSelected(index)
+                    }}
+                    onEditStart={() => {
+                      if (existingFloorReadOnly) return
+                      pushHistory()
+                    }}
+                    onRoomsChange={(rooms: RoomPolygon[]) => {
+                      if (existingFloorReadOnly) return
+                      setRooms(i, rooms)
+                    }}
+                    onDoorsChange={(doors: DoorRect[]) => {
+                      if (existingFloorReadOnly) return
+                      setDoors(i, doors)
+                    }}
                     onDoorHover={undefined}
                     onDoorActivate={undefined}
                     blendAufstockungPhase1Overlays={
-                      existingFloorEditing &&
-                      (planTab === 'phase1_demolition' ||
-                        planTab === 'phase1_stair' ||
-                        planTab === 'roof' ||
-                        planTab === 'roof_windows')
+                      (roofOverlayRoomsForPhase1.length > 0 &&
+                        (planTab === 'rooms' ||
+                          planTab === 'zubau_extension' ||
+                          planTab === 'zubau_bestand' ||
+                          planTab === 'zubau_walls' ||
+                          planTab === 'doors')) ||
+                      (existingFloorEditing &&
+                        (planTab === 'phase1_demolition' ||
+                          planTab === 'phase1_stair' ||
+                          planTab === 'roof' ||
+                          planTab === 'roof_windows'))
+                    }
+                    blendZubauSiblingOverlays={
+                      isZubauFlow && String(effectiveFloorKinds[i] ?? '').toLowerCase() === 'new'
                     }
                     useAufstockungsBasisDemolitionLabels={existingFloorEditing}
                     roofOverlayRooms={roofOverlayRoomsForPhase1}
@@ -2612,7 +2876,7 @@ export function DetectionsReviewEditor({
                   />
                 </div>
                 )}
-                {offerId && roofImgs.length > 0 && (
+                {offerId && roofEditorBasemapImages.length > 0 && (
                   <div
                     className={`${
                       stackRoofOverPhase1
@@ -2628,9 +2892,7 @@ export function DetectionsReviewEditor({
                       vectorOverlayOnly={stackRoofOverPhase1}
                       stackedView={stackRoofOverPhase1 ? roofStackView : null}
                       onStackedViewChange={stackRoofOverPhase1 ? setRoofStackView : undefined}
-                      onRoofRectanglesOverlaySync={
-                        existingFloorEditing && offerId ? handleRoofRectanglesOverlaySync : undefined
-                      }
+                      onRoofRectanglesOverlaySync={offerId ? handleRoofRectanglesOverlaySync : undefined}
                       dimsToolbarPortalTarget={roofDimsToolbarSlotEl}
                       tool={tool}
                       setTool={setTool}
@@ -2638,7 +2900,7 @@ export function DetectionsReviewEditor({
                       setRoofSurfaceTab={setRoofSurfaceTabForEditor}
                       embedPlanIndex={planIndexClamped}
                       offerId={offerId}
-                      images={roofImgs}
+                      images={roofEditorBasemapImages}
                       embeddedPlanSeeds={roofEmbeddedSeeds}
                       layoutActive={showRoofWorkspace}
                       onConfirm={() => {}}

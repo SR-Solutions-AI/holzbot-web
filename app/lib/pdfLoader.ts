@@ -20,19 +20,15 @@ export async function loadPdfJs() {
   }
   
   // Creăm un promise nou pentru încărcare
-  // Folosim o funcție care este executată doar la runtime pentru a evita analiza statică
   loadingPromise = (async () => {
     try {
-      // Folosim o variabilă construită dinamic pentru a evita analiza statică de Turbopack
-      const basePath = 'pdfjs-dist'
-      const subPath = '/legacy/build/pdf.mjs'
-      const fullPath = basePath + subPath
+      // IMPORTANT:
+      // Use explicit module specifiers so Next/Webpack can include these modules.
+      // The previous dynamic string path could fail at runtime with:
+      // "Cannot find module 'pdfjs-dist/legacy/build/pdf.mjs'".
+      const imported = await import('pdfjs-dist/legacy/build/pdf.mjs')
       
-      // Dynamic import cu string literal - Turbopack nu poate analiza acest cod la build time
-      const imported = await import(/* @vite-ignore */ fullPath)
-      
-      // Handle both default export and named exports
-      const pdfjs = imported.default || imported
+      const pdfjs = imported as any
       
       if (!pdfjs || typeof pdfjs.getDocument !== 'function') {
         throw new Error('PDF.js module failed to load correctly')
@@ -42,8 +38,8 @@ export async function loadPdfJs() {
       // În loc de: pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
       // Pune asta:
       if (pdfjs.GlobalWorkerOptions) {
-        // Asta va trage MEREU versiunea potrivită direct din cloud, ignorând ce ai tu pe server
-        pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`;
+        // Keep worker version in sync with the loaded pdfjs module.
+        pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`
       }
       
       pdfjsModule = pdfjs

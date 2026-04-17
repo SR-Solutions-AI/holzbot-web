@@ -1561,6 +1561,17 @@ export default function LiveFeed() {
             }
 
             if(stage === 'computation_complete') {
+              // Force-unlock editor progress freeze on final completion.
+              // If a review flag remains active (missed approved event), the
+              // interpolation loop would keep the bar pinned at the locked value.
+              detectionsReviewActiveRef.current = false
+              roofReviewActiveRef.current = false
+              reviewPendingRef.current = null
+              roofReviewPendingRef.current = null
+              pendingStagesAfterReviewRef.current = []
+              pendingStagesAfterRoofReviewRef.current = []
+              progressLockedInEditorRef.current = null
+
               allStagesCompleted.current = true
               serverDrivesProgressRef.current = true
               targetProgressRef.current = 100
@@ -2089,12 +2100,16 @@ export default function LiveFeed() {
                     ? 'Dachstuhl Mengenermittlung'
                     : offerFlow === 'aufstockung'
                       ? 'Aufstockung Mengenermittlung'
-                      : 'Neubau Mengenermittlung'
+                      : offerFlow === 'zubau'
+                        ? 'Zubau Mengenermittlung'
+                        : 'Neubau Mengenermittlung'
                   : offerFlow === 'dachstuhl'
                     ? 'Dachstuhl Angebot'
                     : offerFlow === 'aufstockung'
                       ? 'Aufstockung Angebot'
-                      : 'Neubau Angebot'}
+                      : offerFlow === 'zubau'
+                        ? 'Zubau Angebot'
+                        : 'Neubau Angebot'}
               </span>
               <div className="text-xs font-medium text-sand/80 truncate">
                 {currentStageName || 'Verarbeitung...'}

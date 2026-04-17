@@ -469,10 +469,15 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
       }
     }
     const wizardPackage = String((form as any).wizardPackage ?? '').toLowerCase()
-    if (wizardPackage === 'aufstockung') {
+    if (wizardPackage === 'aufstockung' || wizardPackage === 'zubau') {
       const floorKinds = Array.isArray((form as any).aufstockungFloorKinds) ? (form as any).aufstockungFloorKinds : []
       const hasNewFloor = floorKinds.some((k: unknown) => String(k).toLowerCase() === 'new')
-      if (!hasNewFloor) e.aufstockungFloorKinds = 'Bitte markieren Sie mindestens ein neues Geschoss.'
+      if (!hasNewFloor) {
+        e.aufstockungFloorKinds =
+          wizardPackage === 'zubau'
+            ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau.'
+            : 'Bitte markieren Sie mindestens ein neues Geschoss.'
+      }
     }
   }
 
@@ -628,7 +633,7 @@ export default function StepWizard() {
   /** null = closed; delete_offer = bisheriges Verhalten (Angebot löschen); abort_edit = Bearbeiten verlassen, PDF zurück */
   const [cancelDialog, setCancelDialog] = useState<null | 'delete_offer' | 'abort_edit'>(null)
 
-  const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'neubau' | 'aufstockung' | null>(null)
+  const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'neubau' | 'aufstockung' | 'zubau' | null>(null)
   /** După „Mengenermittlung“: alegere Neubau vs Dachstuhl (fără formular complet, doar Upload + Editor + PDF măsurători). */
   const [packagePickerMengenSub, setPackagePickerMengenSub] = useState(false)
   /** Monatslimit für Projekte erreicht; Paket-Karten nicht klickbar. */
@@ -977,14 +982,14 @@ export default function StepWizard() {
       const uploadOnly = (formStepsDachstuhl as any[]).filter((s) => s.key === 'upload')
       setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[]))
       setIdx(0)
-    } else if (measurementsOnlyFlow && (selectedPackage === 'neubau' || selectedPackage === 'aufstockung')) {
+    } else if (measurementsOnlyFlow && (selectedPackage === 'neubau' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau')) {
       const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
       setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsFromJson as any[]))
       setIdx(0)
     } else if (selectedPackage === 'dachstuhl') {
       setDynamicSteps(formStepsDachstuhl as any[])
       setIdx(0)
-    } else if ((selectedPackage === 'neubau' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung') && formStepsFromJson.length > 0) {
+    } else if ((selectedPackage === 'neubau' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau') && formStepsFromJson.length > 0) {
       setDynamicSteps(formStepsFromJson as any[])
       setIdx(0)
     }
@@ -1069,7 +1074,9 @@ export default function StepWizard() {
       setSaveStatus('idle')
       setSelectedPackage(null)
       setPackagePickerMengenSub(false)
-      setMeasurementsOnlyFlow(false)
+      // Keep current mode until we read offer meta; otherwise a freshly created
+      // measurements-only offer can briefly fall back to full-form flow.
+      setMeasurementsOnlyFlow(measurementsOnlyFlowRef.current)
       roofOnlyOfferRef.current = false
       setActiveRoofOnlyOffer(false)
       creatingRef.current = false
@@ -1092,13 +1099,13 @@ export default function StepWizard() {
         if (fromUrl == null && offerIdRef.current !== detail.offerId) return
       }
       const explicitFlow = detail.flow
-      // Doar Aufstockung / Dachstuhl din eveniment sunt aplicate imediat; `neubau` explicit poate fi fals
+      // Doar Aufstockung / Zubau / Dachstuhl din eveniment sunt aplicate imediat; `neubau` explicit poate fi fals
       // (sessionStorage / default LiveFeed) și trebuie confirmat din meta la GET /offers.
-      if (explicitFlow === 'aufstockung' || explicitFlow === 'dachstuhl') {
+      if (explicitFlow === 'aufstockung' || explicitFlow === 'zubau' || explicitFlow === 'dachstuhl') {
         const roFlow = explicitFlow === 'dachstuhl'
         roofOnlyOfferRef.current = roFlow
         setActiveRoofOnlyOffer(roFlow)
-        const wp = explicitFlow === 'dachstuhl' ? 'dachstuhl' : 'aufstockung'
+        const wp = explicitFlow === 'dachstuhl' ? 'dachstuhl' : explicitFlow === 'zubau' ? 'zubau' : 'aufstockung'
         setForm((prev) => ({ ...prev, wizardPackage: wp }))
         setSelectedPackage(explicitFlow)
       }
@@ -1129,11 +1136,15 @@ export default function StepWizard() {
               ? 'dachstuhl'
               : resolvedWizardPackage === 'aufstockung'
                 ? 'aufstockung'
+                : resolvedWizardPackage === 'zubau'
+                  ? 'zubau'
                 : 'neubau'
           setForm((prev) => ({ ...prev, wizardPackage: wpSet }))
           setSelectedPackage(
             resolvedWizardPackage === 'aufstockung'
               ? 'aufstockung'
+              : resolvedWizardPackage === 'zubau'
+                ? 'zubau'
               : ro
                 ? 'dachstuhl'
                 : 'neubau',
@@ -1535,10 +1546,13 @@ export default function StepWizard() {
         setSelectedPackage(
           resolvedWizardPackage === 'aufstockung'
             ? 'aufstockung'
+            : resolvedWizardPackage === 'zubau'
+              ? 'zubau'
             : ro
               ? 'dachstuhl'
               : 'neubau',
         )
+        setMeasurementsOnlyFlow(offerMeta?.measurements_only_offer === true)
         setCurrentOfferMeasurementsOnly(offerMeta?.measurements_only_offer === true)
       } catch {
         if (selNonce !== offerSelectNonceRef.current) return
@@ -1853,7 +1867,8 @@ export default function StepWizard() {
     setShowEditOfferDialog(false)
     const ro = roofOnlyOfferRef.current || activeRoofOnlyOffer
     const wp = String(offerMeta?.wizard_package ?? '').toLowerCase()
-    const editPackage: 'dachstuhl' | 'aufstockung' | 'neubau' = ro ? 'dachstuhl' : (wp === 'aufstockung' ? 'aufstockung' : 'neubau')
+    const editPackage: 'dachstuhl' | 'aufstockung' | 'zubau' | 'neubau' =
+      ro ? 'dachstuhl' : (wp === 'aufstockung' ? 'aufstockung' : wp === 'zubau' ? 'zubau' : 'neubau')
     if (wantVars) {
       setSelectedPackage(editPackage)
     } else if (wantDet) {
@@ -1960,6 +1975,8 @@ export default function StepWizard() {
         const selectedPackageOfferTypeId =
           selectedPackage === 'aufstockung'
             ? (offerTypesBySlug['aufstockung'] ?? null)
+            : selectedPackage === 'zubau'
+              ? (offerTypesBySlug['zubau'] ?? null)
             : selectedPackage === 'dachstuhl'
               ? (offerTypesBySlug['dachstuhl'] ?? null)
               : selectedPackage === 'neubau'
@@ -1981,9 +1998,9 @@ export default function StepWizard() {
         if (roofOnlyOfferRef.current) {
           metaPatch.roof_only_offer = true
           metaPatch.wizard_package = 'dachstuhl'
-        } else if (selectedPackage === 'aufstockung') {
+        } else if (selectedPackage === 'aufstockung' || selectedPackage === 'zubau') {
           metaPatch.roof_only_offer = false
-          metaPatch.wizard_package = 'aufstockung'
+          metaPatch.wizard_package = selectedPackage === 'zubau' ? 'zubau' : 'aufstockung'
           const floorKinds = Array.isArray(form.aufstockungFloorKinds)
             ? form.aufstockungFloorKinds.map((k: unknown) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing'))
             : []
@@ -2270,6 +2287,8 @@ export default function StepWizard() {
         selectedPackage ??
         (formWizardPackage === 'aufstockung'
           ? 'aufstockung'
+          : formWizardPackage === 'zubau'
+            ? 'zubau'
           : formWizardPackage === 'dachstuhl'
             ? 'dachstuhl'
             : 'neubau')
@@ -2277,11 +2296,11 @@ export default function StepWizard() {
       const wizardPackage =
         roofOnly
           ? 'dachstuhl'
-          : effectivePackage === 'aufstockung'
-            ? 'aufstockung'
+          : effectivePackage === 'aufstockung' || effectivePackage === 'zubau'
+            ? effectivePackage
             : 'neubau'
       const aufstockungFloorKinds =
-        effectivePackage === 'aufstockung' && Array.isArray(form.aufstockungFloorKinds)
+        (effectivePackage === 'aufstockung' || effectivePackage === 'zubau') && Array.isArray(form.aufstockungFloorKinds)
           ? form.aufstockungFloorKinds.map((k: unknown) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing'))
           : undefined
       try {
@@ -2302,6 +2321,8 @@ export default function StepWizard() {
         ? 'dachstuhl'
         : effectivePackage === 'aufstockung'
           ? 'aufstockung'
+          : effectivePackage === 'zubau'
+            ? 'zubau'
           : 'neubau'
       const { run_id } = await apiFetch(`/offers/${id}/compute`, { method: 'POST', body: JSON.stringify({ payload: {} }), timeoutMs: 180_000 })
       setPdfUrl(null)
@@ -2464,10 +2485,10 @@ export default function StepWizard() {
   }
 
   // 3. Main Wizard UI — direct Paket auswählen; după Haus-Angebot starten → wizard
-  /** Contul holzbau@holzbot.com are acces complet; restul văd mesaj WIP pentru Aufstockung/Zubau. */
+  /** Contul holzbau@holzbot.com are acces complet. */
   const isDevAccount = currentUserEmail === 'holzbau@holzbot.com'
   const showPackagePicker = !computing && !pdfUrl && !offerId && selectedPackage === null
-  const showForm = (selectedPackage === 'neubau' || selectedPackage === 'dachstuhl' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || offerId) && !computing && !pdfUrl
+  const showForm = (selectedPackage === 'neubau' || selectedPackage === 'dachstuhl' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || offerId) && !computing && !pdfUrl
   const showProgressHeader = !computing && !pdfUrl && !showPackagePicker && showForm
   const centerWizardSteps = progressBarSteps.length > 0 && progressBarSteps.length <= 5
   const effectiveWizardPackage =
@@ -2538,9 +2559,15 @@ export default function StepWizard() {
               roofOnlyOffer={activeRoofOnlyOffer || selectedPackage === 'dachstuhl'}
               forceAufstockungFlow={
                 selectedPackage === 'aufstockung' ||
+                selectedPackage === 'zubau' ||
                 String(form.wizardPackage ?? '').toLowerCase() === 'aufstockung' ||
+                String(form.wizardPackage ?? '').toLowerCase() === 'zubau' ||
                 (Array.isArray((form as { aufstockungFloorKinds?: unknown }).aufstockungFloorKinds) &&
                   ((form as { aufstockungFloorKinds: unknown[] }).aufstockungFloorKinds?.length ?? 0) > 0)
+              }
+              forceZubauFlow={
+                selectedPackage === 'zubau' ||
+                String(form.wizardPackage ?? '').toLowerCase() === 'zubau'
               }
               onConfirm={async () => {
                 if (pendingPostEditorComputeRef.current) {
@@ -2707,7 +2734,6 @@ export default function StepWizard() {
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
-                        if (!isDevAccount) { setWipNotice('aufstockung'); return }
                         if (tokensBlocked) return
                         setMeasurementsOnlyFlow(false)
                         roofOnlyOfferRef.current = false
@@ -2733,12 +2759,11 @@ export default function StepWizard() {
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
-                        if (!isDevAccount) { setWipNotice('zubau'); return }
                         if (tokensBlocked) return
                         setMeasurementsOnlyFlow(false)
                         roofOnlyOfferRef.current = false
-                        setForm(prev => ({ ...prev, wizardPackage: 'neubau' }))
-                        setSelectedPackage('neubau')
+                        setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
+                        setSelectedPackage('zubau')
                       }}
                       className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
@@ -2833,7 +2858,6 @@ export default function StepWizard() {
                         type="button"
                         disabled={tokensBlocked}
                         onClick={() => {
-                          if (!isDevAccount) { setPackagePickerMengenSub(false); setWipNotice('aufstockung'); return }
                           if (tokensBlocked) return
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
@@ -2860,13 +2884,12 @@ export default function StepWizard() {
                         type="button"
                         disabled={tokensBlocked}
                         onClick={() => {
-                          if (!isDevAccount) { setPackagePickerMengenSub(false); setWipNotice('zubau'); return }
                           if (tokensBlocked) return
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
-                          setForm(prev => ({ ...prev, wizardPackage: 'neubau' }))
-                          setSelectedPackage('neubau')
+                          setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
+                          setSelectedPackage('zubau')
                         }}
                         className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
@@ -3606,7 +3629,8 @@ function isAufstockungNewBuildStandardFloorIdx(standardFloorIdx: number, kinds: 
 }
 
 function resolveAufstockungFlow(form: Record<string, any>, wizardPackageProp?: string): boolean {
-  return String(wizardPackageProp ?? form.wizardPackage ?? '').toLowerCase() === 'aufstockung'
+  const wp = String(wizardPackageProp ?? form.wizardPackage ?? '').toLowerCase()
+  return wp === 'aufstockung' || wp === 'zubau'
 }
 
 function WandaufbauStep({
@@ -4138,7 +4162,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
   const aufstockungFloorKinds = Array.isArray(form.aufstockungFloorKinds) ? form.aufstockungFloorKinds : []
   const resolvedWizardPackage = String(wizardPackage ?? form.wizardPackage ?? '').toLowerCase()
-  const isAufstockungFlow = resolvedWizardPackage === 'aufstockung'
+  const isAufstockungFlow = resolvedWizardPackage === 'aufstockung' || resolvedWizardPackage === 'zubau'
+  const isZubauFlow = resolvedWizardPackage === 'zubau'
   const foundationOptions = preisdatenbankOptionsByTag['foundation_type'] ?? []
   const floorHeightOptions = preisdatenbankOptionsByTag['floor_height'] ?? []
   const stairTypeOptions = preisdatenbankOptionsByTag['stairs_type'] ?? []
@@ -4601,7 +4626,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                           : 'border-white/15 text-sand/75 hover:bg-white/5'
                       }`}
                     >
-                      Aufstockung
+                      {isZubauFlow ? 'Zubau' : 'Aufstockung'}
                     </button>
                   </div>
                 </div>
@@ -4732,7 +4757,7 @@ function DynamicFields({
 }) {
   const fmt = (s: string) => adaptCurrencyCopy(s, displayCurrency)
   const wp = String(wizardPackage ?? '').toLowerCase()
-  const isAufstockungWizard = wp === 'aufstockung'
+  const isAufstockungWizard = wp === 'aufstockung' || wp === 'zubau'
 
   let currentFields = fields;
   if (stepKey === 'upload') {

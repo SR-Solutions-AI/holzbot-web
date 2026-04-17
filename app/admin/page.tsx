@@ -369,13 +369,171 @@ type AdminEditorSnapshotItem = {
   plan_id?: string
   editor: 'detections_review' | 'roof'
   created_at: string
+  /** Set when snapshot comes from local roof rectangle PNG (admin API). */
+  floor_idx?: number
+}
+
+type AdminEditorLayerKey = 'base' | 'rooms' | 'doors' | 'demolitions' | 'stairs' | 'roof'
+
+type AdminEditorOverlayKey = Exclude<AdminEditorLayerKey, 'base'>
+
+/** Full stack order (base always first when present). */
+const ADMIN_BLUEPRINT_STACK_ORDER: AdminEditorLayerKey[] = ['base', 'rooms', 'doors', 'demolitions', 'stairs', 'roof']
+
+/** Togglable overlays only — base is always shown when available. */
+const ADMIN_OVERLAY_LAYER_ORDER: AdminEditorOverlayKey[] = ['rooms', 'doors', 'demolitions', 'stairs', 'roof']
+
+const ADMIN_BLUEPRINT_LAYER_LABEL: Record<AdminEditorLayerKey, string> = {
+  base: 'Base',
+  rooms: 'Rooms',
+  doors: 'Doors / windows',
+  demolitions: 'Roof demolitions',
+  stairs: 'Stair openings',
+  roof: 'Roof polygons',
+}
+
+type AdminEditorLayerEntry = {
+  id: string
+  url: string
+  filename: string
+  created_at: string
+}
+
+/** Per-plan blueprint review: same stacking as customer editor (base + room + door overlays). */
+type AdminBlueprintSnapshotGroup = {
+  plan_id?: string
+  created_at: string
+  layers: Partial<Record<AdminEditorLayerKey, AdminEditorLayerEntry>>
 }
 
 type AdminProjectEditorSnapshotsState =
   | { status: 'idle' }
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; items: AdminEditorSnapshotItem[] }
+  | {
+      status: 'ok'
+      items: AdminEditorSnapshotItem[]
+      blueprint_groups: AdminBlueprintSnapshotGroup[]
+      roof_items: AdminEditorSnapshotItem[]
+    }
+
+type AdminRoofVectorPolygon = {
+  points: Array<[number, number]>
+  roomName?: string
+}
+
+type AdminRoofVectorPlan = {
+  imageWidth: number
+  imageHeight: number
+  rectangles: AdminRoofVectorPolygon[]
+  floorLabel?: string
+}
+
+type AdminVectorPlan = {
+  imageWidth: number
+  imageHeight: number
+  rooms?: Array<{ points: Array<[number, number]>; roomName?: string }>
+  doors?: Array<{ bbox: [number, number, number, number]; type?: string }>
+  roofDemolitions?: Array<{ points: Array<[number, number]> }>
+  stairOpenings?: Array<{ bbox: [number, number, number, number] }>
+}
+
+const adminRoomColors = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
+
+function labelRectAndText(x: number, y: number, text: string): string {
+  const safe = String(text || '').replace(/[<>&"]/g, '')
+  const estTextW = Math.max(28, safe.length * 7.6)
+  const boxW = estTextW + 10
+  const boxH = 18
+  const lx = x - boxW / 2
+  const ly = y - boxH / 2
+  return `<g><rect x="${lx}" y="${ly}" width="${boxW}" height="${boxH}" fill="rgba(0,0,0,0.82)" stroke="rgba(255,255,255,0.45)" stroke-width="1"/><text x="${x}" y="${y}" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle" dominant-baseline="middle">${safe}</text></g>`
+}
+
+function buildOverlayDataUrl(plan: AdminVectorPlan, layer: AdminEditorOverlayKey): string | null {
+  if (plan.imageWidth <= 0 || plan.imageHeight <= 0) return null
+  const nodes: string[] = []
+  if (layer === 'rooms') {
+    const rooms = Array.isArray(plan.rooms) ? plan.rooms : []
+    rooms.forEach((r, i) => {
+      if (!Array.isArray(r.points) || r.points.length < 3) return
+      const color = adminRoomColors[i % adminRoomColors.length]
+      const pts = r.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+      nodes.push(`<polygon points="${pts}" fill="${color}" fill-opacity="0.22" stroke="${color}" stroke-width="2"/>`)
+      const cx = r.points.reduce((a, b) => a + b[0], 0) / r.points.length
+      const cy = r.points.reduce((a, b) => a + b[1], 0) / r.points.length
+      nodes.push(labelRectAndText(cx, cy, r.roomName || `R${i}`))
+    })
+  } else if (layer === 'doors') {
+    const doors = Array.isArray(plan.doors) ? plan.doors : []
+    doors.forEach((d, i) => {
+      const b = d.bbox
+      if (!Array.isArray(b) || b.length < 4) return
+      const [x1, y1, x2, y2] = b
+      const minX = Math.min(x1, x2)
+      const minY = Math.min(y1, y2)
+      const w = Math.abs(x2 - x1)
+      const h = Math.abs(y2 - y1)
+      const isWindow = String(d.type || '').toLowerCase().includes('window')
+      const color = isWindow ? '#3b82f6' : '#22c55e'
+      nodes.push(`<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="2"/>`)
+      nodes.push(labelRectAndText(minX + w / 2, minY + h / 2, isWindow ? `W${i}` : `D${i}`))
+    })
+  } else if (layer === 'demolitions') {
+    const demos = Array.isArray(plan.roofDemolitions) ? plan.roofDemolitions : []
+    demos.forEach((d, i) => {
+      if (!Array.isArray(d.points) || d.points.length < 3) return
+      const pts = d.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+      nodes.push(`<polygon points="${pts}" fill="#ef4444" fill-opacity="0.2" stroke="#ef4444" stroke-width="2"/>`)
+      const cx = d.points.reduce((a, b) => a + b[0], 0) / d.points.length
+      const cy = d.points.reduce((a, b) => a + b[1], 0) / d.points.length
+      nodes.push(labelRectAndText(cx, cy, `DEM${i + 1}`))
+    })
+  } else if (layer === 'stairs') {
+    const stairs = Array.isArray(plan.stairOpenings) ? plan.stairOpenings : []
+    stairs.forEach((s, i) => {
+      const b = s.bbox
+      if (!Array.isArray(b) || b.length < 4) return
+      const [x1, y1, x2, y2] = b
+      const minX = Math.min(x1, x2)
+      const minY = Math.min(y1, y2)
+      const w = Math.abs(x2 - x1)
+      const h = Math.abs(y2 - y1)
+      nodes.push(`<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="#a855f7" fill-opacity="0.2" stroke="#a855f7" stroke-width="2"/>`)
+      nodes.push(labelRectAndText(minX + w / 2, minY + h / 2, `ST${i + 1}`))
+    })
+  } else if (layer === 'roof') {
+    const rooms = Array.isArray(plan.rooms) ? plan.rooms : []
+    rooms.forEach((r, i) => {
+      if (!Array.isArray(r.points) || r.points.length < 3) return
+      const color = adminRoomColors[i % adminRoomColors.length]
+      const pts = r.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+      nodes.push(`<polygon points="${pts}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="3"/>`)
+      const cx = r.points.reduce((a, b) => a + b[0], 0) / r.points.length
+      const cy = r.points.reduce((a, b) => a + b[1], 0) / r.points.length
+      nodes.push(labelRectAndText(cx, cy, r.roomName || `S${i}`))
+    })
+  }
+  if (nodes.length === 0) return null
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${plan.imageWidth} ${plan.imageHeight}" preserveAspectRatio="xMidYMid meet">${nodes.join('')}</svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
+type AdminUploadedFileRow = {
+  id: string
+  url: string
+  filename: string
+  kind: string
+  mime?: string
+  size?: number
+  created_at: string
+}
+
+type AdminProjectUploadedFilesState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; items: AdminUploadedFileRow[] }
 
 type AdminProjectExportAssets = {
   loading: boolean
@@ -386,15 +544,264 @@ type AdminProjectExportAssets = {
   adminPdfUrl: string | null
   calculationMethodPdfUrl: string | null
   roofMeasurementsPdfUrl: string | null
+  /** When true, customer dashboard only exposes the measurements PDF (same rule here). */
+  measurementsOnlyOffer: boolean
 }
 
-function editorSnapshotsPreviewItem(items: AdminEditorSnapshotItem[]): AdminEditorSnapshotItem | null {
-  if (!items.length) return null
-  const det = items.filter((x) => x.editor === 'detections_review')
-  if (det.length) return det[det.length - 1]
-  const roof = items.filter((x) => x.editor === 'roof')
-  if (roof.length) return roof[roof.length - 1]
-  return items[items.length - 1]
+function formatBytesShort(n: number | undefined): string {
+  if (n == null || !Number.isFinite(n) || n < 0) return '—'
+  if (n < 1024) return `${Math.round(n)} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10 * 1024 ? 1 : 0)} KB`
+  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0)} MB`
+}
+
+/**
+ * All selected layers stacked in one grid cell (same row/col) so every PNG shares the same box —
+ * absolute + h-full on overlays often failed to align with the base image in admin.
+ */
+function AdminBlueprintLayerStack({
+  layers,
+  layerKeys,
+  maxHeightClass = 'max-h-[min(88vh,920px)]',
+}: {
+  layers: AdminBlueprintSnapshotGroup['layers']
+  layerKeys: AdminEditorLayerKey[]
+  maxHeightClass?: string
+}) {
+  const ordered: Array<{ key: AdminEditorLayerKey; entry: AdminEditorLayerEntry }> = []
+  for (const key of layerKeys) {
+    const entry = layers[key]
+    if (entry) ordered.push({ key, entry })
+  }
+
+  if (!ordered.length) return null
+
+  return (
+    <div className="relative inline-grid max-w-full justify-items-center bg-black/25">
+      {ordered.map((o, i) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={o.key}
+          src={o.entry.url}
+          alt={i === 0 ? o.entry.filename : ''}
+          className={`col-start-1 row-start-1 max-w-full object-contain pointer-events-none ${maxHeightClass}`}
+          style={{
+            zIndex: i + 1,
+            opacity: o.key === 'base' ? 1 : 0.9,
+            mixBlendMode: 'normal',
+          }}
+        />
+      ))}
+      <div className="pointer-events-none absolute left-2 top-2 z-30 flex flex-wrap gap-1">
+        {ordered
+          .filter((o) => o.key !== 'base')
+          .map((o) => (
+            <span key={`lbl-${o.key}`} className="rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-sand/90">
+              {ADMIN_BLUEPRINT_LAYER_LABEL[o.key]}
+            </span>
+          ))}
+      </div>
+    </div>
+  )
+}
+
+const adminBlueprintLayerKeysSignature = (layers: AdminBlueprintSnapshotGroup['layers']) =>
+  ADMIN_BLUEPRINT_STACK_ORDER.filter((k) => Boolean(layers[k])).join('|')
+
+/** Overlay toggles only; base is always included in the stack when present. */
+function AdminBlueprintSnapshotPanel({
+  group,
+  panelResetKey,
+  maxHeightClass = 'max-h-[min(88vh,920px)]',
+}: {
+  group: AdminBlueprintSnapshotGroup
+  /** Stable id for this card (e.g. plan + index) — when it changes, layer selection resets. */
+  panelResetKey: string
+  maxHeightClass?: string
+}) {
+  const keysSig = useMemo(() => adminBlueprintLayerKeysSignature(group.layers), [group.layers])
+
+  const availableOverlayKeys = useMemo(
+    () => ADMIN_OVERLAY_LAYER_ORDER.filter((k) => Boolean(group.layers[k])),
+    [keysSig, group.layers],
+  )
+
+  const [activeOverlays, setActiveOverlays] = useState<Set<AdminEditorOverlayKey>>(
+    () => new Set(ADMIN_OVERLAY_LAYER_ORDER.filter((k) => Boolean(group.layers[k]))),
+  )
+
+  useEffect(() => {
+    setActiveOverlays(new Set(ADMIN_OVERLAY_LAYER_ORDER.filter((k) => Boolean(group.layers[k]))))
+    // Intentionally not depending on `group.layers` by reference — only when plan card or layer set changes.
+  }, [panelResetKey, keysSig])
+
+  const displayKeyOrder = useMemo((): AdminEditorLayerKey[] => {
+    const overlays = ADMIN_OVERLAY_LAYER_ORDER.filter(
+      (k) => availableOverlayKeys.includes(k) && activeOverlays.has(k),
+    )
+    if (group.layers.base) return ['base', ...overlays]
+    return overlays
+  }, [group.layers.base, availableOverlayKeys, activeOverlays])
+
+  const displayLayers = useMemo(() => {
+    const o: AdminBlueprintSnapshotGroup['layers'] = {}
+    for (const k of displayKeyOrder) {
+      const e = group.layers[k]
+      if (e) o[k] = e
+    }
+    return o
+  }, [displayKeyOrder, group.layers])
+
+  const toggleOverlay = (k: AdminEditorOverlayKey) => {
+    setActiveOverlays((prev) => {
+      const n = new Set(prev)
+      if (n.has(k)) n.delete(k)
+      else n.add(k)
+      return n
+    })
+  }
+
+  const activateAllOverlays = () => {
+    setActiveOverlays(new Set(ADMIN_OVERLAY_LAYER_ORDER.filter((key) => Boolean(group.layers[key]))))
+  }
+
+  const deactivateOverlaysOnly = () => {
+    setActiveOverlays(new Set())
+  }
+
+  const hasAnyLayer = Boolean(group.layers.base) || availableOverlayKeys.length > 0
+  if (!hasAnyLayer) {
+    return <div className="py-6 text-center text-[11px] text-sand/55">No blueprint snapshot layers for this plan.</div>
+  }
+
+  const showOverlayToggles = availableOverlayKeys.length > 0
+
+  return (
+    <div className="flex w-full max-w-full flex-col items-stretch gap-2">
+      {showOverlayToggles ? (
+        <div className="flex flex-wrap items-center justify-center gap-2 border-b border-white/10 pb-2">
+          <span className="text-[9px] uppercase tracking-wide text-sand/45">Straturi</span>
+          <button
+            type="button"
+            onClick={activateAllOverlays}
+            className="rounded-lg border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 px-2.5 py-1 text-[10px] font-semibold text-[#FFD29A] hover:bg-[#FF9F0F]/18"
+          >
+            Toate ON
+          </button>
+          <button
+            type="button"
+            onClick={deactivateOverlaysOnly}
+            className="rounded-lg border border-white/15 bg-black/35 px-2.5 py-1 text-[10px] font-semibold text-sand/80 hover:border-white/25"
+          >
+            Doar fundal (fără overlay)
+          </button>
+        </div>
+      ) : null}
+      {showOverlayToggles ? (
+        <div className="flex flex-wrap justify-center gap-1.5" role="group" aria-label="Blueprint overlay layers">
+          {availableOverlayKeys.map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={activeOverlays.has(k)}
+              onClick={() => toggleOverlay(k)}
+              className={`rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition ${
+                activeOverlays.has(k)
+                  ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]'
+                  : 'border-white/15 bg-black/35 text-sand/75 hover:border-white/25'
+              }`}
+            >
+              {ADMIN_BLUEPRINT_LAYER_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex w-full justify-center overflow-x-auto">
+        <AdminBlueprintLayerStack layers={displayLayers} layerKeys={displayKeyOrder} maxHeightClass={maxHeightClass} />
+      </div>
+    </div>
+  )
+}
+
+function AdminRoofSnapshotsPanel({ items, maxHeightClass }: { items: AdminEditorSnapshotItem[]; maxHeightClass?: string }) {
+  const sorted = useMemo(() => {
+    return [...items].sort((a, b) => {
+      const fa = typeof a.floor_idx === 'number' ? a.floor_idx : 9999
+      const fb = typeof b.floor_idx === 'number' ? b.floor_idx : 9999
+      if (fa !== fb) return fa - fb
+      return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
+    })
+  }, [items])
+  const [idx, setIdx] = useState(0)
+  const safeIdx = sorted.length ? Math.min(idx, sorted.length - 1) : 0
+  const cur = sorted[safeIdx]
+  useEffect(() => {
+    if (idx >= sorted.length && sorted.length > 0) setIdx(sorted.length - 1)
+  }, [idx, sorted.length])
+
+  if (!sorted.length) return null
+  const mh = maxHeightClass ?? 'max-h-[min(86vh,960px)]'
+
+  return (
+    <div className="flex w-full max-w-full flex-col items-stretch gap-2">
+      {sorted.length > 1 ? (
+        <div className="flex flex-wrap justify-center gap-1.5" role="tablist" aria-label="Roof snapshot floors">
+          {sorted.map((it, i) => (
+            <button
+              key={it.id}
+              type="button"
+              role="tab"
+              aria-selected={safeIdx === i}
+              onClick={() => setIdx(i)}
+              className={`rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition ${
+                safeIdx === i
+                  ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]'
+                  : 'border-white/15 bg-black/35 text-sand/75 hover:border-white/25'
+              }`}
+            >
+              {typeof it.floor_idx === 'number' ? `Roof floor ${it.floor_idx}` : it.filename}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {cur ? (
+        <div className="mb-1 flex flex-col gap-0.5 border-b border-white/10 pb-2 text-[11px] text-sand/60">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="min-w-0 truncate font-mono text-sand/75">{cur.filename}</span>
+            <span className="shrink-0">{formatEnDateTime(cur.created_at)}</span>
+          </div>
+        </div>
+      ) : null}
+      {cur ? (
+        <div className="flex w-full justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={cur.url} alt={cur.filename} className={`w-auto max-w-full object-contain bg-black/25 ${mh}`} />
+        </div>
+      ) : null}
+      {cur ? (
+        <div className="text-center">
+          <a
+            href={cur.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] font-semibold text-[#FFB84D] hover:underline"
+          >
+            Open full size in new tab
+          </a>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function editorSnapshotsPreviewSelection(
+  snap: Extract<AdminProjectEditorSnapshotsState, { status: 'ok' }>,
+): { kind: 'blueprint'; group: AdminBlueprintSnapshotGroup } | { kind: 'roof'; item: AdminEditorSnapshotItem } | null {
+  const groups = snap.blueprint_groups
+  if (groups.length) return { kind: 'blueprint', group: groups[groups.length - 1] }
+  const roofs = snap.roof_items.length ? snap.roof_items : snap.items.filter((x) => x.editor === 'roof')
+  if (roofs.length) return { kind: 'roof', item: roofs[roofs.length - 1] }
+  return null
 }
 
 function editorLabelEn(editor: AdminEditorSnapshotItem['editor']): string {
@@ -647,7 +1054,9 @@ export default function AdminPage() {
     adminPdfUrl: null,
     calculationMethodPdfUrl: null,
     roofMeasurementsPdfUrl: null,
+    measurementsOnlyOffer: false,
   })
+  const [projectUploadedFiles, setProjectUploadedFiles] = useState<AdminProjectUploadedFilesState>({ status: 'idle' })
   const [projectEditorModalOpen, setProjectEditorModalOpen] = useState(false)
 
   const heatmapTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1239,6 +1648,7 @@ export default function AdminPage() {
     const p = selectedOrgProject
     if (!p?.isLiveRow || !isOfferUuid(p.id)) {
       setProjectEditorSnapshots({ status: 'idle' })
+      setProjectUploadedFiles({ status: 'idle' })
       setProjectExportAssets({
         loading: false,
         error: null,
@@ -1248,6 +1658,7 @@ export default function AdminPage() {
         adminPdfUrl: null,
         calculationMethodPdfUrl: null,
         roofMeasurementsPdfUrl: null,
+        measurementsOnlyOffer: false,
       })
       setProjectEditorModalOpen(false)
       return
@@ -1255,6 +1666,7 @@ export default function AdminPage() {
     const offerId = p.id
     let cancelled = false
     setProjectEditorSnapshots({ status: 'loading' })
+    setProjectUploadedFiles({ status: 'loading' })
     setProjectExportAssets({
       loading: true,
       error: null,
@@ -1264,17 +1676,172 @@ export default function AdminPage() {
       adminPdfUrl: null,
       calculationMethodPdfUrl: null,
       roofMeasurementsPdfUrl: null,
+      measurementsOnlyOffer: false,
     })
     ;(async () => {
       try {
-        const [snapRes, expRes] = await Promise.all([
+        const [snapRes, expRes, uploadedRes, roofRes, detRes] = await Promise.all([
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/editor-snapshots`),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/export`),
+          apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/uploaded-files`),
+          apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/roof-review-data?ts=${Date.now()}`).catch(() => null),
+          apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/detections-review-data?ts=${Date.now()}`).catch(() => null),
         ])
         if (cancelled) return
         const items = (snapRes?.items ?? []) as AdminEditorSnapshotItem[]
-        setProjectEditorSnapshots({ status: 'ok', items })
+        const blueprint_groups = ((snapRes?.blueprint_groups ?? []) as AdminBlueprintSnapshotGroup[]).map((g) => ({
+          ...g,
+          layers: { ...g.layers },
+        }))
+        const roof_items = (snapRes?.roof_items ?? []) as AdminEditorSnapshotItem[]
+        const detPlansRaw = Array.isArray((detRes as { plans?: unknown[] } | null)?.plans)
+          ? ((detRes as { plans?: unknown[] }).plans as unknown[])
+          : []
+        const detVectors: AdminVectorPlan[] = detPlansRaw.map((dp) => {
+          const x = (dp ?? {}) as Record<string, unknown>
+          const parsePoints = (arr: unknown): Array<[number, number]> =>
+            (Array.isArray(arr) ? arr : [])
+              .map((p) => {
+                if (!Array.isArray(p) || p.length < 2) return null
+                const px = Number(p[0])
+                const py = Number(p[1])
+                if (!Number.isFinite(px) || !Number.isFinite(py)) return null
+                return [px, py] as [number, number]
+              })
+              .filter((p): p is [number, number] => Boolean(p))
+          const rooms = (Array.isArray(x.rooms) ? x.rooms : [])
+            .map((r) => {
+              const rr = (r ?? {}) as Record<string, unknown>
+              const pts = parsePoints(rr.points)
+              if (pts.length < 3) return null
+              return {
+                points: pts,
+                roomName: typeof rr.roomName === 'string' ? rr.roomName : undefined,
+              }
+            })
+            .filter(Boolean) as Array<{ points: Array<[number, number]>; roomName?: string }>
+          const doors = (Array.isArray(x.doors) ? x.doors : [])
+            .map((d) => {
+              const dd = (d ?? {}) as Record<string, unknown>
+              const b = Array.isArray(dd.bbox) ? dd.bbox : []
+              if (b.length < 4) return null
+              const bbox = [Number(b[0]), Number(b[1]), Number(b[2]), Number(b[3])] as [number, number, number, number]
+              if (!bbox.every((v) => Number.isFinite(v))) return null
+              return { bbox, type: typeof dd.type === 'string' ? dd.type : undefined }
+            })
+            .filter(Boolean) as Array<{ bbox: [number, number, number, number]; type?: string }>
+          const roofDemolitions = (Array.isArray(x.roofDemolitions) ? x.roofDemolitions : [])
+            .map((d) => {
+              const dd = (d ?? {}) as Record<string, unknown>
+              const pts = parsePoints(dd.points)
+              return pts.length >= 3 ? { points: pts } : null
+            })
+            .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+          const stairOpenings = (Array.isArray(x.stairOpenings) ? x.stairOpenings : [])
+            .map((s) => {
+              const ss = (s ?? {}) as Record<string, unknown>
+              const b = Array.isArray(ss.bbox) ? ss.bbox : []
+              if (b.length < 4) return null
+              const bbox = [Number(b[0]), Number(b[1]), Number(b[2]), Number(b[3])] as [number, number, number, number]
+              if (!bbox.every((v) => Number.isFinite(v))) return null
+              return { bbox }
+            })
+            .filter(Boolean) as Array<{ bbox: [number, number, number, number] }>
+          return {
+            imageWidth: Number(x.imageWidth) || 0,
+            imageHeight: Number(x.imageHeight) || 0,
+            rooms,
+            doors,
+            roofDemolitions,
+            stairOpenings,
+          }
+        })
+        const roofPlansRaw = Array.isArray((roofRes as { plans?: unknown[] } | null)?.plans)
+          ? ((roofRes as { plans?: unknown[] }).plans as unknown[])
+          : []
+        const roofVectors: AdminRoofVectorPlan[] = roofPlansRaw.map((rp, idx) => {
+          const x = (rp ?? {}) as Record<string, unknown>
+          const rectanglesRaw = Array.isArray(x.rectangles) ? (x.rectangles as unknown[]) : []
+          const rectangles = rectanglesRaw
+            .map((r) => {
+              const rr = (r ?? {}) as Record<string, unknown>
+              const pointsRaw = Array.isArray(rr.points) ? (rr.points as unknown[]) : []
+              const points = pointsRaw
+                .map((p) => {
+                  if (!Array.isArray(p) || p.length < 2) return null
+                  const px = Number(p[0])
+                  const py = Number(p[1])
+                  if (!Number.isFinite(px) || !Number.isFinite(py)) return null
+                  return [px, py] as [number, number]
+                })
+                .filter((p): p is [number, number] => Boolean(p))
+              if (points.length < 3) return null
+              return {
+                points,
+                roomName: typeof rr.roomName === 'string' ? rr.roomName : typeof rr.room_name === 'string' ? rr.room_name : undefined,
+              }
+            })
+            .filter(Boolean) as AdminRoofVectorPolygon[]
+          return {
+            imageWidth: Number(x.imageWidth) || 0,
+            imageHeight: Number(x.imageHeight) || 0,
+            rectangles,
+            floorLabel: `Roof floor ${idx + 1}`,
+          }
+        })
+        const roofVectorsFiltered = roofVectors.filter((p) => p.imageWidth > 0 && p.imageHeight > 0 && p.rectangles.length > 0)
+        // Inject vector overlays + labels (editor style) for every selection type.
+        blueprint_groups.forEach((g, idx) => {
+          if (!g.layers.base) return
+          const det = detVectors[idx]
+          const roof = roofVectorsFiltered[idx]
+          if (det) {
+            ;(['rooms', 'doors', 'demolitions', 'stairs'] as AdminEditorOverlayKey[]).forEach((k) => {
+              const url = buildOverlayDataUrl(det, k)
+              if (!url) return
+              g.layers[k] = {
+                id: `vec-${k}-${idx}`,
+                url,
+                filename: `vector_${k}_${idx + 1}.svg`,
+                created_at: g.created_at,
+              }
+            })
+          }
+          if (roof) {
+            const targetW = Number(det?.imageWidth) || Number(roof.imageWidth) || 0
+            const targetH = Number(det?.imageHeight) || Number(roof.imageHeight) || 0
+            const srcW = Number(roof.imageWidth) || 0
+            const srcH = Number(roof.imageHeight) || 0
+            const sx = srcW > 0 && targetW > 0 ? targetW / srcW : 1
+            const sy = srcH > 0 && targetH > 0 ? targetH / srcH : 1
+            const scaledRoofRooms = roof.rectangles.map((r) => ({
+              points: r.points.map((p) => [p[0] * sx, p[1] * sy] as [number, number]),
+              roomName: r.roomName,
+            }))
+            const url = buildOverlayDataUrl(
+              {
+                imageWidth: targetW > 0 ? targetW : roof.imageWidth,
+                imageHeight: targetH > 0 ? targetH : roof.imageHeight,
+                rooms: scaledRoofRooms,
+              },
+              'roof',
+            )
+            if (url) {
+              g.layers.roof = {
+                id: `vec-roof-${idx}`,
+                url,
+                filename: `vector_roof_${idx + 1}.svg`,
+                created_at: g.created_at,
+              }
+            }
+          }
+        })
+        setProjectEditorSnapshots({ status: 'ok', items, blueprint_groups, roof_items })
+        const uploadedItems = (uploadedRes?.items ?? []) as AdminUploadedFileRow[]
+        setProjectUploadedFiles({ status: 'ok', items: uploadedItems })
         const plan = expRes?.files?.plan
+        const offerMeta = (expRes?.offer?.meta ?? {}) as Record<string, unknown>
+        const measurementsOnlyOffer = offerMeta.measurements_only_offer === true
         setProjectExportAssets({
           loading: false,
           error: null,
@@ -1284,11 +1851,13 @@ export default function AdminPage() {
           adminPdfUrl: expRes?.files?.adminPdf?.download_url ?? null,
           calculationMethodPdfUrl: expRes?.files?.calculationMethodPdf?.download_url ?? null,
           roofMeasurementsPdfUrl: expRes?.files?.roofMeasurementsPdf?.download_url ?? null,
+          measurementsOnlyOffer,
         })
       } catch (e: unknown) {
         if (cancelled) return
         const msg = e instanceof Error ? e.message : 'Failed to load offer assets'
         setProjectEditorSnapshots({ status: 'error', message: msg })
+        setProjectUploadedFiles({ status: 'error', message: msg })
         setProjectExportAssets({
           loading: false,
           error: msg,
@@ -1298,6 +1867,7 @@ export default function AdminPage() {
           adminPdfUrl: null,
           calculationMethodPdfUrl: null,
           roofMeasurementsPdfUrl: null,
+          measurementsOnlyOffer: false,
         })
       }
     })()
@@ -1315,16 +1885,6 @@ export default function AdminPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [projectEditorModalOpen])
 
-  const projectUploadedFiles = useMemo(() => {
-    if (!selectedOrgProject) return []
-    const d = selectedOrgProject.dateLabel
-    return [
-      { id: 'u1', name: 'Grundriss_EG.pdf', meta: '2.4 MB', at: d },
-      { id: 'u2', name: 'Ansicht_Sued.png', meta: '890 KB', at: d },
-      { id: 'u3', name: 'Stellplaene.zip', meta: '12 MB', at: d },
-    ]
-  }, [selectedOrgProject])
-
   const projectPipelineSteps = useMemo(() => {
     if (!selectedOrgProject) return []
     const u = selectedOrgProject.owner ?? '—'
@@ -1339,7 +1899,15 @@ export default function AdminPage() {
 
   const adminProjectEditorPreview = useMemo(() => {
     if (projectEditorSnapshots.status !== 'ok') return null
-    return editorSnapshotsPreviewItem(projectEditorSnapshots.items)
+    return editorSnapshotsPreviewSelection(projectEditorSnapshots)
+  }, [projectEditorSnapshots])
+
+  const adminEditorSnapshotPanelCount = useMemo(() => {
+    if (projectEditorSnapshots.status !== 'ok') return 0
+    const g = projectEditorSnapshots.blueprint_groups.length
+    const r = projectEditorSnapshots.roof_items.length
+    if (g + r > 0) return g + r
+    return projectEditorSnapshots.items.length
   }, [projectEditorSnapshots])
 
   const adminProjectDownloadFiles = useMemo(() => {
@@ -1354,22 +1922,24 @@ export default function AdminPage() {
       imageMime?: string | null
     }
     const rows: Row[] = []
-    if (ex.planUrl) {
-      const mime = ex.planMime ?? ''
-      rows.push({
-        key: 'plan',
-        label: mime.includes('pdf') ? `Plan · ${ref}` : `Plan image · ${ref}`,
-        hint: 'Architectural plan (same as in the offer)',
-        url: ex.planUrl,
-        thumbKind: mime.includes('pdf') ? 'pdf' : 'image',
-        imageMime: mime,
-      })
+    /** Same subset as the customer dashboard: measurements-only → measurements PDF only; else offer PDF + measurements PDF. */
+    if (ex.measurementsOnlyOffer) {
+      if (ex.roofMeasurementsPdfUrl) {
+        rows.push({
+          key: 'roof_m',
+          label: `Measurements_${ref}.pdf`,
+          hint: 'Takeoff / measurements (same download as for the customer on this offer type)',
+          url: ex.roofMeasurementsPdfUrl,
+          thumbKind: 'pdf',
+        })
+      }
+      return rows
     }
     if (ex.pdfUrl) {
       rows.push({
         key: 'pdf',
         label: `Angebot_${ref}.pdf`,
-        hint: 'Client offer PDF (same download as in Live Feed)',
+        hint: 'Client offer PDF (same as in the customer dashboard)',
         url: ex.pdfUrl,
         thumbKind: 'pdf',
       })
@@ -1378,26 +1948,8 @@ export default function AdminPage() {
       rows.push({
         key: 'roof_m',
         label: `Roof_measurements_${ref}.pdf`,
-        hint: 'Roof takeoff / measurements PDF',
+        hint: 'Measurements / takeoff PDF (same as for the customer when available)',
         url: ex.roofMeasurementsPdfUrl,
-        thumbKind: 'pdf',
-      })
-    }
-    if (ex.calculationMethodPdfUrl) {
-      rows.push({
-        key: 'calc_method',
-        label: `Calculation_method_${ref}.pdf`,
-        hint: 'Calculation method (English)',
-        url: ex.calculationMethodPdfUrl,
-        thumbKind: 'pdf',
-      })
-    }
-    if (ex.adminPdfUrl) {
-      rows.push({
-        key: 'admin_pdf',
-        label: `Admin_${ref}.pdf`,
-        hint: 'Internal admin PDF with raw data',
-        url: ex.adminPdfUrl,
         thumbKind: 'pdf',
       })
     }
@@ -2077,20 +2629,38 @@ export default function AdminPage() {
                           Uploaded files
                         </div>
                         <ul className="hide-scroll flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5">
-                          {projectUploadedFiles.map((f) => (
-                            <li key={f.id}>
-                              <button
-                                type="button"
-                                className="w-full rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left text-[11px] transition hover:border-[#FF9F0F]/35 hover:bg-black/35"
-                              >
-                                <div className="truncate font-medium text-sand">{f.name}</div>
-                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0 text-[10px] text-sand/50">
-                                  <span>{f.meta}</span>
-                                  <span className="font-mono text-sand/45">{f.at}</span>
-                                </div>
-                              </button>
+                          {!selectedOrgProject.isLiveRow || !isOfferUuid(selectedOrgProject.id) ? (
+                            <li className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[11px] text-sand/55">
+                              Uploaded files are available for live offers only.
                             </li>
-                          ))}
+                          ) : projectUploadedFiles.status === 'loading' ? (
+                            <li className="px-2 py-3 text-center text-[11px] text-sand/55">Loading…</li>
+                          ) : projectUploadedFiles.status === 'error' ? (
+                            <li className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-2 text-[11px] text-red-200/95">
+                              {projectUploadedFiles.message}
+                            </li>
+                          ) : projectUploadedFiles.status === 'ok' && projectUploadedFiles.items.length === 0 ? (
+                            <li className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-[11px] text-sand/55">
+                              No wizard uploads registered for this offer.
+                            </li>
+                          ) : projectUploadedFiles.status === 'ok' ? (
+                            projectUploadedFiles.items.map((f) => (
+                              <li key={f.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => window.open(f.url, '_blank', 'noopener,noreferrer')}
+                                  className="w-full rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-left text-[11px] transition hover:border-[#FF9F0F]/35 hover:bg-black/35"
+                                >
+                                  <div className="truncate font-medium text-sand">{f.filename}</div>
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0 text-[10px] text-sand/50">
+                                    <span>{formatBytesShort(f.size)}</span>
+                                    <span className="truncate text-sand/45">{f.kind}</span>
+                                    <span className="font-mono text-sand/45">{formatEnDateTime(f.created_at)}</span>
+                                  </div>
+                                </button>
+                              </li>
+                            ))
+                          ) : null}
                         </ul>
                       </div>
 
@@ -2165,7 +2735,7 @@ export default function AdminPage() {
                             !selectedOrgProject.isLiveRow ||
                             !isOfferUuid(selectedOrgProject.id) ||
                             projectEditorSnapshots.status === 'loading' ||
-                            (projectEditorSnapshots.status === 'ok' && projectEditorSnapshots.items.length === 0)
+                            (projectEditorSnapshots.status === 'ok' && adminEditorSnapshotPanelCount === 0)
                           }
                           onClick={() => setProjectEditorModalOpen(true)}
                           className="relative flex min-h-[120px] w-full flex-1 flex-col overflow-hidden rounded-xl border border-[#FF9F0F]/30 bg-black/45 shadow-[inset_0_1px_0_rgba(255,255,255,.04)] transition hover:border-[#FF9F0F]/50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2180,16 +2750,30 @@ export default function AdminPage() {
                             </div>
                           ) : adminProjectEditorPreview ? (
                             <>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={adminProjectEditorPreview.url}
-                                alt={adminProjectEditorPreview.filename}
-                                className="h-auto max-h-[min(280px,55vh)] w-full flex-1 object-contain object-center p-1 lg:max-h-40 lg:p-0.5"
-                              />
+                              <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-1">
+                                {adminProjectEditorPreview.kind === 'blueprint' ? (
+                                  <AdminBlueprintLayerStack
+                                    layers={adminProjectEditorPreview.group.layers}
+                                    layerKeys={ADMIN_BLUEPRINT_STACK_ORDER.filter(
+                                      (k) => Boolean(adminProjectEditorPreview.group.layers[k]),
+                                    )}
+                                    maxHeightClass="max-h-[min(280px,55vh)] lg:max-h-44"
+                                  />
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={adminProjectEditorPreview.item.url}
+                                    alt={adminProjectEditorPreview.item.filename}
+                                    className="h-auto max-h-[min(280px,55vh)] w-full flex-1 object-contain object-center p-1 lg:max-h-44 lg:p-0.5"
+                                  />
+                                )}
+                              </div>
                               <div className="border-t border-white/10 bg-black/55 px-2 py-1 text-center text-[9px] text-sand/75">
-                                {editorLabelEn(adminProjectEditorPreview.editor)}
-                                {projectEditorSnapshots.status === 'ok' && projectEditorSnapshots.items.length > 1
-                                  ? ` · +${projectEditorSnapshots.items.length - 1} more`
+                                {adminProjectEditorPreview.kind === 'blueprint'
+                                  ? editorLabelEn('detections_review')
+                                  : editorLabelEn('roof')}
+                                {projectEditorSnapshots.status === 'ok' && adminEditorSnapshotPanelCount > 1
+                                  ? ` · +${adminEditorSnapshotPanelCount - 1} more`
                                   : null}
                               </div>
                             </>
@@ -2989,7 +3573,7 @@ export default function AdminPage() {
               role="dialog"
               aria-modal="true"
               aria-label="Editor snapshots"
-              className="flex max-h-[min(640px,90vh)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#352A22]/96 shadow-2xl backdrop-blur-sm"
+              className="flex max-h-[min(96vh,1200px)] w-full max-w-[min(1600px,98vw)] flex-col overflow-hidden rounded-2xl border border-white/15 bg-[#352A22]/96 shadow-2xl backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
@@ -3008,40 +3592,89 @@ export default function AdminPage() {
                   ×
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-8">
+              <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-12">
                 {projectEditorSnapshots.status === 'ok' ? (
                   <>
-                    {(['detections_review', 'roof'] as const).map((editor) => {
-                      const items = projectEditorSnapshots.items.filter((i) => i.editor === editor)
-                      if (!items.length) return null
-                      return (
-                        <div key={editor} className="space-y-3">
-                          <div className="text-sm font-semibold text-[#FFD29A]">{editorLabelEn(editor)}</div>
-                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                            {items.map((img) => (
-                              <a
-                                key={img.id}
-                                href={img.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="group overflow-hidden rounded-lg border border-white/15 bg-black/25 transition hover:border-[#FF9F0F]/40"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={img.url}
-                                  alt={img.filename}
-                                  className="aspect-[4/3] w-full object-contain bg-black/20"
-                                />
-                                <div className="truncate border-t border-black/40 bg-black/50 px-2 py-1 text-[10px] text-sand/80">
-                                  {img.filename}
-                                  {img.plan_id ? ` · ${img.plan_id}` : ''}
-                                </div>
-                              </a>
-                            ))}
-                          </div>
+                    {projectEditorSnapshots.blueprint_groups.length ? (
+                      <div className="space-y-4">
+                        <div className="text-sm font-semibold text-[#FFD29A]">{editorLabelEn('detections_review')}</div>
+                        <div className="space-y-10">
+                          {projectEditorSnapshots.blueprint_groups.map((group, gi) => (
+                            <div
+                              key={`${group.plan_id ?? 'plan'}-${group.created_at}-${gi}`}
+                              className="rounded-xl border border-white/12 bg-black/30 px-3 py-4 sm:px-5 sm:py-5"
+                            >
+                              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-sand/60">
+                                <span className="font-mono text-[#FFD29A]/85">{group.plan_id ?? 'Plan'}</span>
+                                <span>{formatEnDateTime(group.created_at)}</span>
+                              </div>
+                              <AdminBlueprintSnapshotPanel
+                                group={group}
+                                panelResetKey={`${group.plan_id ?? 'plan'}-${group.created_at}-${gi}`}
+                                maxHeightClass="max-h-[min(86vh,960px)]"
+                              />
+                              <p className="mt-3 text-center text-[10px] text-sand/45">
+                                Bifează mai multe straturi simultan (ex. Camere + Uși); ordinea de desen: bază → camere →
+                                uși → demolări acoperiș → scări.
+                              </p>
+                            </div>
+                          ))}
                         </div>
-                      )
-                    })}
+                      </div>
+                    ) : null}
+                    {projectEditorSnapshots.blueprint_groups.length === 0 &&
+                    projectEditorSnapshots.roof_items.length > 0 ? (
+                      <div className="space-y-4">
+                        <div className="text-sm font-semibold text-[#FFD29A]">{editorLabelEn('roof')}</div>
+                        {projectEditorSnapshots.roof_items.length ? (
+                          <div className="rounded-xl border border-white/12 bg-black/30 px-3 py-4 sm:px-5 sm:py-5">
+                            <AdminRoofSnapshotsPanel
+                              items={projectEditorSnapshots.roof_items}
+                              maxHeightClass="max-h-[min(86vh,960px)]"
+                            />
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-4 text-center text-[11px] text-sand/55">
+                            Nu există încă imagini din editorul de acoperiș în Storage pentru această ofertă (apar
+                            după ce utilizatorul salvează în pasul roof review).
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                    {projectEditorSnapshots.blueprint_groups.length === 0 &&
+                    projectEditorSnapshots.roof_items.length === 0 &&
+                    projectEditorSnapshots.items.length > 0 ? (
+                      <div className="space-y-4">
+                        <div className="text-sm font-semibold text-[#FFD29A]">Editor files (legacy)</div>
+                        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                          {projectEditorSnapshots.items.map((img) => (
+                            <a
+                              key={img.id}
+                              href={img.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="group overflow-hidden rounded-xl border border-white/15 bg-black/25 transition hover:border-[#FF9F0F]/40"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={img.url}
+                                alt={img.filename}
+                                className="max-h-[min(80vh,880px)] w-full object-contain bg-black/20"
+                              />
+                              <div className="truncate border-t border-black/40 bg-black/50 px-2 py-1.5 text-[10px] text-sand/80">
+                                {editorLabelEn(img.editor)} · {img.filename}
+                                {img.plan_id ? ` · ${img.plan_id}` : ''}
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {projectEditorSnapshots.blueprint_groups.length === 0 &&
+                    projectEditorSnapshots.roof_items.length === 0 &&
+                    projectEditorSnapshots.items.length === 0 ? (
+                      <div className="py-10 text-center text-sm text-white/60">No snapshot data.</div>
+                    ) : null}
                   </>
                 ) : (
                   <div className="py-10 text-center text-sm text-white/60">No snapshot data.</div>

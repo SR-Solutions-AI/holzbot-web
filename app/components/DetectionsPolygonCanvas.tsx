@@ -36,16 +36,27 @@ export type RoofDemolitionPoly = {
   area_m2?: number
 }
 
+/** Zubau: Wandabbruch als Linie (zwei Punkte im Bild). */
+export type ZubauWallLine = {
+  a: Point
+  b: Point
+  price_key?: string
+}
+
 type PolygonCanvasProps = {
   imageUrl: string
   imageWidth: number
   imageHeight: number
   rooms: RoomPolygon[]
   doors: DoorRect[]
-  tab: 'rooms' | 'doors' | 'demolition' | 'stair_opening'
- /** Nur tab=demolition */
+  tab: 'rooms' | 'doors' | 'demolition' | 'stair_opening' | 'zubau_bestand' | 'zubau_walls'
+  /** Nur tab=demolition */
   demolitionPolys?: RoofDemolitionPoly[]
   onDemolitionPolysChange?: (polys: RoofDemolitionPoly[]) => void
+  zubauBestandPolys?: RoofDemolitionPoly[]
+  onZubauBestandPolysChange?: (polys: RoofDemolitionPoly[]) => void
+  zubauWallLines?: ZubauWallLine[]
+  onZubauWallLinesChange?: (lines: ZubauWallLine[]) => void
   /** Nur tab=stair_opening (Rechteck wie Tür/Fenster) */
   stairOpeningRects?: DoorRect[]
   onStairOpeningRectsChange?: (rects: DoorRect[]) => void
@@ -84,6 +95,8 @@ type PolygonCanvasProps = {
   layoutRevealKey?: number
   /** Aufstockung Phase 1: pe tab demolare/scări, desenează și celelalte straturi (Dach + Treppenöffnung / Aufstandsfläche) estompate. */
   blendAufstockungPhase1Overlays?: boolean
+  /** Zubau (etaj nou): pe Räume / Bestand / Wände — celelalte straturi Zubau rămân vizibile estompate, ca Phase 1 la Aufstockung. */
+  blendZubauSiblingOverlays?: boolean
   /** Etichete poligoane Aufstandsfläche: „Aufstockungs-Basis” în loc de „Rückbau”. */
   useAufstockungsBasisDemolitionLabels?: boolean
   /** Nu desena imaginea de plan (fundal transparent) — strat vectorial peste același blueprint ca în părinte. */
@@ -220,6 +233,10 @@ export function DetectionsPolygonCanvas({
   tab,
   demolitionPolys = [],
   onDemolitionPolysChange = () => {},
+  zubauBestandPolys = [],
+  onZubauBestandPolysChange = () => {},
+  zubauWallLines = [],
+  onZubauWallLinesChange = () => {},
   stairOpeningRects = [],
   onStairOpeningRectsChange = () => {},
   tool,
@@ -245,6 +262,7 @@ export function DetectionsPolygonCanvas({
   layoutActive = true,
   layoutRevealKey = 0,
   blendAufstockungPhase1Overlays = false,
+  blendZubauSiblingOverlays = false,
   useAufstockungsBasisDemolitionLabels = false,
   hideBasemap = false,
   roofOverlayRooms = [],
@@ -272,11 +290,20 @@ export function DetectionsPolygonCanvas({
   const doorsRef = useRef(doors)
   const roomsRef = useRef(rooms)
   const demolitionRef = useRef(demolitionPolys)
+  const zubauBestandRef = useRef(zubauBestandPolys)
+  const zubauWallsRef = useRef(zubauWallLines)
   const stairRectsRef = useRef(stairOpeningRects)
+  const [wallLineDraft, setWallLineDraft] = useState<Point[] | null>(null)
   doorsRef.current = doors
   roomsRef.current = rooms
   demolitionRef.current = demolitionPolys
+  zubauBestandRef.current = zubauBestandPolys
+  zubauWallsRef.current = zubauWallLines
   stairRectsRef.current = stairOpeningRects
+
+  useEffect(() => {
+    if (tab !== 'zubau_walls') setWallLineDraft(null)
+  }, [tab])
 
   const zoomModel = stackedView != null ? stackedView.zoom : userZoom
   const panModel = stackedView != null ? stackedView.pan : userPan
@@ -450,6 +477,58 @@ export function DetectionsPolygonCanvas({
     const useDimOthers = dimUnselectedRoomPolygons && selectedIndex !== null && rooms.length > 0
     const stairPreviewStyle = { fill: '#a855f7', stroke: '#7c3aed' }
     const rectsForDoorTab = tab === 'stair_opening' ? stairOpeningRects : doors
+
+    const drawRoomsDimZubauContext = () => {
+      rooms.forEach((room, ri) => {
+        const pts = room.points
+        if (pts.length < 2) return
+        ctx.fillStyle = roomColors[ri % roomColors.length]
+        ctx.globalAlpha = 0.1
+        ctx.beginPath()
+        ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
+        for (let k = 1; k < pts.length; k++) {
+          ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      })
+    }
+    const drawZubauBestandDim = () => {
+      zubauBestandPolys.forEach((d) => {
+        const pts = d.points
+        if (pts.length < 2) return
+        ctx.fillStyle = '#f59e0b'
+        ctx.globalAlpha = 0.12
+        ctx.beginPath()
+        ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
+        for (let k = 1; k < pts.length; k++) {
+          ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = 'rgba(245,158,11,0.55)'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      })
+    }
+    const drawZubauWallLinesDim = () => {
+      zubauWallLines.forEach((ln) => {
+        const [ax, ay] = ln.a
+        const [bx, by] = ln.b
+        ctx.strokeStyle = 'rgba(251,146,60,0.55)'
+        ctx.lineWidth = 2.25
+        ctx.beginPath()
+        ctx.moveTo(ox + ax * s, oy + ay * s)
+        ctx.lineTo(ox + bx * s, oy + by * s)
+        ctx.stroke()
+      })
+    }
+
     if (tab === 'rooms') {
       /** Bestand + Dach-Tab: Aufstandsfläche + Treppenöffnung als Kontext unter dem Dach-Plan (gleiche Optik wie Phase-1-Blend). */
       if (
@@ -484,6 +563,10 @@ export function DetectionsPolygonCanvas({
           ctx.strokeRect(ox + Math.min(x1, x2) * s, oy + Math.min(y1, y2) * s, Math.abs(x2 - x1) * s, Math.abs(y2 - y1) * s)
         })
         drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
+      }
+      if (blendZubauSiblingOverlays && (zubauBestandPolys.length > 0 || zubauWallLines.length > 0)) {
+        drawZubauBestandDim()
+        drawZubauWallLinesDim()
       }
       rooms.forEach((room, i) => {
         const pts = room.points
@@ -533,6 +616,88 @@ export function DetectionsPolygonCanvas({
           ctx.fill()
           ctx.stroke()
           ctx.fillStyle = '#fff'
+          ctx.fillText(label, ox + cx * s, oy + cy * s)
+        }
+        if (tool === 'edit' && selected && pts.length > 0) {
+          pts.forEach((p) => {
+            ctx.fillStyle = '#FF9F0F'
+            ctx.beginPath()
+            ctx.arc(ox + p[0] * s, oy + p[1] * s, HANDLE_R, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.strokeStyle = '#fff'
+            ctx.lineWidth = 1
+            ctx.stroke()
+          })
+        }
+      })
+      if (newPoints && newPoints.length > 0) {
+        ctx.strokeStyle = '#FF9F0F'
+        ctx.lineWidth = 2
+        ctx.setLineDash([6, 4])
+        ctx.beginPath()
+        ctx.moveTo(ox + newPoints[0][0] * s, oy + newPoints[0][1] * s)
+        for (let k = 1; k < newPoints.length; k++) {
+          ctx.lineTo(ox + newPoints[k][0] * s, oy + newPoints[k][1] * s)
+        }
+        if (newPoints.length >= 3) ctx.closePath()
+        ctx.stroke()
+        ctx.setLineDash([])
+        newPoints.forEach((p, vi) => {
+          ctx.fillStyle = vi === 0 ? '#22c55e' : '#FF9F0F'
+          ctx.beginPath()
+          ctx.arc(ox + p[0] * s, oy + p[1] * s, HANDLE_R, 0, Math.PI * 2)
+          ctx.fill()
+        })
+      }
+    } else if (tab === 'zubau_bestand') {
+      if (blendZubauSiblingOverlays) {
+        drawRoomsDimZubauContext()
+        drawZubauWallLinesDim()
+      }
+      zubauBestandPolys.forEach((d, i) => {
+        const pts = d.points
+        if (pts.length < 2) return
+        const selected = selectedIndex === i
+        ctx.fillStyle = '#f59e0b'
+        ctx.globalAlpha = selected ? 0.42 : 0.28
+        ctx.beginPath()
+        ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
+        for (let k = 1; k < pts.length; k++) {
+          ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = selected ? '#FF9F0F' : 'rgba(245,158,11,0.95)'
+        ctx.lineWidth = selected ? 3 : 2
+        ctx.stroke()
+        if (pts.length > 0) {
+          let cx = 0
+          let cy = 0
+          pts.forEach((p) => {
+            cx += p[0]
+            cy += p[1]
+          })
+          cx /= pts.length
+          cy /= pts.length
+          const label = `Bestand #${i + 1}`
+          ctx.font = 'bold 13px sans-serif'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          const textW = ctx.measureText(label).width
+          const pad = 6
+          const boxW = textW + pad * 2
+          const boxH = 20
+          const lx = ox + cx * s - boxW / 2
+          const ly = oy + cy * s - boxH / 2
+          ctx.fillStyle = 'rgba(0,0,0,0.82)'
+          ctx.strokeStyle = 'rgba(255,255,255,0.5)'
+          ctx.lineWidth = 1.5
+          ctx.beginPath()
+          ctx.rect(lx, ly, boxW, boxH)
+          ctx.fill()
+          ctx.stroke()
+          ctx.fillStyle = '#fde68a'
           ctx.fillText(label, ox + cx * s, oy + cy * s)
         }
         if (tool === 'edit' && selected && pts.length > 0) {
@@ -676,6 +841,50 @@ export function DetectionsPolygonCanvas({
           ctx.fill()
         })
       }
+    } else if (tab === 'zubau_walls') {
+      drawRoomsDimZubauContext()
+      if (blendZubauSiblingOverlays) {
+        drawZubauBestandDim()
+      }
+      zubauWallLines.forEach((ln, i) => {
+        const selected = selectedIndex === i
+        const [ax, ay] = ln.a
+        const [bx, by] = ln.b
+        ctx.strokeStyle = selected ? '#FF9F0F' : '#fb923c'
+        ctx.lineWidth = selected ? 4 : 3
+        ctx.beginPath()
+        ctx.moveTo(ox + ax * s, oy + ay * s)
+        ctx.lineTo(ox + bx * s, oy + by * s)
+        ctx.stroke()
+        if (tool === 'edit' && selected) {
+          for (const p of [ln.a, ln.b]) {
+            ctx.fillStyle = '#FF9F0F'
+            ctx.beginPath()
+            ctx.arc(ox + p[0] * s, oy + p[1] * s, HANDLE_R, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.strokeStyle = '#fff'
+            ctx.lineWidth = 1
+            ctx.stroke()
+          }
+        }
+      })
+      if (wallLineDraft && wallLineDraft.length === 1 && previewEndPoint) {
+        ctx.strokeStyle = '#FF9F0F'
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 4])
+        ctx.beginPath()
+        ctx.moveTo(ox + wallLineDraft[0][0] * s, oy + wallLineDraft[0][1] * s)
+        ctx.lineTo(ox + previewEndPoint[0] * s, oy + previewEndPoint[1] * s)
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
+      if (wallLineDraft && wallLineDraft.length === 1) {
+        const p0 = wallLineDraft[0]
+        ctx.fillStyle = '#22c55e'
+        ctx.beginPath()
+        ctx.arc(ox + p0[0] * s, oy + p0[1] * s, HANDLE_R, 0, Math.PI * 2)
+        ctx.fill()
+      }
     } else {
       if (blendAufstockungPhase1Overlays && tab === 'stair_opening') {
         rooms.forEach((room, ri) => {
@@ -817,6 +1026,9 @@ export function DetectionsPolygonCanvas({
     rooms,
     doors,
     demolitionPolys,
+    zubauBestandPolys,
+    zubauWallLines,
+    wallLineDraft,
     stairOpeningRects,
     selectedIndex,
     tool,
@@ -831,6 +1043,7 @@ export function DetectionsPolygonCanvas({
     showRoomPolygonsUnderDoors,
     highlightRoofSurfaceUnderlay,
     blendAufstockungPhase1Overlays,
+    blendZubauSiblingOverlays,
     useAufstockungsBasisDemolitionLabels,
     hideBasemap,
     roofOverlayRooms,
@@ -883,9 +1096,29 @@ export function DetectionsPolygonCanvas({
     if (tab === 'rooms') {
       const h = hitPolyVerticesAndEdges(rooms, rooms.length)
       if (h) return h
+    } else if (tab === 'zubau_bestand') {
+      const h = hitPolyVerticesAndEdges(zubauBestandPolys, zubauBestandPolys.length)
+      if (h) return h
     } else if (tab === 'demolition') {
       const h = hitPolyVerticesAndEdges(demolitionPolys, demolitionPolys.length)
       if (h) return h
+    } else if (tab === 'zubau_walls') {
+      if (tool === 'edit' && selectedIndex != null && selectedIndex >= 0 && selectedIndex < zubauWallLines.length) {
+        const ln = zubauWallLines[selectedIndex]
+        if (ln) {
+          if (dist(ln.a, [px, py]) <= hitR) return { kind: 'vertex', index: selectedIndex, vertexIndex: 0 }
+          if (dist(ln.b, [px, py]) <= hitR) return { kind: 'vertex', index: selectedIndex, vertexIndex: 1 }
+        }
+      }
+      for (let i = zubauWallLines.length - 1; i >= 0; i--) {
+        const ln = zubauWallLines[i]
+        if (!ln) continue
+        if (tool === 'edit') {
+          if (dist(ln.a, [px, py]) <= hitR) return { kind: 'vertex', index: i, vertexIndex: 0 }
+          if (dist(ln.b, [px, py]) <= hitR) return { kind: 'vertex', index: i, vertexIndex: 1 }
+        }
+        if (distToSegment(px, py, ln.a, ln.b) <= edgeR) return { kind: 'poly', index: i }
+      }
     } else {
       const rects = tab === 'stair_opening' ? stairOpeningRects : doors
       for (let i = rects.length - 1; i >= 0; i--) {
@@ -906,7 +1139,7 @@ export function DetectionsPolygonCanvas({
       }
     }
     return null
-  }, [effective, tab, rooms, doors, demolitionPolys, stairOpeningRects, tool, toImage, selectedIndex])
+  }, [effective, tab, rooms, doors, demolitionPolys, zubauBestandPolys, zubauWallLines, stairOpeningRects, tool, toImage, selectedIndex])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -921,12 +1154,28 @@ export function DetectionsPolygonCanvas({
 
     const placePt = tool === 'add' ? toImageForPlacement(cx, cy) : pt
 
-    if (tool === 'add' && (tab === 'rooms' || tab === 'demolition')) {
+    if (tool === 'add' && (tab === 'rooms' || tab === 'demolition' || tab === 'zubau_bestand')) {
       if (!placePt) return
       if (newPoints && newPoints.length >= 3 && dist(newPoints[0], placePt) * effective.scale <= CLOSE_POLYGON_HIT_PX) {
         onCloseNewPolygon()
       } else {
         onAddPoint(placePt[0], placePt[1])
+      }
+      return
+    }
+
+    if (tool === 'add' && tab === 'zubau_walls') {
+      if (!placePt) return
+      if (!wallLineDraft || wallLineDraft.length === 0) {
+        setWallLineDraft([placePt])
+        return
+      }
+      if (wallLineDraft.length === 1) {
+        onEditStart?.()
+        const pk = 'aufstockung_demolition_roof_basic_m2'
+        onZubauWallLinesChange([...zubauWallLines, { a: wallLineDraft[0], b: placePt, price_key: pk }])
+        setWallLineDraft(null)
+        setPreviewEndPoint(null)
       }
       return
     }
@@ -961,7 +1210,7 @@ export function DetectionsPolygonCanvas({
           if (edgeDragTimeoutRef.current) clearTimeout(edgeDragTimeoutRef.current)
           onEditStart?.()
           ;(e.target as Element).setPointerCapture(e.pointerId)
-          const polySource = tab === 'demolition' ? demolitionPolys : rooms
+          const polySource = tab === 'demolition' ? demolitionPolys : tab === 'zubau_bestand' ? zubauBestandPolys : rooms
           const pts = polySource[hit.index].points
           const i = hit.edgeIndex
           const j = (i + 1) % pts.length
@@ -977,7 +1226,7 @@ export function DetectionsPolygonCanvas({
       } else {
         onEditStart?.()
         ;(e.target as Element).setPointerCapture(e.pointerId)
-        const polySource = tab === 'demolition' ? demolitionPolys : rooms
+        const polySource = tab === 'demolition' ? demolitionPolys : tab === 'zubau_bestand' ? zubauBestandPolys : rooms
         const pts = polySource[hit.index].points
         const i = hit.edgeIndex
         const j = (i + 1) % pts.length
@@ -1035,6 +1284,13 @@ export function DetectionsPolygonCanvas({
             startImage: [pt[0], pt[1]],
             initPoints: demolitionPolys[hit.index].points.map((p) => [...p]),
           })
+        else if (tab === 'zubau_bestand' && hit.index < zubauBestandPolys.length)
+          setDragging({
+            kind: 'poly',
+            polyIndex: hit.index,
+            startImage: [pt[0], pt[1]],
+            initPoints: zubauBestandPolys[hit.index].points.map((p) => [...p]),
+          })
         else if (tab === 'doors' && hit.index < doors.length)
           setDragging({ kind: 'poly', polyIndex: hit.index, startImage: [pt[0], pt[1]], initBbox: [...doors[hit.index].bbox] })
         else if (tab === 'stair_opening' && hit.index < stairOpeningRects.length)
@@ -1053,7 +1309,7 @@ export function DetectionsPolygonCanvas({
     } else {
       onSelect(null)
     }
-  }, [effective, tool, tab, newPoints, userPan, stackedView, hitTest, toImage, toImageForPlacement, onSelect, onAddPoint, onCloseNewPolygon, onRemoveSelected, onInsertVertex, onRoomTypeLabelClick, onEditStart, rooms, doors, demolitionPolys, stairOpeningRects])
+  }, [effective, tool, tab, newPoints, userPan, stackedView, hitTest, toImage, toImageForPlacement, onSelect, onAddPoint, onCloseNewPolygon, onRemoveSelected, onInsertVertex, onRoomTypeLabelClick, onEditStart, onZubauWallLinesChange, rooms, doors, demolitionPolys, zubauBestandPolys, zubauWallLines, stairOpeningRects, wallLineDraft])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -1098,7 +1354,10 @@ export function DetectionsPolygonCanvas({
       return
     }
 
-    if (tool === 'add' && (tab === 'doors' || tab === 'stair_opening') && newPoints?.length === 1) {
+    if (tool === 'add' && tab === 'zubau_walls' && wallLineDraft?.length === 1) {
+      const preview = toImageForPlacement(cx, cy)
+      setPreviewEndPoint(preview)
+    } else if (tool === 'add' && (tab === 'doors' || tab === 'stair_opening') && newPoints?.length === 1) {
       const preview = toImageForPlacement(cx, cy)
       setPreviewEndPoint(preview)
     } else {
@@ -1140,6 +1399,25 @@ export function DetectionsPolygonCanvas({
             return { ...d, points: pts }
           })
           onDemolitionPolysChange(next)
+        } else if (tab === 'zubau_bestand' && polyIndex < zubauBestandRef.current.length) {
+          const next = zubauBestandRef.current.map((d, i) => {
+            if (i !== polyIndex) return d
+            const pts = d.points.map((p, vi) =>
+              vi === vertexIndex
+                ? [Math.max(0, Math.min(imageWidth, pt[0])), Math.max(0, Math.min(imageHeight, pt[1]))] as Point
+                : p
+            )
+            return { ...d, points: pts }
+          })
+          onZubauBestandPolysChange(next)
+        } else if (tab === 'zubau_walls' && polyIndex < zubauWallsRef.current.length && (vertexIndex === 0 || vertexIndex === 1)) {
+          const clamped: Point = [Math.max(0, Math.min(imageWidth, pt[0])), Math.max(0, Math.min(imageHeight, pt[1]))]
+          const next = zubauWallsRef.current.map((l, i) => {
+            if (i !== polyIndex) return l
+            if (vertexIndex === 0) return { ...l, a: clamped }
+            return { ...l, b: clamped }
+          })
+          onZubauWallLinesChange(next)
         } else if ((tab === 'doors' || tab === 'stair_opening') && polyIndex < (tab === 'stair_opening' ? stairRectsRef.current.length : doorsRef.current.length)) {
           const list = tab === 'stair_opening' ? stairRectsRef.current : doorsRef.current
           const d = list[polyIndex]
@@ -1167,13 +1445,13 @@ export function DetectionsPolygonCanvas({
           else onDoorsChange(next)
         }
       } else if (dragging.kind === 'edge') {
-        if (tab !== 'rooms' && tab !== 'demolition') return
+        if (tab !== 'rooms' && tab !== 'demolition' && tab !== 'zubau_bestand') return
         const { polyIndex, edgeIndex, initV0, initV1, startImage } = dragging
         const dx = pt[0] - startImage[0]
         const dy = pt[1] - startImage[1]
         const newV0: Point = [Math.max(0, Math.min(imageWidth, initV0[0] + dx)), Math.max(0, Math.min(imageHeight, initV0[1] + dy))]
         const newV1: Point = [Math.max(0, Math.min(imageWidth, initV1[0] + dx)), Math.max(0, Math.min(imageHeight, initV1[1] + dy))]
-        const src = tab === 'demolition' ? demolitionRef.current : roomsRef.current
+        const src = tab === 'demolition' ? demolitionRef.current : tab === 'zubau_bestand' ? zubauBestandRef.current : roomsRef.current
         const roomOrDemo = src[polyIndex]
         if (!roomOrDemo?.points) return
         const pts = roomOrDemo.points
@@ -1185,6 +1463,8 @@ export function DetectionsPolygonCanvas({
         })
         if (tab === 'demolition') {
           onDemolitionPolysChange(demolitionRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
+        } else if (tab === 'zubau_bestand') {
+          onZubauBestandPolysChange(zubauBestandRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
         } else {
           onRoomsChange(roomsRef.current.map((r, i) => (i !== polyIndex ? r : { ...r, points: nextPts })))
         }
@@ -1199,6 +1479,9 @@ export function DetectionsPolygonCanvas({
         } else if (tab === 'demolition' && initPoints && polyIndex < demolitionRef.current.length) {
           const nextPts = initPoints.map((p) => [Math.max(0, Math.min(imageWidth, p[0] + dx)), Math.max(0, Math.min(imageHeight, p[1] + dy))] as Point)
           onDemolitionPolysChange(demolitionRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
+        } else if (tab === 'zubau_bestand' && initPoints && polyIndex < zubauBestandRef.current.length) {
+          const nextPts = initPoints.map((p) => [Math.max(0, Math.min(imageWidth, p[0] + dx)), Math.max(0, Math.min(imageHeight, p[1] + dy))] as Point)
+          onZubauBestandPolysChange(zubauBestandRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
         } else if (tab === 'doors' && initBbox && polyIndex < doorsRef.current.length) {
           const [a, b, c, d] = initBbox
           const nx1 = Math.max(0, Math.min(imageWidth, a + dx))
@@ -1236,7 +1519,7 @@ export function DetectionsPolygonCanvas({
         }
       }
     }
-  }, [panning, panStart, dragging, effective, tool, tab, newPoints, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange])
+  }, [panning, panStart, dragging, effective, tool, tab, newPoints, wallLineDraft, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onZubauBestandPolysChange, onZubauWallLinesChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     const pendingTap = doorTapPendingRef.current
