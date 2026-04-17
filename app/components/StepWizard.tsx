@@ -2760,19 +2760,12 @@ export default function StepWizard() {
                   </div>
 
                   {/* 3) Aufstockung — row 1, col 5-6 */}
-                  <div
-                    className={`sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] ${
-                      !isDevAccount ? 'opacity-[0.88]' : ''
-                    }`}
-                  >
+                  <div className="sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/aufstockung.png" alt="Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Aufstockung</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Aufstockungen</div>
-                    {!isDevAccount ? (
-                      <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
-                    ) : null}
                     <div className="flex-1" />
                     <button
                       type="button"
@@ -2788,37 +2781,20 @@ export default function StepWizard() {
                         setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
                         setSelectedPackage('aufstockung')
                       }}
-                      className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
-                        isDevAccount
-                          ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
-                          : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
-                      } disabled:opacity-50 disabled:pointer-events-none`}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
-                      {isDevAccount ? (
-                        <>
-                          Kalkulation starten
-                          <ChevronRight size={18} className="opacity-85" />
-                        </>
-                      ) : (
-                        'In Entwicklung'
-                      )}
+                      Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
 
                   {/* 4) Zubau — row 2, col 2-3 (centered) */}
-                  <div
-                    className={`sm:col-start-2 sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)] ${
-                      !isDevAccount ? 'opacity-[0.88]' : ''
-                    }`}
-                  >
+                  <div className="sm:col-start-2 sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)]">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/zubau.png" alt="Zubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Zubau</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Zubauten</div>
-                    {!isDevAccount ? (
-                      <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
-                    ) : null}
                     <div className="flex-1" />
                     <button
                       type="button"
@@ -2834,20 +2810,10 @@ export default function StepWizard() {
                         setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
                         setSelectedPackage('zubau')
                       }}
-                      className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
-                        isDevAccount
-                          ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
-                          : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
-                      } disabled:opacity-50 disabled:pointer-events-none`}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
-                      {isDevAccount ? (
-                        <>
-                          Kalkulation starten
-                          <ChevronRight size={18} className="opacity-85" />
-                        </>
-                      ) : (
-                        'In Entwicklung'
-                      )}
+                      Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
 
@@ -2925,11 +2891,7 @@ export default function StepWizard() {
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
-                    <div
-                      className={`bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] ${
-                        !isDevAccount ? 'opacity-[0.88]' : ''
-                      }`}
-                    >
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2937,9 +2899,6 @@ export default function StepWizard() {
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
-                      {!isDevAccount ? (
-                        <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
-                      ) : null}
                       <button
                         type="button"
                         disabled={tokensBlocked}
@@ -2955,28 +2914,14 @@ export default function StepWizard() {
                           setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
                           setSelectedPackage('aufstockung')
                         }}
-                        className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
-                          isDevAccount
-                            ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
-                            : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
-                        } disabled:opacity-50 disabled:pointer-events-none`}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
-                        {isDevAccount ? (
-                          <>
-                            Kalkulation starten
-                            <ChevronRight size={18} className="opacity-85" />
-                          </>
-                        ) : (
-                          'In Entwicklung'
-                        )}
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
 
-                    <div
-                      className={`bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] ${
-                        !isDevAccount ? 'opacity-[0.88]' : ''
-                      }`}
-                    >
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/zubau.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2984,9 +2929,6 @@ export default function StepWizard() {
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
-                      {!isDevAccount ? (
-                        <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
-                      ) : null}
                       <button
                         type="button"
                         disabled={tokensBlocked}
@@ -3002,20 +2944,10 @@ export default function StepWizard() {
                           setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
                           setSelectedPackage('zubau')
                         }}
-                        className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
-                          isDevAccount
-                            ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
-                            : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
-                        } disabled:opacity-50 disabled:pointer-events-none`}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
-                        {isDevAccount ? (
-                          <>
-                            Kalkulation starten
-                            <ChevronRight size={18} className="opacity-85" />
-                          </>
-                        ) : (
-                          'In Entwicklung'
-                        )}
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
 
