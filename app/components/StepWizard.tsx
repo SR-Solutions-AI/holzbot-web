@@ -28,7 +28,10 @@ type Drafts = Record<string, Record<string, any>>
 type Errors = Record<string, string | undefined>
 
 // Timpul minim (în ms) pentru care afișăm animația de loading/progres
-const MIN_ANIMATION_TIME = 5000;
+const MIN_ANIMATION_TIME = 5000
+
+/** Nur dieses Konto: Aufstockung- und Zubau-Wizard (Vollangebot + Mengenübersicht). Alle anderen sehen „In Entwicklung“. */
+const HOLZBAU_AUFSTOCKUNG_ZUBAU_DEV_EMAIL = 'holzbau@holzbot.com'
 
 /** Preview-uri modale „Angebot bearbeiten” (`public/images/hzbform.png`, `hzbeditor.png`). */
 const EDIT_OFFER_DLG_IMG_FORM = '/images/hzbform.png'
@@ -642,6 +645,8 @@ export default function StepWizard() {
   const [wipNotice, setWipNotice] = useState<string | null>(null)
   /** Email cont curent — pentru gating Aufstockung/Zubau. */
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null)
+  /** Sincron cu `/me`: ofertă Aufstockung/Zubau din listă/URL doar pentru Holzbau-Dev-Mail. */
+  const aufstockungZubauDevAccessRef = useRef(false)
 
   /** „Angebot bearbeiten“: ohne Upload-Schritt (Variablen / Variablen+Erkennungen). */
   const [editOfferSkipUpload, setEditOfferSkipUpload] = useState(false)
@@ -1221,6 +1226,7 @@ export default function StepWizard() {
         const me = await apiFetch('/me')
         const email = typeof me?.user?.email === 'string' ? me.user.email.toLowerCase().trim() : null
         setCurrentUserEmail(email)
+        aufstockungZubauDevAccessRef.current = email === HOLZBAU_AUFSTOCKUNG_ZUBAU_DEV_EMAIL
         const t = me?.tokens as { unlimited?: boolean; limit?: number | null; used?: number } | undefined
         if (!t) {
           setTokensBlocked(false)
@@ -1231,6 +1237,7 @@ export default function StepWizard() {
         setTokensBlocked(blocked)
       } catch {
         setTokensBlocked(false)
+        aufstockungZubauDevAccessRef.current = false
       }
     }
     void load()
@@ -1517,10 +1524,24 @@ export default function StepWizard() {
       setProcessStatus('')
       setSaveStatus('idle')
       setIdx(0)
+      setOfferId(null)
+      offerIdRef.current = null
 
-      setOfferId(id)
-      offerIdRef.current = id
       try {
+        const me = await apiFetch('/me')
+        const em = typeof me?.user?.email === 'string' ? me.user.email.toLowerCase().trim() : null
+        setCurrentUserEmail(em)
+        const aufstockungZubauAllowed = em === HOLZBAU_AUFSTOCKUNG_ZUBAU_DEV_EMAIL
+        aufstockungZubauDevAccessRef.current = aufstockungZubauAllowed
+        const t = me?.tokens as { unlimited?: boolean; limit?: number | null; used?: number } | undefined
+        if (!t) {
+          setTokensBlocked(false)
+        } else {
+          const blocked =
+            !t.unlimited && t.limit != null && typeof t.used === 'number' && t.used >= t.limit
+          setTokensBlocked(blocked)
+        }
+
         const offerRow = (await apiFetch(`/offers/${id}`)) as {
           meta?: { roof_only_offer?: boolean; wizard_package?: string | null; measurements_only_offer?: boolean }
           offer?: {
@@ -1539,6 +1560,22 @@ export default function StepWizard() {
           ...(offerMeta as OfferFlowMeta | null),
           offer_type_slug: slug ?? undefined,
         })
+        if (
+          (resolvedWizardPackage === 'aufstockung' || resolvedWizardPackage === 'zubau') &&
+          !aufstockungZubauAllowed
+        ) {
+          setWipNotice(resolvedWizardPackage === 'zubau' ? 'zubau' : 'aufstockung')
+          if (typeof window !== 'undefined') {
+            const url = new URL(window.location.href)
+            url.searchParams.delete('offerId')
+            url.searchParams.delete('runId')
+            window.history.replaceState(null, '', url.toString())
+          }
+          return
+        }
+
+        setOfferId(id)
+        offerIdRef.current = id
         const ro = resolvedWizardPackage === 'dachstuhl'
         roofOnlyOfferRef.current = ro
         setActiveRoofOnlyOffer(ro)
@@ -1548,9 +1585,9 @@ export default function StepWizard() {
             ? 'aufstockung'
             : resolvedWizardPackage === 'zubau'
               ? 'zubau'
-            : ro
-              ? 'dachstuhl'
-              : 'neubau',
+              : ro
+                ? 'dachstuhl'
+                : 'neubau',
         )
         setMeasurementsOnlyFlow(offerMeta?.measurements_only_offer === true)
         setCurrentOfferMeasurementsOnly(offerMeta?.measurements_only_offer === true)
@@ -2485,8 +2522,8 @@ export default function StepWizard() {
   }
 
   // 3. Main Wizard UI — direct Paket auswählen; după Haus-Angebot starten → wizard
-  /** Contul holzbau@holzbot.com are acces complet. */
-  const isDevAccount = currentUserEmail === 'holzbau@holzbot.com'
+  /** Aufstockung / Zubau (Vollangebot + Mengen): nur für Holzbau-Dev-Mail. */
+  const isDevAccount = currentUserEmail === HOLZBAU_AUFSTOCKUNG_ZUBAU_DEV_EMAIL
   const showPackagePicker = !computing && !pdfUrl && !offerId && selectedPackage === null
   const showForm = (selectedPackage === 'neubau' || selectedPackage === 'dachstuhl' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || offerId) && !computing && !pdfUrl
   const showProgressHeader = !computing && !pdfUrl && !showPackagePicker && showForm
@@ -2723,52 +2760,94 @@ export default function StepWizard() {
                   </div>
 
                   {/* 3) Aufstockung — row 1, col 5-6 */}
-                  <div className="sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  <div
+                    className={`sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] ${
+                      !isDevAccount ? 'opacity-[0.88]' : ''
+                    }`}
+                  >
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/aufstockung.png" alt="Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Aufstockung</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Aufstockungen</div>
+                    {!isDevAccount ? (
+                      <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
+                    ) : null}
                     <div className="flex-1" />
                     <button
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
                         if (tokensBlocked) return
+                        if (!isDevAccount) {
+                          setWipNotice('aufstockung')
+                          return
+                        }
                         setMeasurementsOnlyFlow(false)
                         roofOnlyOfferRef.current = false
                         setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
                         setSelectedPackage('aufstockung')
                       }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
+                        isDevAccount
+                          ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
+                          : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
+                      } disabled:opacity-50 disabled:pointer-events-none`}
                     >
-                      Kalkulation starten
-                      <ChevronRight size={18} className="opacity-85" />
+                      {isDevAccount ? (
+                        <>
+                          Kalkulation starten
+                          <ChevronRight size={18} className="opacity-85" />
+                        </>
+                      ) : (
+                        'In Entwicklung'
+                      )}
                     </button>
                   </div>
 
                   {/* 4) Zubau — row 2, col 2-3 (centered) */}
-                  <div className="sm:col-start-2 sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)]">
+                  <div
+                    className={`sm:col-start-2 sm:col-span-2 bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/25 shadow-[0_0_18px_rgba(255,159,15,0.16)] ${
+                      !isDevAccount ? 'opacity-[0.88]' : ''
+                    }`}
+                  >
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/zubau.png" alt="Zubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Zubau</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Zubauten</div>
+                    {!isDevAccount ? (
+                      <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
+                    ) : null}
                     <div className="flex-1" />
                     <button
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
                         if (tokensBlocked) return
+                        if (!isDevAccount) {
+                          setWipNotice('zubau')
+                          return
+                        }
                         setMeasurementsOnlyFlow(false)
                         roofOnlyOfferRef.current = false
                         setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
                         setSelectedPackage('zubau')
                       }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
+                        isDevAccount
+                          ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
+                          : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
+                      } disabled:opacity-50 disabled:pointer-events-none`}
                     >
-                      Kalkulation starten
-                      <ChevronRight size={18} className="opacity-85" />
+                      {isDevAccount ? (
+                        <>
+                          Kalkulation starten
+                          <ChevronRight size={18} className="opacity-85" />
+                        </>
+                      ) : (
+                        'In Entwicklung'
+                      )}
                     </button>
                   </div>
 
@@ -2846,7 +2925,11 @@ export default function StepWizard() {
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                    <div
+                      className={`bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] ${
+                        !isDevAccount ? 'opacity-[0.88]' : ''
+                      }`}
+                    >
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2854,25 +2937,46 @@ export default function StepWizard() {
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
+                      {!isDevAccount ? (
+                        <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
+                      ) : null}
                       <button
                         type="button"
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
+                          if (!isDevAccount) {
+                            setWipNotice('aufstockung')
+                            return
+                          }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
                           setForm(prev => ({ ...prev, wizardPackage: 'aufstockung' }))
                           setSelectedPackage('aufstockung')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
+                          isDevAccount
+                            ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
+                            : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
+                        } disabled:opacity-50 disabled:pointer-events-none`}
                       >
-                        Kalkulation starten
-                        <ChevronRight size={18} className="opacity-85" />
+                        {isDevAccount ? (
+                          <>
+                            Kalkulation starten
+                            <ChevronRight size={18} className="opacity-85" />
+                          </>
+                        ) : (
+                          'In Entwicklung'
+                        )}
                       </button>
                     </div>
 
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                    <div
+                      className={`bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] ${
+                        !isDevAccount ? 'opacity-[0.88]' : ''
+                      }`}
+                    >
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/zubau.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2880,21 +2984,38 @@ export default function StepWizard() {
                       <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
+                      {!isDevAccount ? (
+                        <p className="text-[11px] text-center text-sand/55 mt-2 px-1">In Entwicklung — bald verfügbar</p>
+                      ) : null}
                       <button
                         type="button"
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
+                          if (!isDevAccount) {
+                            setWipNotice('zubau')
+                            return
+                          }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
                           setForm(prev => ({ ...prev, wizardPackage: 'zubau' }))
                           setSelectedPackage('zubau')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className={`mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out ${
+                          isDevAccount
+                            ? 'bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95'
+                            : 'bg-white/10 border border-white/20 text-sand/90 hover:bg-white/15'
+                        } disabled:opacity-50 disabled:pointer-events-none`}
                       >
-                        Kalkulation starten
-                        <ChevronRight size={18} className="opacity-85" />
+                        {isDevAccount ? (
+                          <>
+                            Kalkulation starten
+                            <ChevronRight size={18} className="opacity-85" />
+                          </>
+                        ) : (
+                          'In Entwicklung'
+                        )}
                       </button>
                     </div>
 
