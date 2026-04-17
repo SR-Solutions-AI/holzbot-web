@@ -2844,11 +2844,11 @@ export default function StepWizard() {
 
               <div
                 className={`flex flex-col flex-1 min-h-0 transition-all duration-300 ease-out ${
-                  packagePickerMengenSub
-                    ? 'opacity-100 scale-100 relative'
-                    : 'opacity-0 scale-[0.97] pointer-events-none absolute inset-0 translate-y-3'
+                  packagePickerMengenSub && wipNotice === null
+                    ? 'opacity-100 scale-100 relative z-0'
+                    : 'opacity-0 scale-[0.97] pointer-events-none absolute inset-0 translate-y-3 z-0'
                 }`}
-                aria-hidden={!packagePickerMengenSub}
+                aria-hidden={!(packagePickerMengenSub && wipNotice === null)}
               >
                 <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
                   <div
@@ -2982,12 +2982,12 @@ export default function StepWizard() {
               </div>
             </div>
 
-            {/* WIP screen — Aufstockung / Zubau */}
+            {/* WIP screen — Aufstockung / Zubau (vollflächig inkl. Mengen-Subauswahl) */}
             <div
-              className={`absolute inset-0 flex flex-col items-center justify-center transition-all duration-300 ease-out ${
+              className={`absolute inset-0 z-30 flex flex-col items-center justify-center px-4 transition-all duration-300 ease-out ${
                 wipNotice !== null
-                  ? 'opacity-100 scale-100 pointer-events-auto'
-                  : 'opacity-0 scale-[0.97] pointer-events-none translate-y-2'
+                  ? 'opacity-100 scale-100 pointer-events-auto bg-black/90 backdrop-blur-sm'
+                  : 'opacity-0 scale-[0.97] pointer-events-none translate-y-2 bg-transparent'
               }`}
               aria-hidden={wipNotice === null}
             >
