@@ -21,7 +21,6 @@ import {
   Undo2,
   GripVertical,
   Loader2,
-  ChevronLeft,
 } from 'lucide-react'
 import {
   DetectionsPolygonCanvas,
@@ -39,7 +38,6 @@ import {
 import { apiFetch } from '../lib/supabaseClient'
 import { displayFloorTabLabelDe } from '@/lib/displayFloorTabLabelDe'
 import { type DisplayCurrency } from '@/lib/displayCurrency'
-import { SelectSun } from './SunSelect'
 /** Unire vârfuri consecutive foarte apropiate (în px imagine) – la randarea poligoanelor prima dată. */
 const MERGE_VERTEX_DIST_PX = 14
 
@@ -146,21 +144,6 @@ function mergeEditorConstraints(raw: Partial<EditorConstraints> | undefined | nu
     allowWintergartenRoomType: raw?.allowWintergartenRoomType !== false,
     allowBalkonRoomType: raw?.allowBalkonRoomType !== false,
     allowRoofWindows: raw?.allowRoofWindows !== false,
-  }
-}
-
-const STATIK_MODE_VALUES = ['none', 'stahlbetonverbunddecke', 'sonderkonstruktion'] as const
-
-function statikModeSelectLabel(v: string): string {
-  switch (v) {
-    case 'none':
-      return 'Keine Ertüchtigung notwendig'
-    case 'stahlbetonverbunddecke':
-      return 'Stahlbetonverbunddecke'
-    case 'sonderkonstruktion':
-      return 'Sonderkonstruktion'
-    default:
-      return v
   }
 }
 
@@ -795,7 +778,7 @@ export function DetectionsReviewEditor({
       }
       if (auf && fk === 'existing') {
         if (isZubauFlow) {
-          if (raw === 'rooms' || raw === 'doors' || raw === 'roof' || raw === 'roof_windows') return raw
+          /* Bestand: nur Grundriss (Räume-Layer leer), keine Fenster-/Dach-Tabs. */
           return 'rooms'
         }
         if (raw === 'phase1_demolition' || raw === 'phase1_stair' || raw === 'roof' || raw === 'roof_windows') return raw
@@ -1529,6 +1512,8 @@ export function DetectionsReviewEditor({
   /** Bestand etaj în Aufstockung: Dach-Rückbau + Treppenöffnung; Zubau: doar vizualizare. */
   const existingFloorEditing = isAufstockungFlow && currentFloorKind === 'existing'
   const existingFloorReadOnly = existingFloorEditing && isZubauFlow
+  /** Zubau Bestand: nur Grundriss, keine Fenster-/Dach-Tabs. */
+  const zubauBestandBlueprintOnly = isZubauFlow && existingFloorEditing
 
   const handleRoofRectanglesOverlaySync = useCallback(
     (
@@ -2326,75 +2311,42 @@ export function DetectionsReviewEditor({
       )}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col self-start pt-0.5 w-full">
-          {existingFloorEditing && (
+          {existingFloorEditing && !isZubauFlow && (
             <div
               className="ml-auto flex w-full max-w-56 flex-col gap-2"
               title="Nur auf Bestandsgeschossen sichtbar."
             >
-              <div
-                className="flex flex-col gap-1"
-                title={`Stahlbetonverbunddecke: Preis ${displayCurrency}/m² in der Preisdatenbank (aufstockung_statik_stahlbetonverbunddecke_m2)`}
-              >
+              <div className="flex flex-col gap-1" title={`Statikkosten direkt in ${displayCurrency} eingeben`}>
                 <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
-                  Statik / Verstärkung
+                  Statikkosten
                 </span>
-                {currentPlanStatikChoice.mode !== 'sonderkonstruktion' ? (
-                  <SelectSun
-                    variant="editor"
-                    editorTheme="holz"
-                    editorSize="sm"
-                    value={currentPlanStatikChoice.mode}
-                    onChange={(v) => {
-                      if (v === 'stahlbetonverbunddecke') {
-                        setPlanStatikChoice(planIndexClamped, { mode: 'stahlbetonverbunddecke' })
-                      } else if (v === 'sonderkonstruktion') {
-                        setPlanStatikChoice(planIndexClamped, {
-                          mode: 'sonderkonstruktion',
-                          customPiecePrice: currentPlanStatikChoice.customPiecePrice,
-                        })
-                      } else {
-                        setPlanStatikChoice(planIndexClamped, { mode: 'none' })
-                      }
-                    }}
-                    options={[...STATIK_MODE_VALUES]}
-                    placeholder="Typ wählen"
-                    displayFor={statikModeSelectLabel}
-                  />
-                ) : (
-                  <div className="flex w-full items-stretch gap-1">
-                    <button
-                      type="button"
-                      title="Ertüchtigungsart wählen"
-                      onClick={() => setPlanStatikChoice(planIndexClamped, { mode: 'none' })}
-                      className="shrink-0 self-stretch rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2 text-[#E8A56E] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] transition-colors [-webkit-tap-highlight-color:transparent] hover:border-[#FF9F0F]/28 hover:bg-[rgba(72,44,26,0.85)] hover:text-[#F5C896] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF9F0F]/40 focus-visible:ring-offset-0"
-                    >
-                      <ChevronLeft size={15} strokeWidth={2} className="block" aria-hidden />
-                    </button>
-                    <input
-                      ref={statikCustomPriceRef}
-                      type="text"
-                      inputMode="decimal"
-                      placeholder={`Preis in ${displayCurrency}`}
-                      autoComplete="off"
-                      className="editor-statik-eur-holz min-w-0 flex-1 rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
-                      value={statikPriceDraft}
-                      onChange={(e) => {
-                        const t = e.target.value
-                        setStatikPriceDraft(t)
-                        const normalized = t.replace(/\s/g, '').replace(',', '.')
-                        if (normalized === '' || normalized === '-') {
-                          setPlanStatikChoice(planIndexClamped, { mode: 'sonderkonstruktion', customPiecePrice: undefined })
-                          return
-                        }
-                        const n = Number(normalized)
-                        if (Number.isFinite(n)) {
-                          setPlanStatikChoice(planIndexClamped, { mode: 'sonderkonstruktion', customPiecePrice: n })
-                        }
-                      }}
-                    />
-                  </div>
-                )}
+                <input
+                  ref={statikCustomPriceRef}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={`Gesamt in ${displayCurrency}`}
+                  autoComplete="off"
+                  className="editor-statik-eur-holz min-w-0 w-full rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
+                  value={statikPriceDraft}
+                  onChange={(e) => {
+                    const t = e.target.value
+                    setStatikPriceDraft(t)
+                    const normalized = t.replace(/\s/g, '').replace(',', '.')
+                    if (normalized === '' || normalized === '-') {
+                      setPlanStatikChoice(planIndexClamped, { mode: 'none' })
+                      return
+                    }
+                    const n = Number(normalized)
+                    if (Number.isFinite(n)) {
+                      setPlanStatikChoice(planIndexClamped, { mode: 'sonderkonstruktion', customPiecePrice: n })
+                    }
+                  }}
+                />
               </div>
+            </div>
+          )}
+          {(existingFloorEditing || (isZubauFlow && currentFloorKind === 'new')) && (
+            <div className="ml-auto flex w-full max-w-56 flex-col gap-2" title="Abbruch-Pauschale für diesen Plan">
               <div className="flex flex-col gap-1">
                 <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
                   Abbruchkosten (Dach und evtl. Wände)
@@ -2543,7 +2495,7 @@ export function DetectionsReviewEditor({
                   </div>
                 </div>
                 )}
-                {plan && imageUrlForPlan && (!existingFloorEditing || isZubauFlow) && (
+                {plan && imageUrlForPlan && (!existingFloorEditing || isZubauFlow) && !zubauBestandBlueprintOnly && (
                 <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
                     {isZubauFlow && String(effectiveFloorKinds[i] ?? 'new').toLowerCase() === 'new' ? (

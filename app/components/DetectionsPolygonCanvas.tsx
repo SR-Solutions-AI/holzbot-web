@@ -520,8 +520,9 @@ export function DetectionsPolygonCanvas({
       zubauWallLines.forEach((ln) => {
         const [ax, ay] = ln.a
         const [bx, by] = ln.b
-        ctx.strokeStyle = 'rgba(251,146,60,0.55)'
-        ctx.lineWidth = 2.25
+        ctx.strokeStyle = 'rgba(220,38,38,0.92)'
+        ctx.lineWidth = 4.5
+        ctx.lineCap = 'round'
         ctx.beginPath()
         ctx.moveTo(ox + ax * s, oy + ay * s)
         ctx.lineTo(ox + bx * s, oy + by * s)
@@ -652,7 +653,7 @@ export function DetectionsPolygonCanvas({
     } else if (tab === 'zubau_bestand') {
       if (blendZubauSiblingOverlays) {
         drawRoomsDimZubauContext()
-        drawZubauWallLinesDim()
+        /* Kein Wandabbruch-Overlay im Bestand-Tab – nur auf „Wandabbruch“. */
       }
       zubauBestandPolys.forEach((d, i) => {
         const pts = d.points
@@ -850,8 +851,9 @@ export function DetectionsPolygonCanvas({
         const selected = selectedIndex === i
         const [ax, ay] = ln.a
         const [bx, by] = ln.b
-        ctx.strokeStyle = selected ? '#FF9F0F' : '#fb923c'
-        ctx.lineWidth = selected ? 4 : 3
+        ctx.strokeStyle = selected ? '#ef4444' : '#dc2626'
+        ctx.lineWidth = selected ? 5.5 : 4.5
+        ctx.lineCap = 'round'
         ctx.beginPath()
         ctx.moveTo(ox + ax * s, oy + ay * s)
         ctx.lineTo(ox + bx * s, oy + by * s)
@@ -869,8 +871,9 @@ export function DetectionsPolygonCanvas({
         }
       })
       if (wallLineDraft && wallLineDraft.length === 1 && previewEndPoint) {
-        ctx.strokeStyle = '#FF9F0F'
-        ctx.lineWidth = 2
+        ctx.strokeStyle = 'rgba(220,38,38,0.85)'
+        ctx.lineWidth = 4
+        ctx.lineCap = 'round'
         ctx.setLineDash([5, 4])
         ctx.beginPath()
         ctx.moveTo(ox + wallLineDraft[0][0] * s, oy + wallLineDraft[0][1] * s)

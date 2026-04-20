@@ -62,37 +62,20 @@
           "options": [
             "Rohbau/Tragwerk",
             "Tragwerk + Fenster",
-            "Schlüsselfertiges Haus"
+            "Schlüsselfertig Haus"
           ],
           "tag": "offer_scope"
         },
         {
           "type": "select",
           "name": "accesSantier",
-          "label": "Baustellenzufahrt",
+          "label": "Baustelleneinrichtung",
           "options": [
-            "Leicht (LKW 40t)",
-            "Mittel",
-            "Schwierig"
+            "Standard",
+            "Erschwert",
+            "Sondertransport / Kranlogistik"
           ],
-          "tag": "site_access"
-        },
-        {
-          "type": "select",
-          "name": "teren",
-          "label": "Gelände: eben oder Hang?",
-          "options": [
-            "Eben",
-            "Leichte Hanglage",
-            "Starke Hanglage"
-          ],
-          "tag": "terrain"
-        },
-        {
-          "type": "bool",
-          "name": "utilitati",
-          "label": "Strom-/Wasseranschluss vorhanden",
-          "tag": "utilities_connection"
+          "tag": "baustelleneinrichtung"
         }
       ],
       "priceSections": [
@@ -1514,65 +1497,40 @@
         "title": "Allgemeine Projektinformationen",
         "subsections": [
           {
-            "title": "Baustellenzufahrt",
-            "subtitle": "Preise je nach Feld „Baustellenzufahrt“",
-            "fieldTag": "site_access",
+            "title": "Baustelleneinrichtung",
+            "subtitle": "Einrichtung, Transport, Baustellen-Nebenkosten. Bitte Situationen + Prozentsätze eintragen.",
+            "fieldTag": "baustelleneinrichtung",
             "variables": [
               {
-                "key": "acces_santier_leicht_factor",
-                "label": "Leicht (LKW 40t) (Faktor)",
-                "unit": "",
-                "value": 1
+                "key": "baustelleneinrichtung_standard_percent",
+                "label": "Standard-Baustelle (%)",
+                "unit": "%",
+                "value": 3
               },
               {
-                "key": "acces_santier_mittel_factor",
-                "label": "Mittel (Faktor)",
-                "unit": "",
-                "value": 1.1
+                "key": "baustelleneinrichtung_erschwert_percent",
+                "label": "Erschwerte Logistik (%)",
+                "unit": "%",
+                "value": 4
               },
               {
-                "key": "prefab_modifier_santier",
-                "label": "Schwierig (Faktor)",
-                "unit": "",
-                "value": 1.25
+                "key": "baustelleneinrichtung_sondertransport_percent",
+                "label": "Sondertransport / Kranlogistik (%)",
+                "unit": "%",
+                "value": 3
               }
             ]
           },
           {
-            "title": "Gelände",
-            "subtitle": "Preise je nach Feld „Gelände: eben oder Hang?“",
-            "fieldTag": "terrain",
+            "title": "Profitmarge",
+            "subtitle": "Bitte geben Sie Ihre gewünschte Profitmarge ein. Diese wird auf alle Preise und Positionen im Projekt verteilt.",
+            "fieldTag": "profit_margin",
             "variables": [
               {
-                "key": "teren_eben_factor",
-                "label": "Eben (Faktor)",
-                "unit": "",
-                "value": 1
-              },
-              {
-                "key": "teren_leichte_hanglage_factor",
-                "label": "Leichte Hanglage (Faktor)",
-                "unit": "",
-                "value": 1.05
-              },
-              {
-                "key": "teren_starke_hanglage_factor",
-                "label": "Starke Hanglage (Faktor)",
-                "unit": "",
-                "value": 1.15
-              }
-            ]
-          },
-          {
-            "title": "Strom-/Wasseranschluss",
-            "subtitle": "Feld „Strom-/Wasseranschluss vorhanden“",
-            "fieldTag": "strom_wasseranschluss",
-            "variables": [
-              {
-                "key": "utilitati_anschluss_price",
-                "label": "Anschlusskosten Pauschal (€)",
-                "unit": "€",
-                "value": 2500
+                "key": "profit_margin_percent",
+                "label": "Profitmarge (%)",
+                "unit": "%",
+                "value": 9
               }
             ]
           }
@@ -1678,49 +1636,6 @@
                 "label": "Treppentyp Sonder (€/Stück)",
                 "unit": "€/Stück",
                 "value": 6500
-              }
-            ]
-          },
-          {
-            "title": "Aufstockung: Rückbau / Statik",
-            "subtitle": "Zusatzkosten für Aufstockung Phase 1",
-            "fieldTag": "aufstockung_phase1",
-            "variables": [
-              {
-                "key": "aufstockung_demolition_roof_basic_m2",
-                "label": "Dachrückbau Standard (€/m²)",
-                "unit": "€/m²",
-                "value": 85
-              },
-              {
-                "key": "aufstockung_demolition_roof_complex_m2",
-                "label": "Dachrückbau Komplex (€/m²)",
-                "unit": "€/m²",
-                "value": 120
-              },
-              {
-                "key": "aufstockung_demolition_roof_special_m2",
-                "label": "Dachrückbau Sonder (€/m²)",
-                "unit": "€/m²",
-                "value": 160
-              },
-              {
-                "key": "aufstockung_stair_opening_piece",
-                "label": "Treppenöffnung (€/Stück)",
-                "unit": "€/Stück",
-                "value": 2800
-              },
-              {
-                "key": "aufstockung_stair_opening_m2",
-                "label": "Treppenöffnung Referenz (€/m², nicht für Kalkulation)",
-                "unit": "€/m²",
-                "value": 320
-              },
-              {
-                "key": "aufstockung_statik_stahlbetonverbunddecke_m2",
-                "label": "Statik Stahlbetonverbunddecke (€/m²)",
-                "unit": "€/m²",
-                "value": 145
               }
             ]
           },
@@ -2622,8 +2537,8 @@
       },
       {
         "stepKey": "projektdaten",
-        "title": "Dachstuhl Projekte",
-        "subtitle": "Parameter für Dachstuhl-Angebote (roof-only)",
+        "title": "Dachstuhl, Dämmung und Dachdeckung",
+        "subtitle": "Bitte Stück- und Quadratmeterpreise für die Positionen eingeben",
         "subsections": [
           {
             "title": "Dämmung",

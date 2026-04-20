@@ -68,7 +68,7 @@ export const ADMIN_OPTION_DE: Record<string, string> = {
   // Offer level
   'Structură': 'Rohbau/Tragwerk',
   'Structură + ferestre': 'Tragwerk + Fenster',
-  'Casă completă': 'Schlüsselfertiges Haus',
+  'Casă completă': 'Schlüsselfertig Haus',
 
   // Heating / energy
   'Gaz': 'Gas',

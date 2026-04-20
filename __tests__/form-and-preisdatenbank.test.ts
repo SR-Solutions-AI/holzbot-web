@@ -63,6 +63,19 @@ describe('Preisdatenbank – acoperire completă', () => {
     })
   })
 
+  describe('Structură unificată fără tab Aufstockung', () => {
+    it('nu mai există secțiunea Aufstockung / Zubau în Preisdatenbank', () => {
+      const section = priceSections.find((s) => s.title === 'Aufstockung / Zubau')
+      expect(section).toBeUndefined()
+    })
+
+    it('secțiunea Dachstuhl dedicată rămâne prezentă în proiectdaten', () => {
+      const section = priceSections.find((s) => s.title === 'Dachstuhl, Dämmung und Dachdeckung')
+      expect(section).toBeDefined()
+      expect(section?.subsections.length).toBeGreaterThan(0)
+    })
+  })
+
   describe('Fiecare subsecțiune Preisdatenbank', () => {
     priceSections.forEach((section) => {
       section.subsections.forEach((sub) => {
@@ -134,7 +147,7 @@ describe('Preisdatenbank – acoperire completă', () => {
       'sewage_base_price',
       'ventilation_base_price',
       'unit_price_placa',
-      'acces_santier_leicht_factor',
+      'baustelleneinrichtung_standard_percent',
       'unit_price_keller_nutzkeller',
       'window_2_fach_price',
       'interior_outer_tencuiala',

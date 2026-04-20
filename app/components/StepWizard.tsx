@@ -286,7 +286,7 @@ const DE = {
 
     'Structură': 'Rohbau/Tragwerk',
     'Structură + ferestre': 'Tragwerk + Fenster',
-    'Casă completă': 'Schlüsselfertiges Haus',
+    'Casă completă': 'Schlüsselfertig Haus',
     'Tencuială': 'Putz',
     'Fibrociment': 'Faserzement',
     'Mix': 'Mischung',
@@ -377,7 +377,7 @@ const STEP_FIELD_PREFIXES: Record<string, string[]> = {
 const STEP_FIELD_NAMES: Record<string, string[]> = {
   projektdaten: ['projektumfang', 'nutzungDachraum', 'deckenInnenausbau'],
   wintergaertenBalkone: ['wintergartenTyp', 'balkonTyp'],
-  structuraCladirii: ['tipFundatieBeci', 'inaltimeEtaje', 'listaEtaje', 'pilons', 'hasWintergarden', 'hasBalkone', 'treppeTyp', 'floorsNumber'],
+  structuraCladirii: ['tipFundatieBeci', 'inaltimeEtaje', 'listaEtaje', 'etajTipErdgeschoss', 'pilons', 'hasWintergarden', 'hasBalkone', 'treppeTyp', 'floorsNumber'],
 }
 
 function extractStepData(stepKey: string, source: Record<string, any>, fields: Field[] = []): Record<string, any> {
@@ -787,7 +787,8 @@ export default function StepWizard() {
       nivelRaw.includes('completă') ||
       nivelRaw.includes('completa') ||
       nivelRaw.includes('schlüsselfertig') ||
-      nivelRaw.includes('schlüsselfertiges haus')
+      nivelRaw.includes('schlüsselfertiges haus') ||
+      nivelRaw.includes('schlüsselfertig haus')
     const isOnlyStructure =
       !hasOpeningsInScope &&
       !isFullHouse &&
@@ -4272,9 +4273,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     [listaEtaje],
   )
   useEffect(() => {
-    if (!isAufstockungFlow) return
+    if (!isAufstockungFlow || isZubauFlow) return
     setForm((prev: Record<string, any>) => (prev.pilons ? { ...prev, pilons: false } : prev))
-  }, [isAufstockungFlow, setForm])
+  }, [isAufstockungFlow, isZubauFlow, setForm])
   useEffect(() => {
     if (!isAufstockungFlow) return
     const normalized = normalizeAufstockungFloorKinds(aufstockungFloorKinds)
@@ -4429,12 +4430,26 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     lastRoofListaIdx >= 0 &&
     (lastEtaj === 'pod' || lastEtaj.startsWith('mansarda')) &&
     isBestandAtListaIdx(lastRoofListaIdx)
+  /** `newext` sits to the right of the existing slice; avoid clipping it inside the rounded frame. */
+  const showNewextBesideExistingSlice = useMemo(
+    () =>
+      isZubauFlow &&
+      intermediarListaIndices.some(
+        (listaIdx) =>
+          listaIdx >= 0 &&
+          String(aufstockungFloorKinds[listaIdx] ?? '').toLowerCase() === 'new',
+      ),
+    [isZubauFlow, intermediarListaIndices, aufstockungFloorKinds],
+  )
 
   return (
     <div className="w-full flex flex-col items-start">
       <div className="flex flex-col gap-4 !pb-0 w-full max-w-full">
         <div className="flex gap-10 items-center w-full">
-        <div className="relative flex-shrink-0 border-2 border-white/20 rounded-xl overflow-hidden bg-panel/50" style={{ width: `${containerWidth}px`, height: `${frameHeight}px` }}>
+        <div
+          className={`relative flex-shrink-0 border-2 border-white/20 rounded-xl bg-panel/50 ${showNewextBesideExistingSlice ? 'overflow-visible' : 'overflow-hidden'}`}
+          style={{ width: `${containerWidth}px`, height: `${frameHeight}px` }}
+        >
           <div className="relative w-full h-full" style={{ paddingTop: `${paddingTopValue}px` }}>
             {/* Ground și etaje la spate; piloni, fundație, beci desenate în față (z-index mai mare) */}
             <img src="/builder/ground.png" alt="Ground" className="absolute" style={{ width: `${getScaledWidth('ground')}px`, height: 'auto', bottom: `${groundBottom}px`, left: '50%', transform: 'translateX(-50%)', zIndex: 1, ...illuBestandStyle(isAufstockungFlow) }} onLoad={(e) => { const img = e.currentTarget; if (img?.naturalWidth > 0 && img.naturalHeight > 0) updateOriginalSize('ground', img.naturalWidth, img.naturalHeight) }} />
@@ -4464,6 +4479,30 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                 />
               )
             })}
+            {isZubauFlow &&
+              upImages.map((_, i) => {
+                const listaIdx = intermediarListaIndices[i] ?? -1
+                if (listaIdx < 0) return null
+                if (String(aufstockungFloorKinds[listaIdx] ?? '').toLowerCase() !== 'new') return null
+                const wUp = getScaledWidth(`up-${i}`)
+                const nw = Math.min(Math.max(Math.round(wUp * 0.42), 32), 96)
+                return (
+                  <img
+                    key={`zubau-newext-illu-${i}`}
+                    src="/builder/newext.png"
+                    alt=""
+                    className="absolute pointer-events-none select-none"
+                    style={{
+                      left: `calc(50% + ${wUp / 2 + 4}px)`,
+                      bottom: `${upBottoms[i] ?? 0}px`,
+                      width: `${nw}px`,
+                      height: 'auto',
+                      zIndex: 48 + i,
+                      filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.5))',
+                    }}
+                  />
+                )
+              })}
             {hasPod && roofBottom >= 0 && (
               <img
                 src="/builder/roof.png"
@@ -4567,7 +4606,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
         </label>
 
-        {!isAufstockungFlow ? (
+        {(!isAufstockungFlow || isZubauFlow) ? (
           <label className="flex items-center gap-2 mt-1" data-field="pilons">
             <input
               type="checkbox"
@@ -4583,6 +4622,24 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
         <div className="space-y-2 pt-2 border-t border-[#e3c7ab22]">
           {errors.listaEtaje && <span className="text-xs text-orange-400">{errors.listaEtaje}</span>}
           {errors.aufstockungFloorKinds && <span className="text-xs text-orange-400">{errors.aufstockungFloorKinds}</span>}
+          {isZubauFlow ? (
+            <label className="flex flex-col gap-1 p-2 bg-panel/40 rounded-lg border border-white/10">
+              <span className="wiz-label text-sun/90 text-xs">Erdgeschoss-Typ</span>
+              <SelectSun
+                value={String(form.etajTipErdgeschoss ?? 'intermediar')}
+                onChange={(v) => setForm(prev => ({ ...prev, etajTipErdgeschoss: v }))}
+                options={['intermediar', 'pod', 'mansarda_ohne', 'mansarda_mit']}
+                displayFor={(opt: string) => {
+                  if (opt === 'intermediar') return 'Obergeschoss (Wohnfläche) – unterhalb des ersten eingetragenen Geschosses'
+                  if (opt === 'pod') return 'Dachboden (Keine Wohnfläche)'
+                  if (opt === 'mansarda_ohne') return 'Dachgeschoss ohne Kniestock (Wohnfläche)'
+                  if (opt === 'mansarda_mit') return 'Dachgeschoss mit Kniestock (Wohnfläche)'
+                  return opt
+                }}
+                placeholder="Wählen Sie eine Option"
+              />
+            </label>
+          ) : null}
           {listaEtaje.length === 0 && <p className="text-sand/60 text-sm">Keine Elemente hinzugefügt</p>}
           {listaEtaje.map((etaj: string, idx: number) => (
             <div key={idx} className="flex flex-col gap-2 p-2 bg-panel/50 rounded-lg border border-white/10">
@@ -4811,6 +4868,7 @@ function DynamicFields({
   const fmt = (s: string) => adaptCurrencyCopy(s, displayCurrency)
   const wp = String(wizardPackage ?? '').toLowerCase()
   const isAufstockungWizard = wp === 'aufstockung' || wp === 'zubau'
+  const hideGarageForAufstockungOnly = wp === 'aufstockung'
 
   let currentFields = fields;
   if (stepKey === 'upload') {
@@ -4834,7 +4892,7 @@ function DynamicFields({
         if (stepKey === 'ferestreUsi' && f.name === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) {
           return null
         }
-        if (stepKey === 'ferestreUsi' && isAufstockungWizard && (f.name === 'garagentorGewuenscht' || f.name === 'garageDoorType')) {
+        if (stepKey === 'ferestreUsi' && hideGarageForAufstockungOnly && (f.name === 'garagentorGewuenscht' || f.name === 'garageDoorType')) {
           return null
         }
         if (f.type === 'upload') {

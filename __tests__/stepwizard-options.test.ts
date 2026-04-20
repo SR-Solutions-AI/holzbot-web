@@ -20,7 +20,7 @@ describe('mergeSelectOptions', () => {
     expect(result).toEqual(['2-fach verglast', '3-fach verglast', 'Passiv'])
   })
 
-  it('filters hidden options but still preserves visible custom additions', () => {
+  it('filters hidden options from Preisdatenbank source', () => {
     const result = mergeSelectOptions({
       tag: 'window_quality',
       schemaOptions: ['2-fach verglast', '3-fach verglast'],
@@ -37,6 +37,86 @@ describe('mergeSelectOptions', () => {
       },
     })
 
-    expect(result).toEqual(['3-fach verglast', 'Passiv', 'Ultra'])
+    expect(result).toEqual(['3-fach verglast', 'Passiv'])
+  })
+
+  it('uses schema and custom options as fallback when no Preisdatenbank options exist', () => {
+    const result = mergeSelectOptions({
+      tag: 'window_quality',
+      schemaOptions: ['2-fach verglast', '3-fach verglast'],
+      preisdatenbankOptions: [],
+      customOptions: [{ label: 'Ultra', value: 'Ultra' }],
+      hiddenKeys: new Set<string>(),
+      optionValueToPriceKey: {
+        window_quality: {
+          '2-fach verglast': 'window_2_fach_price',
+          '3-fach verglast': 'window_3_fach_price',
+          Ultra: 'window_ultra_price',
+        },
+      },
+    })
+
+    expect(result).toEqual(['2-fach verglast', '3-fach verglast', 'Ultra'])
+  })
+
+  it('hides deleted custom option via hiddenKeys mapping', () => {
+    const result = mergeSelectOptions({
+      tag: 'sliding_door_type',
+      schemaOptions: [],
+      preisdatenbankOptions: ['Standard', 'Panorama', 'Skyline'],
+      customOptions: [],
+      hiddenKeys: new Set<string>(['opt_sliding_door_type_skyline']),
+      optionValueToPriceKey: {
+        sliding_door_type: {
+          Standard: 'sliding_door_standard_price',
+          Panorama: 'sliding_door_panorama_price',
+          Skyline: 'opt_sliding_door_type_skyline',
+        },
+      },
+    })
+
+    expect(result).toEqual(['Standard', 'Panorama'])
+  })
+
+  it('deduplicates repeated labels from mixed sources', () => {
+    const result = mergeSelectOptions({
+      tag: 'stairs_type',
+      schemaOptions: ['Holz', 'Beton'],
+      preisdatenbankOptions: [],
+      customOptions: [
+        { label: 'Holz', value: 'Holz' },
+        { label: 'Stahl', value: 'Stahl' },
+      ],
+      hiddenKeys: new Set<string>(),
+      optionValueToPriceKey: {
+        stairs_type: {
+          Holz: 'stairs_holz_price',
+          Beton: 'stairs_beton_price',
+          Stahl: 'opt_stairs_type_stahl',
+        },
+      },
+    })
+
+    expect(result).toEqual(['Holz', 'Beton', 'Stahl'])
+  })
+
+  it('filters legacy Baustelleneinrichtung literals even if they are present in source', () => {
+    const result = mergeSelectOptions({
+      tag: 'baustelleneinrichtung',
+      schemaOptions: [],
+      preisdatenbankOptions: ['Standard', 'Mittel', 'Sondertransport'],
+      customOptions: [{ label: 'Leicht (LKW 40t)', value: 'Leicht (LKW 40t)' }],
+      hiddenKeys: new Set<string>(),
+      optionValueToPriceKey: {
+        baustelleneinrichtung: {
+          Standard: 'baustelleneinrichtung_standard_percent',
+          Sondertransport: 'baustelleneinrichtung_sondertransport_percent',
+          Mittel: 'legacy_old_key',
+          'Leicht (LKW 40t)': 'legacy_old_key_2',
+        },
+      },
+    })
+
+    expect(result).toEqual(['Standard', 'Sondertransport'])
   })
 })
