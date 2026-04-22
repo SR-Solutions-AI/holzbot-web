@@ -16,6 +16,7 @@ export const WIZARD_OFFER_SLUGS = [
   'neubau',
   'aufstockung',
   'zubau',
+  'zubau_aufstockung',
   'full_house',
 ] as const
 
@@ -26,6 +27,7 @@ const SLUG_TO_LABEL: Record<string, string> = {
   neubau: 'Neubau Angebot',
   aufstockung: 'Aufstockung Angebot',
   zubau: 'Zubau Angebot',
+  zubau_aufstockung: 'Zubau / Aufstockung Angebot',
   full_house: 'Neubau Angebot',
 }
 
@@ -73,6 +75,7 @@ export function OfferHistoryFilterForm({
   const orderedWizardTypes = [
     offerTypeOptions.find((o) => o.slug === 'mengenermittlung' || o.slug === 'mengen'),
     offerTypeOptions.find((o) => o.slug === 'dachstuhl'),
+    offerTypeOptions.find((o) => o.slug === 'zubau_aufstockung'),
     offerTypeOptions.find((o) => o.slug === 'aufstockung'),
     offerTypeOptions.find((o) => o.slug === 'zubau'),
     offerTypeOptions.find((o) => o.slug === 'neubau' || o.slug === 'full_house'),

@@ -65,7 +65,9 @@ export default function Home() {
       const runId = data?.runId ?? null
       const isComputing = data?.isComputing === true
       const flow =
-        data?.flow === 'dachstuhl' || data?.flow === 'neubau' || data?.flow === 'aufstockung' ? data.flow : undefined
+        data?.flow === 'dachstuhl' || data?.flow === 'neubau' || data?.flow === 'aufstockung' || data?.flow === 'zubau' || data?.flow === 'zubau_aufstockung'
+          ? data.flow
+          : undefined
       const timer = window.setTimeout(() => {
         if (isComputing && runId) {
           window.dispatchEvent(new CustomEvent('offer:compute-started', { detail: { offerId, runId, ...(flow ? { flow } : {}) } }))

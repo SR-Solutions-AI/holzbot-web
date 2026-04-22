@@ -22,12 +22,12 @@ describe('Preisdatenbank – acoperire completă', () => {
       expect(kaminabzug!.variables.some((v) => v.id === 'horn_price_per_floor')).toBe(true)
     })
 
-    it('în Energieeffizienz, Kamin / Ofen este a doua subsecțiune după Kaminabzug (tipuri semineu)', () => {
+    it('în Energieeffizienz, Kamin / Ofen urmează după Kaminabzug (tipuri semineu)', () => {
       const section = priceSections.find((s) => s.title === 'Energieeffizienz & Heizung')
       const kaminabzugIdx = section!.subsections.findIndex((sub) => sub.title === 'Kaminabzug')
       const kaminIdx = section!.subsections.findIndex((sub) => sub.title === 'Kamin / Ofen')
       expect(kaminabzugIdx).toBeGreaterThanOrEqual(0)
-      expect(kaminIdx).toBe(kaminabzugIdx + 1)
+      expect(kaminIdx).toBeGreaterThan(kaminabzugIdx)
       const kamin = section!.subsections[kaminIdx]
       expect(kamin?.variables.some((v) => v.id === 'tip_semineu_kein_price')).toBe(true)
       expect(kamin?.variables.some((v) => v.id === 'tip_semineu_holzofen_price')).toBe(true)
@@ -44,13 +44,12 @@ describe('Preisdatenbank – acoperire completă', () => {
     const expectedSectionTitles = [
       'Allgemeine Projektinformationen',
       'Gebäudestruktur',
-      'Wintergärten & Balkone',
-      'Dämmung & Dachdeckung',
       'Fenster & Türen',
       'Wandaufbau',
       'Materialien & Ausbaustufe',
       'Geschossdecken und Bodenaufbauten',
       'Energieeffizienz & Heizung',
+      'Dachstuhl, Dämmung und Dachdeckung',
     ]
 
     expectedSectionTitles.forEach((title) => {
@@ -145,18 +144,16 @@ describe('Preisdatenbank – acoperire completă', () => {
       'tip_semineu_holzofen_price',
       'electricity_base_price',
       'sewage_base_price',
-      'ventilation_base_price',
       'unit_price_placa',
       'baustelleneinrichtung_standard_percent',
       'unit_price_keller_nutzkeller',
       'window_2_fach_price',
       'interior_outer_tencuiala',
-      'sliding_door_standard_price',
       'door_interior_standard',
       'garage_door_sektional_standard_stueck',
       'wandaufbau_aussen_clt_35',
-      'nivel_energetic_standard_price',
       'bodenaufbau_holz_standard_price',
+      'roofonly_daemmung_zwischensparren_price',
     ]
 
     it('toate cheile motor sunt în secțiunile construite', () => {
@@ -172,33 +169,12 @@ describe('Preisdatenbank – acoperire completă', () => {
     })
   })
 
-  describe('Schiebetür', () => {
-    it('formularul întreabă tipul de Schiebetür', () => {
-      const step = holzbauSchema.steps.find((s) => s.key === 'ferestreUsi')
-      const field = step?.fields.find((f) => 'name' in f && f.name === 'slidingDoorType')
-      expect(field).toBeDefined()
-      expect(field && 'options' in field && Array.isArray(field.options)).toBe(true)
-      const selectField = field as { tag?: string; options: string[] }
-      expect(selectField.tag).toBe('sliding_door_type')
-      expect(selectField.options).toEqual([
-        'Standard',
-        'Hebeschiebetür',
-        'Panorama',
-        'Aluminium Premium',
-      ])
-    })
-
-    it('Preisdatenbank conține cardul Schiebetüren', () => {
+  describe('Glasflächen', () => {
+    it('Preisdatenbank: Glasflächen (Fenster) există sub Fenster & Türen', () => {
       const section = priceSections.find((s) => s.title === 'Fenster & Türen')
-      const card = section?.subsections.find((sub) => sub.title === 'Schiebetüren')
+      const card = section?.subsections.find((sub) => sub.title === 'Glasflächen')
       expect(card).toBeDefined()
-      expect(card?.fieldTag).toBe('sliding_door_type')
-      expect(card?.variables.map((v) => v.id)).toEqual([
-        'sliding_door_standard_price',
-        'sliding_door_hebeschiebetuer_price',
-        'sliding_door_panorama_price',
-        'sliding_door_aluminium_premium_price',
-      ])
+      expect(card?.fieldTag).toBe('window_quality')
     })
   })
 

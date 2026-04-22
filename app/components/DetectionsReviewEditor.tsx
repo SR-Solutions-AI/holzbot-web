@@ -35,9 +35,20 @@ import {
   type RoofReviewEditorHandle,
   type RoofSurfaceTab,
 } from './RoofReviewEditor'
+import { SelectSun } from './SunSelect'
 import { apiFetch } from '../lib/supabaseClient'
 import { displayFloorTabLabelDe } from '@/lib/displayFloorTabLabelDe'
+import {
+  computeFloorFormKeyFromPlanIndex,
+  constructionPlanIndicesForPerFloorFormData,
+  normalizeFloorKindDraftRaw,
+  normalizeFloorKindForAufstockung,
+  normalizeFloorKindRaw,
+  padFloorKindsDraftRawToN,
+} from '@/lib/floorFormPlanKeys'
 import { type DisplayCurrency } from '@/lib/displayCurrency'
+import holzbauFormStepsJson from '../../data/form-schema/holzbau-form-steps.json'
+import { buildPriceSectionsFromFormStepsJson } from '../../lib/buildFormFromJson'
 /** Unire vârfuri consecutive foarte apropiate (în px imagine) – la randarea poligoanelor prima dată. */
 const MERGE_VERTEX_DIST_PX = 14
 
@@ -141,8 +152,9 @@ function mergeEditorConstraints(raw: Partial<EditorConstraints> | undefined | nu
   return {
     allowInsulatedRooms: raw?.allowInsulatedRooms !== false,
     allowGarageDoor: raw?.allowGarageDoor !== false,
-    allowWintergartenRoomType: raw?.allowWintergartenRoomType !== false,
-    allowBalkonRoomType: raw?.allowBalkonRoomType !== false,
+    // Wintergarten/Balkon must stay available in editor even after removing old form checkboxes.
+    allowWintergartenRoomType: true,
+    allowBalkonRoomType: true,
     allowRoofWindows: raw?.allowRoofWindows !== false,
   }
 }
@@ -342,14 +354,6 @@ function isValidFloorPlanPerm(perm: unknown, n: number): perm is number[] {
   return true
 }
 
-function normalizeFloorKindForAufstockung(k: unknown): 'new' | 'existing' {
-  return String(k ?? '').toLowerCase() === 'new' ? 'new' : 'existing'
-}
-
-function padFloorKindsToN(kinds: Array<string | 'new' | 'existing' | undefined>, n: number): ('new' | 'existing')[] {
-  return Array.from({ length: n }, (_, i) => normalizeFloorKindForAufstockung(kinds[i]))
-}
-
 function isFixedExistingFloorLabel(labelRaw: unknown): boolean {
   const label = String(labelRaw ?? '').toLowerCase()
   return (
@@ -357,10 +361,7 @@ function isFixedExistingFloorLabel(labelRaw: unknown): boolean {
     label.includes('kellergeschoss') ||
     label.includes('untergeschoss') ||
     label.includes('basement') ||
-    label.includes('grundriss kg') ||
-    label.includes('erdgeschoss') ||
-    label.includes('ground floor') ||
-    label.includes('grundriss eg')
+    label.includes('grundriss kg')
   )
 }
 const isTooManyRequestsError = (err: unknown) => {
@@ -546,8 +547,8 @@ export function DetectionsReviewEditor({
   /** Permutation: index from bottom (0 = lowest floor) → raster/plan index. PDF & tabs use this order (top tab = lowest floor). */
   const [floorPlanOrder, setFloorPlanOrder] = useState<number[]>([])
   const [floorOrderDraft, setFloorOrderDraft] = useState<number[]>([])
-  /** În modul reordonare (Aufstockung): Bestand / Zubau per planIdx, ca în formularul Gebäudestruktur. */
-  const [floorKindsDraft, setFloorKindsDraft] = useState<('new' | 'existing')[]>([])
+  /** În modul reordonare (Aufstockung): Bestand / Zubau / Aufstockung per planIdx, ca în formularul Gebäudestruktur. */
+  const [floorKindsDraft, setFloorKindsDraft] = useState<Array<'existing' | 'zubau' | 'aufstockung'>>([])
   const [reorderKindsError, setReorderKindsError] = useState<string | null>(null)
   const [reorderFloorsMode, setReorderFloorsMode] = useState(false)
   const [dragFromDisplayIdx, setDragFromDisplayIdx] = useState<number | null>(null)
@@ -578,38 +579,17 @@ export function DetectionsReviewEditor({
   const [roofLiveOverlayByPlan, setRoofLiveOverlayByPlan] = useState<Record<number, RoomPolygon[]>>({})
   /** Zoom/pan partajat între canvas-ul de fază 1 și RoofReviewEditor (Aufstockung Dach-Stack). */
   const [roofStackView, setRoofStackView] = useState({ zoom: 1, pan: { x: 0, y: 0 } })
-  const statikCustomPriceRef = useRef<HTMLInputElement>(null)
-  const [statikPriceDraft, setStatikPriceDraft] = useState('')
-  const lastStatikModeRef = useRef<StatikChoice['mode']>('none')
   const demolitionPriceInputRef = useRef<HTMLInputElement>(null)
-  const [demolitionPriceDraft, setDemolitionPriceDraft] = useState('')
-
-  const currentPlanStatikChoice: StatikChoice = useMemo(() => {
-    const raw = plansData[planIndex]?.statikChoice
-    if (!raw?.mode) return { mode: 'none' }
-    return {
-      mode: raw.mode,
-      customPiecePrice:
-        typeof raw.customPiecePrice === 'number' && Number.isFinite(raw.customPiecePrice)
-          ? raw.customPiecePrice
-          : undefined,
-    }
-  }, [plansData, planIndex])
-
-  useEffect(() => {
-    const prev = lastStatikModeRef.current
-    const enteredSonder =
-      currentPlanStatikChoice.mode === 'sonderkonstruktion' && prev !== 'sonderkonstruktion'
-    if (enteredSonder) {
-      const p = currentPlanStatikChoice.customPiecePrice
-      setStatikPriceDraft(p !== undefined && Number.isFinite(p) ? String(p) : '')
-      queueMicrotask(() => statikCustomPriceRef.current?.focus())
-    }
-    if (currentPlanStatikChoice.mode !== 'sonderkonstruktion') {
-      setStatikPriceDraft('')
-    }
-    lastStatikModeRef.current = currentPlanStatikChoice.mode
-  }, [currentPlanStatikChoice.mode, currentPlanStatikChoice.customPiecePrice])
+  const [globalCombinedPriceDraft, setGlobalCombinedPriceDraft] = useState('')
+  const [missingFormDialog, setMissingFormDialog] = useState<{
+    items: Array<{ stepKey: string; key: string; label: string }>
+    values: Record<string, string>
+    blobs: Record<string, Record<string, unknown>>
+    saving: boolean
+    error?: string
+  } | null>(null)
+  const missingFormResolverRef = useRef<((ok: boolean) => void) | null>(null)
+  const [missingFormOptionsByTag, setMissingFormOptionsByTag] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     plansDataRef.current = plansData
@@ -628,6 +608,82 @@ export function DetectionsReviewEditor({
     if (snap.length === 0) return
     setHistory((h) => [...h.slice(-(historyLimit - 1)), snap])
   }, [])
+
+  const stripLabelForOption = useCallback((label: string) => {
+    if (!label || typeof label !== 'string') return ''
+    return label
+      .replace(/\s*\(\s*€\/m²\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*€\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*€\/Stück\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/m²\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/Stück\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*CHF\/m\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*Faktor\s*\)\s*$/i, '')
+      .replace(/\s*\(\s*€\/m\s*\)\s*$/i, '')
+      .trim() || label
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadMissingFormOptions = async () => {
+      const hiddenKeys = new Set<string>()
+      let customOptions: Record<string, Array<{ label?: string; value?: string; price_key?: string }>> = {}
+      let paramLabelOverrides: Record<string, string> = {}
+      try {
+        const res = await apiFetch('/pricing-parameters?t=' + Date.now()) as Record<string, unknown>
+        const hidden = Array.isArray(res?.hiddenKeys) ? res.hiddenKeys.filter((k): k is string => typeof k === 'string') : []
+        for (const k of hidden) hiddenKeys.add(k)
+        if (res?.customOptions && typeof res.customOptions === 'object') {
+          customOptions = res.customOptions as Record<string, Array<{ label?: string; value?: string; price_key?: string }>>
+        }
+        if (res?.paramLabelOverrides && typeof res.paramLabelOverrides === 'object') {
+          paramLabelOverrides = res.paramLabelOverrides as Record<string, string>
+        }
+      } catch {
+        // fallback to schema-only options
+      }
+
+      const optionsByTag: Record<string, string[]> = {}
+      try {
+        const sections = buildPriceSectionsFromFormStepsJson(holzbauFormStepsJson as unknown)
+        for (const sec of sections) {
+          const subs = Array.isArray(sec?.subsections) ? sec.subsections : []
+          for (const sub of subs) {
+            const tag = sub?.fieldTag
+            if (!tag) continue
+            const opts: string[] = []
+            const vars = Array.isArray(sub?.variables) ? sub.variables : []
+            for (const v of vars) {
+              const key = String(v?.id ?? '')
+              if (key && hiddenKeys.has(key)) continue
+              const rawLabel = (key && paramLabelOverrides[key]) ? paramLabelOverrides[key] : String(v?.label ?? '')
+              const opt = stripLabelForOption(rawLabel)
+              if (opt && !opts.includes(opt)) opts.push(opt)
+            }
+            const custom = Array.isArray(customOptions[tag]) ? customOptions[tag] : []
+            for (const c of custom) {
+              const l = String(c?.label ?? c?.value ?? '').trim()
+              const pk = String(c?.price_key ?? '').trim()
+              if (pk && hiddenKeys.has(pk)) continue
+              if (l && !opts.includes(l)) opts.push(l)
+            }
+            optionsByTag[tag] = opts
+          }
+        }
+      } catch {
+        // noop
+      }
+      if (!cancelled) setMissingFormOptionsByTag(optionsByTag)
+    }
+    void loadMissingFormOptions()
+    const onPricingSaved = () => void loadMissingFormOptions()
+    window.addEventListener('pricing-parameters:saved', onPricingSaved)
+    return () => {
+      cancelled = true
+      window.removeEventListener('pricing-parameters:saved', onPricingSaved)
+    }
+  }, [stripLabelForOption])
 
   const roomTypeOptions = useMemo((): RoomTypeOption[] => {
     const c = editorConstraints
@@ -691,12 +747,26 @@ export function DetectionsReviewEditor({
   const planIndexClamped = n > 0 ? Math.max(0, Math.min(planIndex, n - 1)) : 0
   const currentPlan = plansData[planIndexClamped]
 
-  // Sync the demolition price draft text when navigating between plans.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const globalCombinedPrice = useMemo(() => {
+    for (const p of plansData) {
+      if (typeof p.customDemolitionPrice === 'number' && Number.isFinite(p.customDemolitionPrice)) {
+        return p.customDemolitionPrice
+      }
+      const s = p.statikChoice
+      if (s?.mode === 'sonderkonstruktion' && typeof s.customPiecePrice === 'number' && Number.isFinite(s.customPiecePrice)) {
+        return s.customPiecePrice
+      }
+    }
+    return null
+  }, [plansData])
+
   useEffect(() => {
-    const price = plansData[planIndexClamped]?.customDemolitionPrice
-    setDemolitionPriceDraft(typeof price === 'number' && Number.isFinite(price) ? String(price) : '')
-  }, [planIndexClamped])
+    setGlobalCombinedPriceDraft(
+      typeof globalCombinedPrice === 'number' && Number.isFinite(globalCombinedPrice)
+        ? String(globalCombinedPrice)
+        : '',
+    )
+  }, [globalCombinedPrice])
   // O imagine de bază per plan (fără poligoane); canvas-ul desenează rooms/doors din API
   const getBaseImageUrl = (planIdx: number) =>
     blueprintBaseImages[planIdx]?.url ?? blueprintBaseImages[0]?.url ?? images[0]?.url
@@ -721,11 +791,17 @@ export function DetectionsReviewEditor({
     }))
   }, [plansDimKey])
   const wpApi = String(wizardPackageFromApi).toLowerCase().trim()
+  const hasWizardPackage = wpApi.length > 0
+  const isCombinedZubauAufstockung = wpApi === 'zubau_aufstockung'
   const effectiveForceAufstockung =
-    forceAufstockungFlow || forceZubauFlow || wpApi === 'aufstockung' || wpApi === 'zubau'
-  const isZubauFlow = forceZubauFlow || wpApi === 'zubau'
+    forceAufstockungFlow ||
+    forceZubauFlow ||
+    wpApi === 'aufstockung' ||
+    wpApi === 'zubau' ||
+    wpApi === 'zubau_aufstockung'
+  const isZubauFlow = hasWizardPackage ? (wpApi === 'zubau' || wpApi === 'zubau_aufstockung') : forceZubauFlow
   const effectiveFloorKinds = useMemo(() => {
-    const normalizedRaw = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing')) as ('new' | 'existing')[]
+    const normalizedRaw = floorKinds.map((k) => normalizeFloorKindForAufstockung(k)) as ('new' | 'existing')[]
     const hintN = plansData.length > 0 ? plansData.length : Math.max(1, blueprintBaseImages.length)
     const forceExistingByLabel = (kinds: ('new' | 'existing')[]) =>
       kinds.map((kind, idx) =>
@@ -761,37 +837,60 @@ export function DetectionsReviewEditor({
       if (roofOnlyOffer && raw === 'doors') return 'rooms'
       if (!editorConstraints.allowRoofWindows && raw === 'roof_windows') return 'roof'
       const auf = effectiveFloorKinds.length > 0
-      const fk = String(effectiveFloorKinds[planIdx] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
-      if (auf && fk === 'new' && isZubauFlow) {
-        const zraw = (tabPerPlan[planIdx] ?? 'zubau_extension') as ReviewTab
-        if (zraw === 'rooms' || zraw === 'phase1_demolition' || zraw === 'phase1_stair') return 'zubau_extension'
-        if (
-          zraw === 'zubau_bestand' ||
-          zraw === 'zubau_extension' ||
-          zraw === 'zubau_walls' ||
-          zraw === 'doors' ||
-          zraw === 'roof' ||
-          zraw === 'roof_windows'
-        )
-          return zraw
-        return 'zubau_extension'
-      }
-      if (auf && fk === 'existing') {
-        if (isZubauFlow) {
-          /* Bestand: nur Grundriss (Räume-Layer leer), keine Fenster-/Dach-Tabs. */
-          return 'rooms'
+      const rawFloorKind = normalizeFloorKindRaw(floorKinds[planIdx] ?? '')
+      const fallbackRaw = String(effectiveFloorKinds[planIdx] ?? 'new').toLowerCase() === 'new'
+        ? (isZubauFlow ? 'zubau' : 'aufstockung')
+        : 'existing'
+      const kind = normalizeFloorKindRaw(rawFloorKind || fallbackRaw)
+      const hasUpperConstruction = (() => {
+        for (let idx = planIdx + 1; idx < effectiveFloorKinds.length; idx += 1) {
+          const nextFallback = String(effectiveFloorKinds[idx] ?? 'new').toLowerCase() === 'new'
+            ? (isZubauFlow ? 'zubau' : 'aufstockung')
+            : 'existing'
+          const nextRaw = normalizeFloorKindRaw(floorKinds[idx] ?? nextFallback)
+          if (nextRaw === 'zubau' || nextRaw === 'aufstockung' || nextRaw === 'new') return true
         }
-        if (raw === 'phase1_demolition' || raw === 'phase1_stair' || raw === 'roof' || raw === 'roof_windows') return raw
-        return 'phase1_demolition'
+        return false
+      })()
+      if (auf && kind === 'zubau') {
+        const zraw = raw === 'rooms' ? 'zubau_extension' : raw
+        const allowed: ReviewTab[] = ['zubau_bestand', 'zubau_extension', 'zubau_walls', 'doors', 'roof']
+        if (editorConstraints.allowRoofWindows) allowed.push('roof_windows')
+        if (hasUpperConstruction) allowed.push('phase1_demolition')
+        return allowed.includes(zraw as ReviewTab) ? (zraw as ReviewTab) : 'zubau_extension'
       }
-      if (raw === 'phase1_demolition' || raw === 'phase1_stair') return 'rooms'
+      if (auf && kind === 'existing') {
+        if (hasUpperConstruction) return raw === 'phase1_demolition' ? 'phase1_demolition' : 'phase1_demolition'
+        return 'rooms'
+      }
+      if (auf && (kind === 'aufstockung' || (!isZubauFlow && kind === 'new'))) {
+        const allowed: ReviewTab[] = ['rooms', 'doors', 'roof']
+        if (editorConstraints.allowRoofWindows) allowed.push('roof_windows')
+        if (hasUpperConstruction) allowed.push('phase1_demolition')
+        return allowed.includes(raw as ReviewTab) ? (raw as ReviewTab) : 'rooms'
+      }
       return raw
     },
-    [roofOnlyOffer, tabPerPlan, editorConstraints.allowRoofWindows, effectiveFloorKinds, isZubauFlow],
+    [roofOnlyOffer, tabPerPlan, editorConstraints.allowRoofWindows, effectiveFloorKinds, isZubauFlow, floorKinds],
   )
   const setTabForPlan = useCallback((planIdx: number, t: ReviewTab) => {
     setTabPerPlan((prev) => ({ ...prev, [planIdx]: t }))
   }, [])
+  useEffect(() => {
+    if (n <= 0) return
+    setTabPerPlan((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (let i = 0; i < n; i += 1) {
+        const normalized = getTabForPlan(i)
+        if (next[i] !== normalized) {
+          next[i] = normalized
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [n, getTabForPlan])
   useEffect(() => {
     if (n > 0 && planIndex >= n) setPlanIndex(n - 1)
   }, [n, planIndex])
@@ -947,7 +1046,7 @@ export function DetectionsReviewEditor({
           setEditorConstraints(constraints)
           setWizardPackageFromApi(typeof res?.wizardPackage === 'string' ? res.wizardPackage : '')
           setFloorLabels(Array.isArray(res?.floorLabels) ? res.floorLabels : [])
-          setFloorKinds(Array.isArray(res?.floorKinds) ? res.floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing')) : [])
+          setFloorKinds(Array.isArray(res?.floorKinds) ? res.floorKinds.map((k) => normalizeFloorKindRaw(k)) : [])
           const nl = sanitized.length
           const apiPerm = nl > 0 && isValidFloorPlanPerm(res?.floorPlanOrder, nl) ? (res!.floorPlanOrder as number[]) : null
           const initialOrder = nl > 0 ? (apiPerm ?? Array.from({ length: nl }, (_, i) => i)) : []
@@ -989,6 +1088,7 @@ export function DetectionsReviewEditor({
       floorPlanOrder?: number[]
       floorKinds?: string[]
       statikChoice?: StatikChoice
+      globalCombinedPrice?: number | null
     } = {
       plans: snapshot.map((p) => ({
         rooms: p.rooms,
@@ -1004,7 +1104,7 @@ export function DetectionsReviewEditor({
     if (n > 0 && ord.length === n && isValidFloorPlanPerm(ord, n)) {
       body.floorPlanOrder = ord
     }
-    const floorKindsNormalized = floorKinds.map((k) => (String(k).toLowerCase() === 'new' ? 'new' : 'existing'))
+    const floorKindsNormalized = floorKinds.map((k) => normalizeFloorKindForAufstockung(k))
     const floorKindsAligned = floorLabels.length > 0 && floorKindsNormalized.length > 0 && floorKindsNormalized.length < floorLabels.length
       ? [...new Array(floorLabels.length - floorKindsNormalized.length).fill('existing'), ...floorKindsNormalized]
       : floorKindsNormalized
@@ -1022,8 +1122,12 @@ export function DetectionsReviewEditor({
     } else {
       body.statikChoice = { mode: 'none' }
     }
+    body.globalCombinedPrice =
+      typeof globalCombinedPrice === 'number' && Number.isFinite(globalCombinedPrice)
+        ? globalCombinedPrice
+        : null
     return JSON.stringify(body)
-  }, [floorKinds, floorLabels])
+  }, [floorKinds, floorLabels, globalCombinedPrice])
 
   const persistDetectionsPayload = useCallback(async (payload: string): Promise<boolean> => {
     if (!offerId) return false
@@ -1082,6 +1186,234 @@ export function DetectionsReviewEditor({
     }
     return ok
   }, [offerId, buildDetectionsPayload, persistDetectionsPayload])
+
+  const floorDisplayLabelDe = useCallback((floorKey: string): string => {
+    if (floorKey === 'ground') return 'Erdgeschoss'
+    const mp = floorKey.match(/^plan_(\d+)$/i)
+    if (mp && Number.isFinite(Number(mp[1]))) return `Neues Geschoss (Plan ${Number(mp[1]) + 1})`
+    const m = floorKey.match(/^floor_(\d+)$/)
+    if (m && Number.isFinite(Number(m[1]))) return `Obergeschoss ${Number(m[1])}`
+    return floorKey
+  }, [])
+
+  const ensureMissingPerFloorFormData = useCallback(async (
+    nextKinds: Array<'existing' | 'zubau' | 'aufstockung'>,
+  ): Promise<boolean> => {
+    if (!offerId) return true
+    const touched = constructionPlanIndicesForPerFloorFormData(nextKinds, floorLabels)
+    if (touched.length === 0) return true
+
+    const readStepBlob = async (stepKey: string): Promise<Record<string, unknown>> => {
+      const res = await apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent(stepKey)}`)
+      const data = (res as Record<string, unknown> | null)?.data
+      const candidate = data && typeof data === 'object' ? data : (res as Record<string, unknown>)
+      return (candidate || {}) as Record<string, unknown>
+    }
+
+    const stepKeys = ['wandaufbau', 'bodenDeckeBelag', 'materialeFinisaj']
+    const blobs: Record<string, Record<string, unknown>> = {}
+    for (const stepKey of stepKeys) {
+      try {
+        blobs[stepKey] = await readStepBlob(stepKey)
+      } catch {
+        blobs[stepKey] = {}
+      }
+    }
+
+    const reqDef = (floorKey: string) => {
+      const floorLabel = floorDisplayLabelDe(floorKey)
+      return [
+        { stepKey: 'wandaufbau', key: `außenwande_${floorKey}`, label: `Außenwände (${floorLabel})` },
+        { stepKey: 'wandaufbau', key: `innenwande_${floorKey}`, label: `Innenwände (${floorLabel})` },
+        { stepKey: 'bodenDeckeBelag', key: `bodenaufbau_${floorKey}`, label: `Bodenaufbau (${floorLabel})` },
+        { stepKey: 'bodenDeckeBelag', key: `deckenaufbau_${floorKey}`, label: `Deckenaufbau (${floorLabel})` },
+        { stepKey: 'bodenDeckeBelag', key: `bodenbelag_${floorKey}`, label: `Bodenbelag (${floorLabel})` },
+        { stepKey: 'materialeFinisaj', key: `finisajInteriorInnen_${floorKey}`, label: `Innenausbau Innenwände (${floorLabel})` },
+        { stepKey: 'materialeFinisaj', key: `finisajInteriorAussen_${floorKey}`, label: `Innenausbau Außenwände (${floorLabel})` },
+        { stepKey: 'materialeFinisaj', key: `fatada_${floorKey}`, label: `Fassade (${floorLabel})` },
+      ]
+    }
+
+    const isEmpty = (v: unknown) => v == null || String(v).trim() === ''
+    const pending = touched
+      .map((idx) => computeFloorFormKeyFromPlanIndex(idx, floorLabels, nextKinds))
+      .filter((k): k is string => !!k)
+      .flatMap((k) => reqDef(k))
+      .filter((it) => isEmpty(blobs[it.stepKey]?.[it.key]))
+
+    if (pending.length === 0) return true
+    const initialValues: Record<string, string> = {}
+    for (const it of pending) {
+      const v = blobs[it.stepKey]?.[it.key]
+      initialValues[`${it.stepKey}:${it.key}`] = v == null ? '' : String(v)
+    }
+    return await new Promise<boolean>((resolve) => {
+      missingFormResolverRef.current = resolve
+      setMissingFormDialog({
+        items: pending,
+        values: initialValues,
+        blobs,
+        saving: false,
+      })
+    })
+  }, [offerId, floorDisplayLabelDe, floorLabels])
+
+  /** Aplică Bestand/Zubau/Aufstockung din draft înainte de a ieși din modul „Reihenfolge” (aceeași logică ca butonul Speichern). */
+  const applyAufstockungDraftKindsIfReorder = useCallback(async (): Promise<boolean> => {
+    if (effectiveFloorKinds.length === 0 || n < 1) return true
+    let nextKinds = padFloorKindsDraftRawToN(floorKindsDraft, n, isZubauFlow)
+    const fixedExistingByLabel = new Set<number>()
+    for (let i = 0; i < n; i++) {
+      const rawLabel = displayFloorTabLabelDe(floorLabels[i] ?? `Plan ${i + 1}`).toLowerCase()
+      const isBasement =
+        rawLabel.includes('keller') ||
+        rawLabel.includes('kellergeschoss') ||
+        rawLabel.includes('untergeschoss') ||
+        rawLabel.includes('basement') ||
+        rawLabel.includes('grundriss kg')
+      if (isBasement) fixedExistingByLabel.add(i)
+    }
+    fixedExistingByLabel.forEach((idx) => {
+      if (idx >= 0 && idx < n) nextKinds[idx] = 'existing'
+    })
+    if (!nextKinds.some((k) => k !== 'existing')) {
+      setReorderKindsError(
+        isCombinedZubauAufstockung
+          ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau oder Aufstockung.'
+          : isZubauFlow
+            ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau.'
+            : 'Bitte markieren Sie mindestens ein Geschoss als Aufstockung.',
+      )
+      return false
+    }
+    const completedMissing = await ensureMissingPerFloorFormData(nextKinds)
+    if (!completedMissing) return false
+    const hasUpperForKinds = (idx: number, kinds: Array<'existing' | 'zubau' | 'aufstockung'>) => {
+      for (let up = idx + 1; up < kinds.length; up += 1) {
+        const upk = kinds[up]
+        if (upk === 'zubau' || upk === 'aufstockung') return true
+      }
+      return false
+    }
+    setPlansData((prev) =>
+      prev.map((plan, idx) => {
+        const kind = nextKinds[idx] ?? 'existing'
+        const hasUpper = hasUpperForKinds(idx, nextKinds)
+        if (kind === 'existing') {
+          return {
+            ...plan,
+            rooms: [],
+            doors: [],
+            zubauBestandPolygons: [],
+            zubauWallDemolitionLines: [],
+            stairOpenings: [],
+            roofDemolitions: hasUpper ? (plan.roofDemolitions ?? []) : [],
+          }
+        }
+        if (kind === 'aufstockung') {
+          return {
+            ...plan,
+            zubauBestandPolygons: [],
+            zubauWallDemolitionLines: [],
+            stairOpenings: [],
+            roofDemolitions: hasUpper ? (plan.roofDemolitions ?? []) : [],
+          }
+        }
+        return {
+          ...plan,
+          stairOpenings: [],
+          roofDemolitions: hasUpper ? (plan.roofDemolitions ?? []) : [],
+        }
+      }),
+    )
+    setFloorKinds(nextKinds.map((k) => k))
+    return true
+  }, [
+    effectiveFloorKinds.length,
+    n,
+    floorKindsDraft,
+    floorKinds,
+    floorLabels,
+    isZubauFlow,
+    isCombinedZubauAufstockung,
+    ensureMissingPerFloorFormData,
+  ])
+
+  const handleMissingFormValueChange = useCallback((fieldId: string, value: string) => {
+    setMissingFormDialog((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        values: { ...prev.values, [fieldId]: value },
+        error: undefined,
+      }
+    })
+  }, [])
+
+  const missingFieldOptions = useCallback((fieldKey: string): string[] => {
+    if (fieldKey.startsWith('außenwande_')) return missingFormOptionsByTag['wandaufbau_aussen'] ?? []
+    if (fieldKey.startsWith('innenwande_')) return missingFormOptionsByTag['wandaufbau_innen'] ?? []
+    if (fieldKey.startsWith('bodenaufbau_')) return missingFormOptionsByTag['bodenaufbau'] ?? []
+    if (fieldKey.startsWith('deckenaufbau_')) return missingFormOptionsByTag['deckenaufbau'] ?? []
+    if (fieldKey.startsWith('bodenbelag_')) return missingFormOptionsByTag['bodenbelag'] ?? []
+    if (fieldKey.startsWith('finisajInteriorInnen_')) return missingFormOptionsByTag['interior_finish_interior_walls'] ?? []
+    if (fieldKey.startsWith('finisajInteriorAussen_')) return missingFormOptionsByTag['interior_finish_exterior_walls'] ?? []
+    if (fieldKey.startsWith('fatada_')) return missingFormOptionsByTag['exterior_facade'] ?? []
+    return []
+  }, [missingFormOptionsByTag])
+
+  const missingFieldSectionForKey = useCallback((fieldKey: string): 'wand' | 'boden' | 'finish' => {
+    if (fieldKey.startsWith('außenwande_') || fieldKey.startsWith('innenwande_')) return 'wand'
+    if (fieldKey.startsWith('bodenaufbau_') || fieldKey.startsWith('deckenaufbau_') || fieldKey.startsWith('bodenbelag_')) return 'boden'
+    return 'finish'
+  }, [])
+
+  const handleMissingFormSubmit = useCallback(async () => {
+    if (!missingFormDialog || !offerId) return
+    const allFilled = missingFormDialog.items.every((it) => {
+      const id = `${it.stepKey}:${it.key}`
+      return String(missingFormDialog.values[id] ?? '').trim() !== ''
+    })
+    if (!allFilled) {
+      setMissingFormDialog((prev) => (prev ? { ...prev, error: 'Bitte alle Felder ausfüllen.' } : prev))
+      return
+    }
+    setMissingFormDialog((prev) => (prev ? { ...prev, saving: true, error: undefined } : prev))
+    try {
+      const blobs = { ...missingFormDialog.blobs }
+      for (const it of missingFormDialog.items) {
+        const id = `${it.stepKey}:${it.key}`
+        const val = String(missingFormDialog.values[id] ?? '').trim()
+        blobs[it.stepKey] = { ...(blobs[it.stepKey] || {}), [it.key]: val }
+      }
+      const stepKeys = Array.from(new Set(missingFormDialog.items.map((it) => it.stepKey)))
+      for (const stepKey of stepKeys) {
+        await apiFetch(`/offers/${offerId}/step`, {
+          method: 'POST',
+          body: JSON.stringify({ step_key: stepKey, data: blobs[stepKey] || {} }),
+        })
+      }
+      setMissingFormDialog(null)
+      const resolver = missingFormResolverRef.current
+      missingFormResolverRef.current = null
+      resolver?.(true)
+    } catch (e) {
+      setMissingFormDialog((prev) =>
+        prev
+          ? { ...prev, saving: false, error: 'Speichern fehlgeschlagen. Bitte erneut versuchen.' }
+          : prev,
+      )
+    }
+  }, [missingFormDialog, offerId])
+
+  const handleMissingFormCancel = useCallback(() => {
+    if (!missingFormDialog || missingFormDialog.saving) return
+    setMissingFormDialog(null)
+    const resolver = missingFormResolverRef.current
+    missingFormResolverRef.current = null
+    resolver?.(false)
+  }, [missingFormDialog])
+
   useEffect(() => {
     if (!offerId || loading || plansData.length === 0) return
     if (detSaveDebounceRef.current) clearTimeout(detSaveDebounceRef.current)
@@ -1143,22 +1475,14 @@ export function DetectionsReviewEditor({
     })
   }, [])
 
-  const setCustomDemolitionPrice = useCallback((planIdx: number, price: number | null) => {
-    setPlansData((prev) => {
-      const next = [...prev]
-      if (planIdx >= next.length) return next
-      next[planIdx] = { ...next[planIdx], customDemolitionPrice: price }
-      return next
-    })
-  }, [])
-
-  const setPlanStatikChoice = useCallback((planIdx: number, choice: StatikChoice) => {
-    setPlansData((prev) => {
-      const next = [...prev]
-      if (planIdx >= next.length) return next
-      next[planIdx] = { ...next[planIdx], statikChoice: choice }
-      return next
-    })
+  const setGlobalCombinedPrice = useCallback((price: number | null) => {
+    setPlansData((prev) =>
+      prev.map((p) => ({
+        ...p,
+        customDemolitionPrice: price,
+        statikChoice: { mode: 'none' },
+      })),
+    )
   }, [])
 
   const setStairOpenings = useCallback((planIdx: number, rects: DoorRect[]) => {
@@ -1204,10 +1528,15 @@ export function DetectionsReviewEditor({
     let saved = true
     if (plansData.length > 0) {
       if (reorderFloorsMode && isValidFloorPlanPerm(floorOrderDraft, plansData.length)) {
+        if (effectiveFloorKinds.length > 0) {
+          const kindsOk = await applyAufstockungDraftKindsIfReorder()
+          if (!kindsOk) return
+        }
         const next = [...floorOrderDraft]
         floorPlanOrderRef.current = next
         setFloorPlanOrder(next)
         setFloorOrderDraft(next)
+        setFloorKindsDraft([])
         setReorderFloorsMode(false)
         setDragFromDisplayIdx(null)
       }
@@ -1215,6 +1544,11 @@ export function DetectionsReviewEditor({
       if (!saved) {
         await sleep(900)
         saved = await saveDetectionsToServer(true)
+      }
+      if (saved && effectiveFloorKinds.length > 0) {
+        const nl = plansData.length
+        const kindsOk = await ensureMissingPerFloorFormData(padFloorKindsDraftRawToN(floorKinds, nl, isZubauFlow))
+        if (!kindsOk) return
       }
     }
     if (!saved) {
@@ -1245,7 +1579,19 @@ export function DetectionsReviewEditor({
       // roof flag best-effort
     }
     await onConfirm()
-  }, [offerId, plansData, onConfirm, saveDetectionsToServer, reorderFloorsMode, floorOrderDraft])
+  }, [
+    offerId,
+    plansData,
+    onConfirm,
+    saveDetectionsToServer,
+    reorderFloorsMode,
+    floorOrderDraft,
+    effectiveFloorKinds.length,
+    applyAufstockungDraftKindsIfReorder,
+    ensureMissingPerFloorFormData,
+    floorKinds,
+    isZubauFlow,
+  ])
 
   const handleRemoveSelected = useCallback((index?: number) => {
     const idx = index ?? selectedPolygonIndex
@@ -1509,11 +1855,28 @@ export function DetectionsReviewEditor({
   const activeTab = getTabForPlan(planIndexClamped)
   const isAufstockungFlow = effectiveFloorKinds.length > 0
   const currentFloorKind = String(effectiveFloorKinds[planIndexClamped] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
+  const currentRawFloorKind = normalizeFloorKindRaw(
+    floorKinds[planIndexClamped] ?? (currentFloorKind === 'new' ? (isZubauFlow ? 'zubau' : 'aufstockung') : 'existing'),
+  )
+  const hasUpperConstructionFloorAtIndex = useCallback((planIdx: number): boolean => {
+    if (!isAufstockungFlow) return false
+    for (let idx = planIdx + 1; idx < n; idx += 1) {
+      const raw = normalizeFloorKindRaw(
+        floorKinds[idx] ??
+          (String(effectiveFloorKinds[idx] ?? 'new').toLowerCase() === 'new'
+            ? (isZubauFlow ? 'zubau' : 'aufstockung')
+            : 'existing'),
+      )
+      if (raw === 'zubau' || raw === 'aufstockung' || raw === 'new') return true
+    }
+    return false
+  }, [isAufstockungFlow, n, floorKinds, effectiveFloorKinds, isZubauFlow])
+  const showGlobalCombinedPriceInput = isAufstockungFlow
   /** Bestand etaj în Aufstockung: Dach-Rückbau + Treppenöffnung; Zubau: doar vizualizare. */
   const existingFloorEditing = isAufstockungFlow && currentFloorKind === 'existing'
-  const existingFloorReadOnly = existingFloorEditing && isZubauFlow
-  /** Zubau Bestand: nur Grundriss, keine Fenster-/Dach-Tabs. */
-  const zubauBestandBlueprintOnly = isZubauFlow && existingFloorEditing
+  const existingFloorReadOnly = existingFloorEditing && isZubauFlow && !isCombinedZubauAufstockung
+  /** Pure Zubau Bestand: nur Grundriss, keine Fenster-/Dach-Tabs. Kombi Zubau+Aufstockung: Bestand wie Aufstockung bearbeiten. */
+  const zubauBestandBlueprintOnly = isZubauFlow && !isCombinedZubauAufstockung && existingFloorEditing
 
   const handleRoofRectanglesOverlaySync = useCallback(
     (
@@ -1807,7 +2170,7 @@ export function DetectionsReviewEditor({
   /** Dach: bei Aufstockung Bestand Plan + Phase-1-Overlays unter dem Roof-Vector-Layer; sonst nur RoofReviewEditor. */
   const showRoomsCanvas =
     plansData.length > 0 &&
-    (activeTab !== 'roof' && activeTab !== 'roof_windows' || existingFloorEditing)
+    (activeTab !== 'roof' && activeTab !== 'roof_windows')
 
   const stackRoofOverPhase1 =
     existingFloorEditing && showRoofWorkspace && Boolean(offerId) && roofEditorBasemapImages.length > 0
@@ -1893,7 +2256,11 @@ export function DetectionsReviewEditor({
                   const isActive = planIndexClamped === planIdx
                   const floorKindLabel =
                     String(effectiveFloorKinds[planIdx] ?? 'new').toLowerCase() === 'new' ? 'new' : 'existing'
-                  const bottomPlanIdx = reorderFloorsMode ? (floorOrderDraft[0] ?? -1) : (floorPlanOrder[0] ?? -1)
+                  const floorKindRaw = normalizeFloorKindRaw(floorKinds[planIdx] ?? '')
+                  const newKindDisplayLabel =
+                    isCombinedZubauAufstockung && floorKindRaw === 'aufstockung'
+                      ? 'Aufstockung'
+                      : (isZubauFlow ? 'Zubau' : 'Aufstockung')
                   const normalizedLabel = String(label ?? '').toLowerCase()
                   const isBasementFloor =
                     normalizedLabel.includes('keller') ||
@@ -1901,16 +2268,11 @@ export function DetectionsReviewEditor({
                     normalizedLabel.includes('untergeschoss') ||
                     normalizedLabel.includes('basement') ||
                     normalizedLabel.includes('grundriss kg')
-                  const isGroundFloorLabel =
-                    normalizedLabel.includes('erdgeschoss') ||
-                    normalizedLabel.includes('ground floor') ||
-                    normalizedLabel.includes('grundriss eg')
-                  const isBottomPhysicalFloor = reorderFloorsMode && isAufstockungFlow && planIdx === bottomPlanIdx
                   const isFixedExistingFloor =
                     reorderFloorsMode &&
                     isAufstockungFlow &&
-                    (isGroundFloorLabel || isBasementFloor || isBottomPhysicalFloor)
-                  const draftKind = normalizeFloorKindForAufstockung(floorKindsDraft[planIdx])
+                    isBasementFloor
+                  const draftKind = normalizeFloorKindDraftRaw(floorKindsDraft[planIdx], isZubauFlow)
                   return (
                     <div
                       key={`floor-tab-wrap-${planIdx}-${displayPos}`}
@@ -1975,7 +2337,7 @@ export function DetectionsReviewEditor({
                                     : 'border-white/25 text-sand/90 bg-white/5'
                                 }`}
                               >
-                                {floorKindLabel === 'new' ? (isZubauFlow ? 'Zubau' : 'Aufstockung') : 'Bestand'}
+                                {floorKindLabel === 'new' ? newKindDisplayLabel : 'Bestand'}
                               </span>
                             )}
                           </span>
@@ -1994,43 +2356,48 @@ export function DetectionsReviewEditor({
                           ) : (
                             <>
                               <span className="text-[10px] text-sand/50">
-                                {isZubauFlow ? 'Bestand oder Zubau' : 'Bestand oder Aufstockung'}
+                                {isCombinedZubauAufstockung
+                                  ? 'Zubau oder Aufstockung'
+                                  : (isZubauFlow ? 'Zubau' : 'Aufstockung')}
                               </span>
                               <div className="flex flex-wrap items-center gap-1">
                                 <button
                                   type="button"
                                   className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                    draftKind === 'existing'
+                                    (isZubauFlow ? draftKind === 'zubau' : draftKind === 'aufstockung')
                                       ? 'border-[#FF9F0F]/60 bg-[#FF9F0F]/15 text-[#FF9F0F]'
                                       : 'border-white/15 text-sand/70 hover:bg-white/5'
                                   }`}
                                   onClick={() =>
                                     setFloorKindsDraft((d) => {
-                                      const next = padFloorKindsToN(d, n)
-                                      next[planIdx] = 'existing'
-                                      return next
-                                    })
-                                  }
-                                >
-                                  Bestand
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                                    draftKind === 'new'
-                                      ? 'border-[#FF9F0F]/60 bg-[#FF9F0F]/15 text-[#FF9F0F]'
-                                      : 'border-white/15 text-sand/70 hover:bg-white/5'
-                                  }`}
-                                  onClick={() =>
-                                    setFloorKindsDraft((d) => {
-                                      const next = padFloorKindsToN(d, n)
-                                      next[planIdx] = 'new'
+                                      const next = padFloorKindsDraftRawToN(d, n, isZubauFlow)
+                                      const target = isZubauFlow ? 'zubau' : 'aufstockung'
+                                      next[planIdx] = next[planIdx] === target ? 'existing' : target
                                       return next
                                     })
                                   }
                                 >
                                   {isZubauFlow ? 'Zubau' : 'Aufstockung'}
                                 </button>
+                                {isCombinedZubauAufstockung && (
+                                  <button
+                                    type="button"
+                                    className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                                      draftKind === 'aufstockung'
+                                        ? 'border-[#FF9F0F]/60 bg-[#FF9F0F]/15 text-[#FF9F0F]'
+                                        : 'border-white/15 text-sand/70 hover:bg-white/5'
+                                    }`}
+                                    onClick={() =>
+                                      setFloorKindsDraft((d) => {
+                                        const next = padFloorKindsDraftRawToN(d, n, isZubauFlow)
+                                        next[planIdx] = next[planIdx] === 'aufstockung' ? 'existing' : 'aufstockung'
+                                        return next
+                                      })
+                                    }
+                                  >
+                                    Aufstockung
+                                  </button>
+                                )}
                               </div>
                             </>
                           )}
@@ -2051,36 +2418,8 @@ export function DetectionsReviewEditor({
                         if (!isValidFloorPlanPerm(nextOrder, n)) return
                         setReorderKindsError(null)
                         if (isAufstockungFlow) {
-                          let nextKinds = padFloorKindsToN(floorKindsDraft, n)
-                          const fixedExistingByLabel = new Set<number>()
-                          for (let i = 0; i < n; i++) {
-                            const rawLabel = displayFloorTabLabelDe(floorLabels[i] ?? `Plan ${i + 1}`).toLowerCase()
-                            const isBasement =
-                              rawLabel.includes('keller') ||
-                              rawLabel.includes('kellergeschoss') ||
-                              rawLabel.includes('untergeschoss') ||
-                              rawLabel.includes('basement') ||
-                              rawLabel.includes('grundriss kg')
-                            const isGround =
-                              rawLabel.includes('erdgeschoss') ||
-                              rawLabel.includes('ground floor') ||
-                              rawLabel.includes('grundriss eg')
-                            if (isBasement || isGround) fixedExistingByLabel.add(i)
-                          }
-                          const bottom = nextOrder[0]
-                          if (bottom >= 0 && bottom < n) fixedExistingByLabel.add(bottom)
-                          fixedExistingByLabel.forEach((idx) => {
-                            if (idx >= 0 && idx < n) nextKinds[idx] = 'existing'
-                          })
-                          if (!nextKinds.some((k) => k === 'new')) {
-                            setReorderKindsError(
-                              isZubauFlow
-                                ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau.'
-                                : 'Bitte markieren Sie mindestens ein neues Geschoss.',
-                            )
-                            return
-                          }
-                          setFloorKinds(nextKinds.map((k) => k))
+                          const kindsOk = await applyAufstockungDraftKindsIfReorder()
+                          if (!kindsOk) return
                         }
                         floorPlanOrderRef.current = nextOrder
                         setFloorPlanOrder(nextOrder)
@@ -2115,7 +2454,7 @@ export function DetectionsReviewEditor({
                       setFloorOrderDraft([...floorPlanOrder])
                       setReorderKindsError(null)
                       if (isAufstockungFlow) {
-                        setFloorKindsDraft(padFloorKindsToN(effectiveFloorKinds, n))
+                        setFloorKindsDraft(padFloorKindsDraftRawToN(floorKinds, n, isZubauFlow))
                       } else {
                         setFloorKindsDraft([])
                       }
@@ -2249,6 +2588,73 @@ export function DetectionsReviewEditor({
         </div>
       </div>
       )}
+      {missingFormDialog && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 px-4">
+          <div className="w-full max-w-5xl rounded-2xl border border-white/15 bg-panel p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)]">
+            <h3 className="text-lg font-semibold text-sun">Fehlende Formulardaten ergänzen</h3>
+            <p className="mt-1 text-xs text-sun/75">
+              Für Zubau-/Aufstockungsgeschosse fehlen noch Pflichtdaten (Wandaufbau, Boden, ggf. Ausbau). Bitte alle
+              Felder ausfüllen, um fortzufahren.
+            </p>
+            <div className="mt-4 max-h-[60vh] overflow-auto pr-1 preisdatenbank-scroll">
+              <div className="space-y-4">
+              {(['wand', 'boden', 'finish'] as const).map((section) => {
+                const sectionItems = missingFormDialog.items.filter((it) => missingFieldSectionForKey(it.key) === section)
+                if (sectionItems.length === 0) return null
+                const sectionTitle =
+                  section === 'wand'
+                    ? 'Wandaufbau'
+                    : section === 'boden'
+                      ? 'Boden / Decke / Belag'
+                      : 'Innenausbau / Fassade'
+                return (
+                  <div key={section} className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sun/80">{sectionTitle}</div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                    {sectionItems.map((it) => {
+                      const id = `${it.stepKey}:${it.key}`
+                      const opts = missingFieldOptions(it.key)
+                      return (
+                        <label key={id} className="flex flex-col gap-1.5">
+                          <span className="wiz-label text-sun/90 text-xs">{it.label}</span>
+                          <SelectSun
+                            value={missingFormDialog.values[id] ?? ''}
+                            onChange={(v) => handleMissingFormValueChange(id, v)}
+                            options={opts}
+                            placeholder="— bitte auswählen —"
+                                    variant="sun"
+                          />
+                        </label>
+                      )
+                    })}
+                    </div>
+                  </div>
+                )
+              })}
+              </div>
+            </div>
+            {missingFormDialog.error && <p className="mt-2 text-xs text-orange-400">{missingFormDialog.error}</p>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleMissingFormCancel}
+                disabled={missingFormDialog.saving}
+                className="rounded-lg border border-white/20 px-3 py-1.5 text-xs font-medium text-sand/90 hover:bg-white/5 disabled:opacity-50"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleMissingFormSubmit() }}
+                disabled={missingFormDialog.saving}
+                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+              >
+                {missingFormDialog.saving ? 'Speichern…' : 'Speichern'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(tool === 'add' && activeTab === 'doors') && (
         <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
@@ -2311,66 +2717,32 @@ export function DetectionsReviewEditor({
       )}
         </div>
         <div className="flex min-h-0 min-w-0 flex-col self-start pt-0.5 w-full">
-          {existingFloorEditing && !isZubauFlow && (
-            <div
-              className="ml-auto flex w-full max-w-56 flex-col gap-2"
-              title="Nur auf Bestandsgeschossen sichtbar."
-            >
-              <div className="flex flex-col gap-1" title={`Statikkosten direkt in ${displayCurrency} eingeben`}>
-                <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
-                  Statikkosten
-                </span>
-                <input
-                  ref={statikCustomPriceRef}
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={`Gesamt in ${displayCurrency}`}
-                  autoComplete="off"
-                  className="editor-statik-eur-holz min-w-0 w-full rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
-                  value={statikPriceDraft}
-                  onChange={(e) => {
-                    const t = e.target.value
-                    setStatikPriceDraft(t)
-                    const normalized = t.replace(/\s/g, '').replace(',', '.')
-                    if (normalized === '' || normalized === '-') {
-                      setPlanStatikChoice(planIndexClamped, { mode: 'none' })
-                      return
-                    }
-                    const n = Number(normalized)
-                    if (Number.isFinite(n)) {
-                      setPlanStatikChoice(planIndexClamped, { mode: 'sonderkonstruktion', customPiecePrice: n })
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          )}
-          {(existingFloorEditing || (isZubauFlow && currentFloorKind === 'new')) && (
-            <div className="ml-auto flex w-full max-w-56 flex-col gap-2" title="Abbruch-Pauschale für diesen Plan">
+          {showGlobalCombinedPriceInput && (
+            <div className="ml-auto flex w-full max-w-56 flex-col gap-2" title="Gesamtpauschale für Rückbau und Statik">
               <div className="flex flex-col gap-1">
                 <span className="text-[#E8C4A8] text-xs text-right font-medium tracking-tight">
-                  Abbruchkosten (Dach und evtl. Wände)
+                  Gesamtpauschale Rückbau & Statik
                 </span>
                 <input
                   ref={demolitionPriceInputRef}
                   type="text"
                   inputMode="decimal"
                   placeholder={`Gesamt in ${displayCurrency}`}
-                  title={`Gesamtpauschale in ${displayCurrency} für alle Aufstandsflächen-Polygone dieses Plans`}
+                  title={`Globaler Gesamtpreis in ${displayCurrency} pentru toate blueprint-urile`}
                   autoComplete="off"
                   className="editor-statik-eur-holz min-w-0 w-full rounded-md border border-[#FF9F0F]/18 bg-[rgba(58,36,22,0.78)] px-2.5 py-2 text-xs text-[#FFF2E6] placeholder:text-[#B89578] shadow-[inset_0_1px_0_rgba(255,170,110,0.14)] backdrop-blur-[2px] outline-none transition-[border-color,box-shadow] selection:bg-[#FF9F0F]/30 selection:text-[#FFF5E8] [-webkit-tap-highlight-color:transparent]"
-                  value={demolitionPriceDraft}
+                  value={globalCombinedPriceDraft}
                   onChange={(e) => {
                     const t = e.target.value
-                    setDemolitionPriceDraft(t)
+                    setGlobalCombinedPriceDraft(t)
                     const normalized = t.replace(/\s/g, '').replace(',', '.')
                     if (normalized === '' || normalized === '-') {
-                      setCustomDemolitionPrice(planIndexClamped, null)
+                      setGlobalCombinedPrice(null)
                       return
                     }
                     const n = Number(normalized)
                     if (Number.isFinite(n)) {
-                      setCustomDemolitionPrice(planIndexClamped, n)
+                      setGlobalCombinedPrice(n)
                     }
                   }}
                 />
@@ -2418,6 +2790,18 @@ export function DetectionsReviewEditor({
             const plan = plansData[i]
             const imageUrlForPlan = getBaseImageUrl(i)
             const planTab = getTabForPlan(i)
+            const rawKindForPlan = normalizeFloorKindDraftRaw(
+              floorKinds[i] ??
+                (String(effectiveFloorKinds[i] ?? 'new').toLowerCase() === 'new'
+                  ? (isZubauFlow ? 'zubau' : 'aufstockung')
+                  : 'existing'),
+              isZubauFlow,
+            )
+            const hasUpperConstruction = hasUpperConstructionFloorAtIndex(i)
+            const isBestandKind = rawKindForPlan === 'existing'
+            const isZubauKind = rawKindForPlan === 'zubau'
+            const isAufstockungKind = rawKindForPlan === 'aufstockung'
+            const showAufstandsflaecheTool = hasUpperConstruction && (isBestandKind || isZubauKind || isAufstockungKind)
             const canvasTab =
               planTab === 'doors'
                 ? 'doors'
@@ -2433,73 +2817,26 @@ export function DetectionsReviewEditor({
             if (!plan || !imageUrlForPlan) return null
             return (
               <div className="w-full flex flex-col flex-1 min-h-0 min-w-0 gap-1.5">
-                {plan && imageUrlForPlan && existingFloorEditing && !isZubauFlow && (
+                {plan && imageUrlForPlan && (
                 <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
                   <div className="flex gap-1 flex-wrap justify-end">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTabForPlan(i, 'phase1_demolition')
-                        setSelectedPolygonIndex(null)
-                        setNewPolygonPoints(null)
-                        if (tool === 'add') setTool('select')
-                      }}
-                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'phase1_demolition' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                    >
-                      <LayoutGrid size={14} strokeWidth={2} />
-                      <span>Aufstandsfläche</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTabForPlan(i, 'phase1_stair')
-                        setSelectedPolygonIndex(null)
-                        setNewPolygonPoints(null)
-                        if (tool === 'add') setTool('select')
-                      }}
-                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'phase1_stair' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                    >
-                      <DoorOpen size={14} strokeWidth={2} />
-                      <span>Treppenöffnung</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTabForPlan(i, 'roof')
-                        setSelectedPolygonIndex(null)
-                        setNewPolygonPoints(null)
-                        if (tool === 'add') setTool('select')
-                        roofEditorRef.current?.roofApplyToolFromParent?.('select')
-                      }}
-                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'roof' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                    >
-                      <Home size={14} strokeWidth={2} />
-                      <span>Dach</span>
-                    </button>
-                    {editorConstraints.allowRoofWindows && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTabForPlan(i, 'roof_windows')
-                        setSelectedPolygonIndex(null)
-                        setNewPolygonPoints(null)
-                        if (tool === 'add') setTool('select')
-                        roofEditorRef.current?.roofApplyToolFromParent?.('select')
-                      }}
-                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'roof_windows' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                    >
-                      <AppWindow size={14} strokeWidth={2} />
-                      <span>Dachfenster</span>
-                    </button>
-                    )}
-                  </div>
-                </div>
-                )}
-                {plan && imageUrlForPlan && (!existingFloorEditing || isZubauFlow) && !zubauBestandBlueprintOnly && (
-                <div className="relative z-30 shrink-0 flex items-center justify-end gap-2 flex-wrap w-full min-w-0 pb-0.5">
-                  <div className="flex gap-1 flex-wrap justify-end">
-                    {isZubauFlow && String(effectiveFloorKinds[i] ?? 'new').toLowerCase() === 'new' ? (
+                    {isZubauKind ? (
                       <>
+                        {showAufstandsflaecheTool && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTabForPlan(i, 'phase1_demolition')
+                              setSelectedPolygonIndex(null)
+                              setNewPolygonPoints(null)
+                              if (tool === 'add') setTool('select')
+                            }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'phase1_demolition' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <LayoutGrid size={14} strokeWidth={2} />
+                            <span>Aufstandsfläche</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -2524,7 +2861,7 @@ export function DetectionsReviewEditor({
                           className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'zubau_extension' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
                         >
                           <LayoutGrid size={14} strokeWidth={2} />
-                          <span>Erweiterung</span>
+                          <span>Zubau</span>
                         </button>
                         <button
                           type="button"
@@ -2539,23 +2876,100 @@ export function DetectionsReviewEditor({
                           <Pencil size={14} strokeWidth={2} />
                           <span>Wandabbruch</span>
                         </button>
+                        {!roofOnlyOffer && (
+                          <button
+                            type="button"
+                            onClick={() => { setTabForPlan(i, 'doors'); setSelectedPolygonIndex(null); setNewPolygonPoints(null); if (tool === 'add') setTool('select') }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'doors' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <DoorOpen size={14} strokeWidth={2} />
+                            <span>Fenster / Türen</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTabForPlan(i, 'roof')
+                            setSelectedPolygonIndex(null)
+                            setNewPolygonPoints(null)
+                            if (tool === 'add') setTool('select')
+                            roofEditorRef.current?.roofApplyToolFromParent?.('select')
+                          }}
+                          className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'roof' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                        >
+                          <Home size={14} strokeWidth={2} />
+                          <span>Dach</span>
+                        </button>
+                        {editorConstraints.allowRoofWindows && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTabForPlan(i, 'roof_windows')
+                              setSelectedPolygonIndex(null)
+                              setNewPolygonPoints(null)
+                              if (tool === 'add') setTool('select')
+                              roofEditorRef.current?.roofApplyToolFromParent?.('select')
+                            }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'roof_windows' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <AppWindow size={14} strokeWidth={2} />
+                            <span>Dachfenster</span>
+                          </button>
+                        )}
                       </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTabForPlan(i, 'rooms')
-                          setSelectedPolygonIndex(null)
-                          setNewPolygonPoints(null)
-                          if (tool === 'add') setTool('select')
-                        }}
-                        className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'rooms' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
-                      >
-                        <LayoutGrid size={14} strokeWidth={2} />
-                        <span>Räume</span>
-                      </button>
+                    ) : isAufstockungKind ? (
+                      <>
+                        {showAufstandsflaecheTool && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTabForPlan(i, 'phase1_demolition')
+                              setSelectedPolygonIndex(null)
+                              setNewPolygonPoints(null)
+                              if (tool === 'add') setTool('select')
+                            }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'phase1_demolition' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <LayoutGrid size={14} strokeWidth={2} />
+                            <span>Aufstandsfläche</span>
+                          </button>
+                        )}
+                      </>
+                    ) : isBestandKind ? (
+                      <>
+                        {showAufstandsflaecheTool && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTabForPlan(i, 'phase1_demolition')
+                              setSelectedPolygonIndex(null)
+                              setNewPolygonPoints(null)
+                              if (tool === 'add') setTool('select')
+                            }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'phase1_demolition' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <LayoutGrid size={14} strokeWidth={2} />
+                            <span>Aufstandsfläche</span>
+                          </button>
+                        )}
+                      </>
+                    ) : null}
+                    {isAufstockungKind && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTabForPlan(i, 'rooms')
+                        setSelectedPolygonIndex(null)
+                        setNewPolygonPoints(null)
+                        if (tool === 'add') setTool('select')
+                      }}
+                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'rooms' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                    >
+                      <LayoutGrid size={14} strokeWidth={2} />
+                      <span>Räume</span>
+                    </button>
                     )}
-                    {!roofOnlyOffer && (
+                    {isAufstockungKind && !roofOnlyOffer && (
                     <button
                       type="button"
                       onClick={() => { setTabForPlan(i, 'doors'); setSelectedPolygonIndex(null); setNewPolygonPoints(null); if (tool === 'add') setTool('select') }}
@@ -2565,6 +2979,7 @@ export function DetectionsReviewEditor({
                       <span>Fenster / Türen</span>
                     </button>
                     )}
+                    {isAufstockungKind && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2579,7 +2994,8 @@ export function DetectionsReviewEditor({
                       <Home size={14} strokeWidth={2} />
                       <span>Dach</span>
                     </button>
-                    {editorConstraints.allowRoofWindows && (
+                    )}
+                    {isAufstockungKind && editorConstraints.allowRoofWindows && (
                     <button
                       type="button"
                       onClick={() => {
@@ -2806,24 +3222,24 @@ export function DetectionsReviewEditor({
                     onDoorHover={undefined}
                     onDoorActivate={undefined}
                     blendAufstockungPhase1Overlays={
-                      (roofOverlayRoomsForPhase1.length > 0 &&
-                        (planTab === 'rooms' ||
-                          planTab === 'zubau_extension' ||
-                          planTab === 'zubau_bestand' ||
-                          planTab === 'zubau_walls' ||
-                          planTab === 'doors')) ||
-                      (existingFloorEditing &&
-                        (planTab === 'phase1_demolition' ||
-                          planTab === 'phase1_stair' ||
-                          planTab === 'roof' ||
-                          planTab === 'roof_windows'))
+                      isAufstockungFlow &&
+                      planTab !== 'doors' &&
+                      planTab !== 'roof' &&
+                      planTab !== 'roof_windows'
                     }
                     blendZubauSiblingOverlays={
-                      isZubauFlow && String(effectiveFloorKinds[i] ?? '').toLowerCase() === 'new'
+                      isAufstockungFlow &&
+                      isZubauFlow &&
+                      planTab !== 'doors' &&
+                      planTab !== 'roof' &&
+                      planTab !== 'roof_windows' &&
+                      !(isCombinedZubauAufstockung && normalizeFloorKindRaw(floorKinds[i] ?? '') === 'aufstockung')
                     }
+                    showRoomPolygonsUnderDoors={false}
+                    highlightRoofSurfaceUnderlay={false}
                     useAufstockungsBasisDemolitionLabels={existingFloorEditing}
                     roofOverlayRooms={roofOverlayRoomsForPhase1}
-                    layoutRevealKey={existingFloorEditing ? phase1LayoutRevealKey : 0}
+                    layoutRevealKey={isAufstockungFlow ? phase1LayoutRevealKey : 0}
                     stackedView={stackRoofOverPhase1 ? roofStackView : null}
                   />
                 </div>

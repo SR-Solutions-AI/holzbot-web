@@ -116,10 +116,16 @@ export default function DashboardHeader() {
 
   const email = me?.user?.email || null
   const tenantConfig = (me?.tenant as any)?.config
+  const pdfAssetLogo = tenantConfig?.pdf?.assets?.logo_url as string | undefined
   const tenantLogoUrlRaw =
-    (tenantConfig?.logo_url ?? tenantConfig?.logoUrl) as string | undefined
-  const tenantLogoUrl =
-    (tenantLogoUrlRaw && tenantLogoUrlRaw.startsWith('http') ? tenantLogoUrlRaw : undefined)
+    (tenantConfig?.logo_url ?? tenantConfig?.logoUrl ?? pdfAssetLogo) as string | undefined
+  const tenantLogoUrl = (() => {
+    const s = tenantLogoUrlRaw?.trim()
+    if (!s) return undefined
+    if (s.startsWith('//')) return `https:${s}`
+    if (/^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('/')) return s
+    return undefined
+  })()
 
   if (wrongApp) {
     return (

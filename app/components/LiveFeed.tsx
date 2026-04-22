@@ -950,11 +950,20 @@ export default function LiveFeed() {
       const runId = rid
       const detailFlow = e.detail?.flow as OfferFlow | undefined
       const explicitFlow: OfferFlow | undefined =
-        detailFlow === 'neubau' || detailFlow === 'dachstuhl' || detailFlow === 'aufstockung'
+        detailFlow === 'neubau' ||
+        detailFlow === 'dachstuhl' ||
+        detailFlow === 'aufstockung' ||
+        detailFlow === 'zubau' ||
+        detailFlow === 'zubau_aufstockung'
           ? detailFlow
           : undefined
       const provisional: OfferFlow =
-        explicitFlow === 'aufstockung' || explicitFlow === 'dachstuhl' ? explicitFlow : 'neubau'
+        explicitFlow === 'aufstockung' ||
+        explicitFlow === 'dachstuhl' ||
+        explicitFlow === 'zubau' ||
+        explicitFlow === 'zubau_aufstockung'
+          ? explicitFlow
+          : 'neubau'
       flowModeRef.current = provisional
       setOfferFlow(provisional)
       setIsMeasurementsOnlyOffer(e?.detail?.measurementsOnlyOffer === true)
@@ -2102,14 +2111,18 @@ export default function LiveFeed() {
                       ? 'Aufstockung Mengenermittlung'
                       : offerFlow === 'zubau'
                         ? 'Zubau Mengenermittlung'
-                        : 'Neubau Mengenermittlung'
+                        : offerFlow === 'zubau_aufstockung'
+                          ? 'Zubau / Aufstockung Mengenermittlung'
+                          : 'Neubau Mengenermittlung'
                   : offerFlow === 'dachstuhl'
                     ? 'Dachstuhl Angebot'
                     : offerFlow === 'aufstockung'
                       ? 'Aufstockung Angebot'
                       : offerFlow === 'zubau'
                         ? 'Zubau Angebot'
-                        : 'Neubau Angebot'}
+                        : offerFlow === 'zubau_aufstockung'
+                          ? 'Zubau / Aufstockung Angebot'
+                          : 'Neubau Angebot'}
               </span>
               <div className="text-xs font-medium text-sand/80 truncate">
                 {currentStageName || 'Verarbeitung...'}

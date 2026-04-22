@@ -529,6 +529,47 @@ export function DetectionsPolygonCanvas({
         ctx.stroke()
       })
     }
+    const drawDemolitionDim = () => {
+      demolitionPolys.forEach((d) => {
+        const pts = d.points
+        if (pts.length < 2) return
+        ctx.fillStyle = '#dc2626'
+        ctx.globalAlpha = 0.14
+        ctx.beginPath()
+        ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
+        for (let k = 1; k < pts.length; k++) {
+          ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
+        }
+        ctx.closePath()
+        ctx.fill()
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = 'rgba(248,113,113,0.55)'
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      })
+    }
+    const drawStairDim = () => {
+      stairOpeningRects.forEach((st) => {
+        const [x1, y1, x2, y2] = st.bbox
+        ctx.fillStyle = stairPreviewStyle.fill
+        ctx.globalAlpha = 0.2
+        ctx.fillRect(ox + Math.min(x1, x2) * s, oy + Math.min(y1, y2) * s, Math.abs(x2 - x1) * s, Math.abs(y2 - y1) * s)
+        ctx.globalAlpha = 1
+        ctx.strokeStyle = stairPreviewStyle.stroke
+        ctx.lineWidth = 1.5
+        ctx.strokeRect(ox + Math.min(x1, x2) * s, oy + Math.min(y1, y2) * s, Math.abs(x2 - x1) * s, Math.abs(y2 - y1) * s)
+      })
+    }
+
+    // Keep Zubau overlays visible across tabs as persistent context.
+    const drawPersistentZubauOverlays = () => {
+      if (zubauBestandPolys.length > 0) drawZubauBestandDim()
+      if (zubauWallLines.length > 0) drawZubauWallLinesDim()
+    }
+
+    if (tab !== 'doors') {
+      drawPersistentZubauOverlays()
+    }
 
     if (tab === 'rooms') {
       /** Bestand + Dach-Tab: Aufstandsfläche + Treppenöffnung als Kontext unter dem Dach-Plan (gleiche Optik wie Phase-1-Blend). */
@@ -536,38 +577,9 @@ export function DetectionsPolygonCanvas({
         blendAufstockungPhase1Overlays &&
         (demolitionPolys.length > 0 || stairOpeningRects.length > 0 || roofOverlayRooms.length > 0)
       ) {
-        demolitionPolys.forEach((d) => {
-          const pts = d.points
-          if (pts.length < 2) return
-          ctx.fillStyle = '#dc2626'
-          ctx.globalAlpha = 0.14
-          ctx.beginPath()
-          ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
-          for (let k = 1; k < pts.length; k++) {
-            ctx.lineTo(ox + pts[k][0] * s, oy + pts[k][1] * s)
-          }
-          ctx.closePath()
-          ctx.fill()
-          ctx.globalAlpha = 1
-          ctx.strokeStyle = 'rgba(248,113,113,0.55)'
-          ctx.lineWidth = 1.5
-          ctx.stroke()
-        })
-        stairOpeningRects.forEach((st) => {
-          const [x1, y1, x2, y2] = st.bbox
-          ctx.fillStyle = stairPreviewStyle.fill
-          ctx.globalAlpha = 0.2
-          ctx.fillRect(ox + Math.min(x1, x2) * s, oy + Math.min(y1, y2) * s, Math.abs(x2 - x1) * s, Math.abs(y2 - y1) * s)
-          ctx.globalAlpha = 1
-          ctx.strokeStyle = stairPreviewStyle.stroke
-          ctx.lineWidth = 1.5
-          ctx.strokeRect(ox + Math.min(x1, x2) * s, oy + Math.min(y1, y2) * s, Math.abs(x2 - x1) * s, Math.abs(y2 - y1) * s)
-        })
+        drawDemolitionDim()
+        drawStairDim()
         drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
-      }
-      if (blendZubauSiblingOverlays && (zubauBestandPolys.length > 0 || zubauWallLines.length > 0)) {
-        drawZubauBestandDim()
-        drawZubauWallLinesDim()
       }
       rooms.forEach((room, i) => {
         const pts = room.points
@@ -651,10 +663,12 @@ export function DetectionsPolygonCanvas({
         })
       }
     } else if (tab === 'zubau_bestand') {
-      if (blendZubauSiblingOverlays) {
-        drawRoomsDimZubauContext()
-        /* Kein Wandabbruch-Overlay im Bestand-Tab – nur auf „Wandabbruch“. */
+      if (blendAufstockungPhase1Overlays) {
+        drawDemolitionDim()
+        drawStairDim()
+        drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
       }
+      if (blendZubauSiblingOverlays) drawRoomsDimZubauContext()
       zubauBestandPolys.forEach((d, i) => {
         const pts = d.points
         if (pts.length < 2) return
@@ -844,6 +858,11 @@ export function DetectionsPolygonCanvas({
       }
     } else if (tab === 'zubau_walls') {
       drawRoomsDimZubauContext()
+      if (blendAufstockungPhase1Overlays) {
+        drawDemolitionDim()
+        drawStairDim()
+        drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
+      }
       if (blendZubauSiblingOverlays) {
         drawZubauBestandDim()
       }
@@ -889,6 +908,15 @@ export function DetectionsPolygonCanvas({
         ctx.fill()
       }
     } else {
+      if (blendAufstockungPhase1Overlays && tab === 'doors') {
+        drawDemolitionDim()
+        drawStairDim()
+        drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
+      }
+      if (blendZubauSiblingOverlays && tab === 'doors') {
+        drawZubauBestandDim()
+        drawZubauWallLinesDim()
+      }
       if (blendAufstockungPhase1Overlays && tab === 'stair_opening') {
         rooms.forEach((room, ri) => {
           const pts = room.points
@@ -924,6 +952,10 @@ export function DetectionsPolygonCanvas({
           ctx.lineWidth = 1.5
           ctx.stroke()
         })
+        if (blendZubauSiblingOverlays) {
+          drawZubauBestandDim()
+          drawZubauWallLinesDim()
+        }
         drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
       }
       if (showRoomPolygonsUnderDoors && tab === 'doors') {
