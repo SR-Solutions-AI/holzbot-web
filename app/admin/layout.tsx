@@ -5,17 +5,14 @@ import DashboardHeader from '../dashboard/DashboardHeader'
 import DashboardFooter from '../dashboard/DashboardFooter'
 import DashboardContentTransition from '../dashboard/DashboardContentTransition'
 import DashboardScaleWrapper from '../dashboard/DashboardScaleWrapper'
-import { Cloud, Sparkles, BrainCircuit } from 'lucide-react'
+import { Cloud, Sparkles } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 const ADMIN_STATUS = {
   cloudflare: 'Operational',
-  openaiLeft: '62%',
-  geminiLeft: '34%',
-  openaiRpm: '8.4k RPM',
-  geminiRpm: '3.1k RPM',
-  openaiReset: 'Resets in 02:18',
-  geminiReset: 'Resets in 05:42',
+  geminiLeft: '72%',
+  geminiRpm: '4.2k RPM',
+  geminiReset: 'Resets in 04:10',
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -40,15 +37,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               detailMode={detailMode}
             />
             <StatusPill
-              icon={<BrainCircuit size={14} />}
-              label="OpenAI usage left"
-              value={detailMode ? ADMIN_STATUS.openaiRpm : ADMIN_STATUS.openaiLeft}
-              detailValue={detailMode ? ADMIN_STATUS.openaiReset : 'Tokens left'}
-              detailMode={detailMode}
-            />
-            <StatusPill
               icon={<Sparkles size={14} />}
-              label="Gemini usage left"
+              label="Gemini API"
               value={detailMode ? ADMIN_STATUS.geminiRpm : ADMIN_STATUS.geminiLeft}
               detailValue={detailMode ? ADMIN_STATUS.geminiReset : 'Tokens left'}
               detailMode={detailMode}
