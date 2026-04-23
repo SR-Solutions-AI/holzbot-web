@@ -146,7 +146,6 @@ describe('Preisdatenbank – acoperire completă', () => {
       'sewage_base_price',
       'unit_price_placa',
       'baustelleneinrichtung_standard_percent',
-      'unit_price_keller_nutzkeller',
       'window_2_fach_price',
       'interior_outer_tencuiala',
       'door_interior_standard',

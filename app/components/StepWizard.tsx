@@ -4062,17 +4062,17 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   const isAufstockungFlow = resolvedWizardPackage === 'aufstockung' || resolvedWizardPackage === 'zubau' || resolvedWizardPackage === 'zubau_aufstockung'
   const isLegacyZubauOnlyFlow = resolvedWizardPackage === 'zubau'
   const isUnifiedZubauAufstockungFlow = resolvedWizardPackage === 'zubau_aufstockung'
-  const foundationOptions = preisdatenbankOptionsByTag['foundation_type'] ?? []
+  const tipFundatieBeciSelectOptions = [...FOUNDATION_OPTIONS]
   const stairTypeOptions = preisdatenbankOptionsByTag['stairs_type'] ?? []
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const hasBase = true
   const basementUse = isKellerMitAusbauChoice(tipFundatieBeci)
   useEffect(() => {
-    if (foundationOptions.length > 0 && !foundationOptions.includes(tipFundatieBeci)) {
-      setForm(prev => ({ ...prev, tipFundatieBeci: foundationOptions[0] }))
+    if (!tipFundatieBeciSelectOptions.includes(tipFundatieBeci)) {
+      setForm(prev => ({ ...prev, tipFundatieBeci: tipFundatieBeciSelectOptions[0] }))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when hidden options change; form used only for merge
-  }, [foundationOptions.length, foundationOptions.join(','), tipFundatieBeci])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when fixed option list changes; form used only for merge
+  }, [tipFundatieBeciSelectOptions.join('|'), tipFundatieBeci])
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
   const stairOptsEffective = stairTypeOptions.length > 0 ? stairTypeOptions : Array.from(STAIR_TYPE_OPTIONS)
@@ -4516,13 +4516,11 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
           <span className="wiz-label text-sun/90">{isAufstockungFlow ? 'Untergeschoss' : 'Untergeschoss / Fundament'}</span>
           <div className={errors.tipFundatieBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
-              value={foundationOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (foundationOptions[0] ?? '')}
+              value={tipFundatieBeciSelectOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (tipFundatieBeciSelectOptions[0] ?? '')}
               onChange={(v) => setForm(prev => ({ ...prev, tipFundatieBeci: v }))}
-              options={foundationOptions}
+              options={tipFundatieBeciSelectOptions}
               placeholder="Wählen Sie eine Option"
-              displayFor={(opt) =>
-                adaptCurrencyCopy(paramLabelOverrides[optionValueToPriceKey['foundation_type']?.[opt] ?? ''] ?? opt, displayCurrency)
-              }
+              displayFor={(opt) => adaptCurrencyCopy(opt, displayCurrency)}
             />
           </div>
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
