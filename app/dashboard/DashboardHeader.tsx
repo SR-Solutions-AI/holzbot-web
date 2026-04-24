@@ -6,6 +6,11 @@ import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Hom
 import { supabase } from '../lib/supabaseClient'
 import { apiFetch } from '../lib/supabaseClient'
 import { useCallback, useEffect, useState, useRef } from 'react'
+import {
+  VpsAdminMetricsPopoverContent,
+  type VpsNavbarMetricPanels,
+  type VpsMetricHistorySample,
+} from './VpsAdminMetricsPopover'
 
 // --- CONFIG ---
 const LOGO_IMAGE_URL = '/logo.png'
@@ -32,11 +37,26 @@ type VpsNavbarDetails = {
   bandwidth: string
 }
 
+const EMPTY_VPS_PANELS: VpsNavbarMetricPanels = {
+  cpuPercent: null,
+  memoryPercent: null,
+  diskPercent: null,
+  memoryUsedBytes: null,
+  memoryTotalBytes: null,
+  diskUsedBytes: null,
+  diskTotalBytes: null,
+  rxBps: null,
+  txBps: null,
+  trafficInBytes: null,
+  trafficOutBytes: null,
+}
+
 type VpsNavbarVm = {
   cpuPercent: number | null
   fetchedAt: string
   error: string | null
   details: VpsNavbarDetails
+  panels: VpsNavbarMetricPanels
 }
 
 type VpsNavbarResponse = {
@@ -145,7 +165,7 @@ export default function DashboardHeader() {
       return
     }
     let cancelled = false
-    const pollMs = 45_000
+    const pollMs = 25_000
     const load = async () => {
       try {
         if (!cancelled) setVpsNavbarLoading(true)
@@ -223,6 +243,8 @@ export default function DashboardHeader() {
                 <VpsStatusChip
                   label="Testing"
                   cpuPercent={vpsNavbar?.testing.cpuPercent ?? null}
+                  fetchedAt={vpsNavbar?.testing.fetchedAt ?? ''}
+                  panels={vpsNavbar?.testing.panels ?? EMPTY_VPS_PANELS}
                   loading={vpsNavbarLoading && !vpsNavbar}
                   error={vpsNavbar?.testing.error ?? (vpsNavbar === null ? 'Could not load status' : null)}
                   icon={<FlaskConical size={12} className="text-[#FFB84D]" />}
@@ -231,6 +253,8 @@ export default function DashboardHeader() {
                 <VpsStatusChip
                   label="Production"
                   cpuPercent={vpsNavbar?.production.cpuPercent ?? null}
+                  fetchedAt={vpsNavbar?.production.fetchedAt ?? ''}
+                  panels={vpsNavbar?.production.panels ?? EMPTY_VPS_PANELS}
                   loading={vpsNavbarLoading && !vpsNavbar}
                   error={vpsNavbar?.production.error ?? (vpsNavbar === null ? 'Could not load status' : null)}
                   icon={<Server size={12} className="text-[#FFB84D]" />}
@@ -353,9 +377,24 @@ export default function DashboardHeader() {
   )
 }
 
+function vpsMetricSample(panels: VpsNavbarMetricPanels, at: string): VpsMetricHistorySample {
+  return {
+    fetchedAt: at,
+    cpu: panels.cpuPercent ?? 0,
+    mem: panels.memoryPercent ?? 0,
+    disk: panels.diskPercent ?? 0,
+    rx: panels.rxBps ?? 0,
+    tx: panels.txBps ?? 0,
+    trafficIn: panels.trafficInBytes ?? 0,
+    trafficOut: panels.trafficOutBytes ?? 0,
+  }
+}
+
 function VpsStatusChip({
   label,
   cpuPercent,
+  fetchedAt,
+  panels,
   loading,
   error,
   icon,
@@ -363,6 +402,8 @@ function VpsStatusChip({
 }: {
   label: string
   cpuPercent: number | null
+  fetchedAt: string
+  panels: VpsNavbarMetricPanels
   loading?: boolean
   error?: string | null
   icon: React.ReactNode
@@ -377,6 +418,16 @@ function VpsStatusChip({
     bandwidth: string
   }
 }) {
+  const [metricHistory, setMetricHistory] = useState<VpsMetricHistorySample[]>([])
+  const lastFetchedAtRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!fetchedAt) return
+    if (lastFetchedAtRef.current === fetchedAt) return
+    lastFetchedAtRef.current = fetchedAt
+    setMetricHistory((prev) => [...prev, vpsMetricSample(panels, fetchedAt)].slice(-36))
+  }, [fetchedAt, panels])
+
   const width =
     cpuPercent === null || !Number.isFinite(cpuPercent)
       ? 0
@@ -403,7 +454,7 @@ function VpsStatusChip({
         <div className="h-full rounded-full bg-[#FF9F0F]" style={{ width: `${width}%` }} />
       </div>
 
-      <div className="pointer-events-none absolute left-0 top-full z-50 mt-2 w-[310px] origin-top-left rounded-xl border border-white/15 bg-black/90 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+      <div className="pointer-events-auto absolute left-0 top-full z-50 mt-2 origin-top-left rounded-xl border border-white/15 bg-black/95 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-[15px] font-bold text-white">{label}</div>
           <div className="inline-flex max-w-[160px] items-center gap-1 rounded-full border border-[#FF9F0F]/45 bg-[#FF9F0F]/14 px-2 py-0.5 text-[11px] font-semibold text-[#FFD29A]">
@@ -413,24 +464,8 @@ function VpsStatusChip({
         </div>
         <div className="mb-2 text-[12px] text-sand/80">{details.os}</div>
         {error ? <div className="mb-2 text-[11px] text-red-300/90 break-words">{error}</div> : null}
-        <div className="grid grid-cols-2 gap-2 text-[12px]">
-          <DetailItem label="CPU usage" value={details.cpu} />
-          <DetailItem label="Memory usage" value={details.memory} />
-          <DetailItem label="Disk usage" value={details.disk} />
-          <DetailItem label="Bandwidth" value={details.bandwidth} />
-          <DetailItem label="Incoming traffic" value={details.incoming} />
-          <DetailItem label="Outgoing traffic" value={details.outgoing} />
-        </div>
+        <VpsAdminMetricsPopoverContent panels={panels} history={metricHistory} />
       </div>
-    </div>
-  )
-}
-
-function DetailItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
-      <div className="text-[11px] text-sand/70">{label}</div>
-      <div className="mt-0.5 text-[13px] font-semibold text-sand">{value}</div>
     </div>
   )
 }
