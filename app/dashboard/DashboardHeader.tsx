@@ -10,6 +10,41 @@ import { useCallback, useEffect, useState, useRef } from 'react'
 // --- CONFIG ---
 const LOGO_IMAGE_URL = '/logo.png'
 
+const VPS_PLACEHOLDER_DETAILS = {
+  os: '—',
+  status: '—',
+  cpu: '—',
+  memory: '—',
+  disk: '—',
+  incoming: '—',
+  outgoing: '—',
+  bandwidth: '—',
+} as const
+
+type VpsNavbarDetails = {
+  os: string
+  status: string
+  cpu: string
+  memory: string
+  disk: string
+  incoming: string
+  outgoing: string
+  bandwidth: string
+}
+
+type VpsNavbarVm = {
+  cpuPercent: number | null
+  fetchedAt: string
+  error: string | null
+  details: VpsNavbarDetails
+}
+
+type VpsNavbarResponse = {
+  configured: boolean
+  testing: VpsNavbarVm
+  production: VpsNavbarVm
+}
+
 export default function DashboardHeader() {
   const pathname = usePathname()
   const isAdminRoute = pathname?.startsWith('/admin')
@@ -22,6 +57,8 @@ export default function DashboardHeader() {
     tokens?: { display?: string; unlimited?: boolean } | null
   } | null>(null)
   const [wrongApp, setWrongApp] = useState<{ forApp: string; loginUrl: string } | null>(null)
+  const [vpsNavbar, setVpsNavbar] = useState<VpsNavbarResponse | null>(null)
+  const [vpsNavbarLoading, setVpsNavbarLoading] = useState(false)
   const mountedRef = useRef(true)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -100,6 +137,34 @@ export default function DashboardHeader() {
     }
   }, [fetchMe])
 
+  /** Admin navbar: Hostinger-backed CPU % (holzbot-api GET /admin/vps-status). */
+  useEffect(() => {
+    if (!isAdminRoute) {
+      setVpsNavbar(null)
+      setVpsNavbarLoading(false)
+      return
+    }
+    let cancelled = false
+    const pollMs = 45_000
+    const load = async () => {
+      try {
+        if (!cancelled) setVpsNavbarLoading(true)
+        const data = (await apiFetch('/admin/vps-status', { timeoutMs: 25_000 })) as VpsNavbarResponse
+        if (!cancelled) setVpsNavbar(data)
+      } catch {
+        if (!cancelled) setVpsNavbar(null)
+      } finally {
+        if (!cancelled) setVpsNavbarLoading(false)
+      }
+    }
+    void load()
+    const id = window.setInterval(() => void load(), pollMs)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [isAdminRoute])
+
   useEffect(() => {
     void fetchMe()
   }, [pathname, fetchMe])
@@ -157,33 +222,19 @@ export default function DashboardHeader() {
               <div className="flex items-center gap-2">
                 <VpsStatusChip
                   label="Testing"
-                  value={64}
+                  cpuPercent={vpsNavbar?.testing.cpuPercent ?? null}
+                  loading={vpsNavbarLoading && !vpsNavbar}
+                  error={vpsNavbar?.testing.error ?? (vpsNavbar === null ? 'Could not load status' : null)}
                   icon={<FlaskConical size={12} className="text-[#FFB84D]" />}
-                  details={{
-                    os: 'Ubuntu 24.04',
-                    status: 'Running',
-                    cpu: '1%',
-                    memory: '17%',
-                    disk: '38 GB / 100 GB',
-                    incoming: '5.2 MB',
-                    outgoing: '21.4 MB',
-                    bandwidth: '0.003 TB / 8 TB',
-                  }}
+                  details={vpsNavbar?.testing.details ?? { ...VPS_PLACEHOLDER_DETAILS }}
                 />
                 <VpsStatusChip
                   label="Production"
-                  value={78}
+                  cpuPercent={vpsNavbar?.production.cpuPercent ?? null}
+                  loading={vpsNavbarLoading && !vpsNavbar}
+                  error={vpsNavbar?.production.error ?? (vpsNavbar === null ? 'Could not load status' : null)}
                   icon={<Server size={12} className="text-[#FFB84D]" />}
-                  details={{
-                    os: 'Ubuntu 24.04',
-                    status: 'Running',
-                    cpu: '4%',
-                    memory: '42%',
-                    disk: '61 GB / 100 GB',
-                    incoming: '18.6 MB',
-                    outgoing: '44.9 MB',
-                    bandwidth: '0.11 TB / 8 TB',
-                  }}
+                  details={vpsNavbar?.production.details ?? { ...VPS_PLACEHOLDER_DETAILS }}
                 />
               </div>
             ) : tenantLogoUrl ? (
@@ -304,12 +355,16 @@ export default function DashboardHeader() {
 
 function VpsStatusChip({
   label,
-  value,
+  cpuPercent,
+  loading,
+  error,
   icon,
   details,
 }: {
   label: string
-  value: number
+  cpuPercent: number | null
+  loading?: boolean
+  error?: string | null
   icon: React.ReactNode
   details: {
     os: string
@@ -322,9 +377,18 @@ function VpsStatusChip({
     bandwidth: string
   }
 }) {
-  const width = Math.max(0, Math.min(100, value))
+  const width =
+    cpuPercent === null || !Number.isFinite(cpuPercent)
+      ? 0
+      : Math.max(0, Math.min(100, Math.round(cpuPercent * 10) / 10))
+  const pctLabel =
+    loading && cpuPercent === null ? '…' : cpuPercent === null || !Number.isFinite(cpuPercent) ? '—' : `${width}%`
+  const title = error && error !== 'Could not load status' ? error : undefined
   return (
-    <div className="group relative min-w-[152px] rounded-xl border border-white/12 bg-black/30 px-3 py-2 transition-colors duration-150 hover:border-white/20 hover:bg-black/45">
+    <div
+      className="group relative min-w-[152px] rounded-xl border border-white/12 bg-black/30 px-3 py-2 transition-colors duration-150 hover:border-white/20 hover:bg-black/45"
+      title={title}
+    >
       <div className="flex items-center gap-2">
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/6 text-[#FFB84D]">
           {icon}
@@ -333,21 +397,22 @@ function VpsStatusChip({
           <span className="block text-[10px] font-medium uppercase tracking-[0.12em] text-sand/50">VPS</span>
           <span className="block text-xs font-semibold text-sand/95">{label}</span>
         </div>
-        <span className="shrink-0 text-xs font-bold text-[#FFD29A]">{value}%</span>
+        <span className="shrink-0 text-xs font-bold text-[#FFD29A]">{pctLabel}</span>
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-black/40 ring-1 ring-white/10">
         <div className="h-full rounded-full bg-[#FF9F0F]" style={{ width: `${width}%` }} />
       </div>
 
       <div className="pointer-events-none absolute left-0 top-full z-50 mt-2 w-[310px] origin-top-left rounded-xl border border-white/15 bg-black/90 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-[15px] font-bold text-white">{label}</div>
-          <div className="inline-flex items-center gap-1 rounded-full border border-[#FF9F0F]/45 bg-[#FF9F0F]/14 px-2 py-0.5 text-[11px] font-semibold text-[#FFD29A]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#FF9F0F]" />
-            {details.status}
+          <div className="inline-flex max-w-[160px] items-center gap-1 rounded-full border border-[#FF9F0F]/45 bg-[#FF9F0F]/14 px-2 py-0.5 text-[11px] font-semibold text-[#FFD29A]">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#FF9F0F]" />
+            <span className="truncate">{details.status}</span>
           </div>
         </div>
         <div className="mb-2 text-[12px] text-sand/80">{details.os}</div>
+        {error ? <div className="mb-2 text-[11px] text-red-300/90 break-words">{error}</div> : null}
         <div className="grid grid-cols-2 gap-2 text-[12px]">
           <DetailItem label="CPU usage" value={details.cpu} />
           <DetailItem label="Memory usage" value={details.memory} />
