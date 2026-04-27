@@ -374,6 +374,9 @@ function asBool(v: any): boolean {
   return false
 }
 
+/** Platzhalter bis zur finalen Projektnummer; gesetzt wenn der Bezeichnungs-Schritt übersprungen wird. */
+const DEFAULT_NEW_PROJECT_REFERENCE_DE = 'Neues Projekt'
+
 const STEP_FIELD_PREFIXES: Record<string, string[]> = {
   wandaufbau: ['außenwande', 'innenwande'],
   bodenDeckeBelag: ['bodenaufbau', 'bodenbelag', 'deckenaufbau'],
@@ -685,6 +688,8 @@ export default function StepWizard() {
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('EUR')
 
   const lastProcessedCreationId = useRef<number>(0)
+  /** Bezeichnungsschritt ist ausgeblendet; Default-Referenz einmal setzen, wenn der Wizard ohne offerId startet. */
+  const defaultReferintaSeededRef = useRef(false)
   const activeCreationPromise = useRef<Promise<string> | null>(null)
   const pendingOfferTypeIdRef = useRef<string | null>(null)
   /** Card „Dachstuhl“: ofertă doar acoperiș (meta + tip ofertă) */
@@ -767,6 +772,7 @@ export default function StepWizard() {
     if (editOfferSkipUpload) {
       steps = steps.filter((s: { key?: string }) => (s as { key?: string }).key !== 'upload')
     }
+    steps = steps.filter((s: { key?: string }) => (s as any).key !== 'dateGenerale')
     steps = steps.filter((s: { key?: string }) => (s as any).key !== 'wintergaertenBalkone')
     // nivelOferta stă în drafts['sistemConstructiv'] după ce părăsim pasul — mergeStepForm nu păstrează ...prev, deci form pierde câmpurile celorlalte pași
     const nivelRaw = (
@@ -978,24 +984,56 @@ export default function StepWizard() {
     return () => window.removeEventListener('tenant-config:saved', onSaved)
   }, [])
 
+  const applyInitialWizardIndexForSteps = useCallback((_steps: any[]) => {
+    setIdx(0)
+  }, [])
+
   // 1b. Când user alege pachet (Dachstuhl vs Neubau/Mengen), folosim flow-ul corespunzător
   useEffect(() => {
     if (measurementsOnlyFlow && selectedPackage === 'dachstuhl') {
       const uploadOnly = (formStepsDachstuhl as any[]).filter((s) => s.key === 'upload')
-      setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[]))
-      setIdx(0)
+      const steps = uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[])
+      setDynamicSteps(steps)
+      applyInitialWizardIndexForSteps(steps)
     } else if (measurementsOnlyFlow && (selectedPackage === 'neubau' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || selectedPackage === 'zubau_aufstockung')) {
       const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
-      setDynamicSteps(uploadOnly.length ? uploadOnly : (formStepsFromJson as any[]))
-      setIdx(0)
+      const steps = uploadOnly.length ? uploadOnly : (formStepsFromJson as any[])
+      setDynamicSteps(steps)
+      applyInitialWizardIndexForSteps(steps)
     } else if (selectedPackage === 'dachstuhl') {
-      setDynamicSteps(formStepsDachstuhl as any[])
-      setIdx(0)
+      const steps = formStepsDachstuhl as any[]
+      setDynamicSteps(steps)
+      applyInitialWizardIndexForSteps(steps)
     } else if ((selectedPackage === 'neubau' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || selectedPackage === 'zubau_aufstockung') && formStepsFromJson.length > 0) {
-      setDynamicSteps(formStepsFromJson as any[])
-      setIdx(0)
+      const steps = formStepsFromJson as any[]
+      setDynamicSteps(steps)
+      applyInitialWizardIndexForSteps(steps)
     }
-  }, [measurementsOnlyFlow, selectedPackage, formStepsFromJson])
+  }, [measurementsOnlyFlow, selectedPackage, formStepsFromJson, applyInitialWizardIndexForSteps])
+
+  useEffect(() => {
+    const showPicker = !computing && !pdfUrl && !offerId && selectedPackage === null
+    if (showPicker) {
+      defaultReferintaSeededRef.current = false
+      return
+    }
+    if (!selectedPackage || offerId) return
+    if (defaultReferintaSeededRef.current) return
+    defaultReferintaSeededRef.current = true
+    setForm(prev => {
+      const r = String(prev.referinta ?? '').trim()
+      if (r.length >= 3) return prev
+      if (r) return prev
+      return { ...prev, referinta: DEFAULT_NEW_PROJECT_REFERENCE_DE }
+    })
+    setDrafts(prev => ({
+      ...prev,
+      dateGenerale: {
+        ...(prev.dateGenerale ?? {}),
+        referinta: String(prev.dateGenerale?.referinta ?? '').trim() || DEFAULT_NEW_PROJECT_REFERENCE_DE,
+      },
+    }))
+  }, [computing, pdfUrl, offerId, selectedPackage])
 
   const fetchPricingParameters = useCallback(() => {
     // Întotdeauna reîmprospătăm datele din Preisdatenbank (indiferent de pachet), ca formularul să reflecte starea actuală
@@ -1076,6 +1114,7 @@ export default function StepWizard() {
       setSaveStatus('idle')
       setSelectedPackage(null)
       setPackagePickerMengenSub(false)
+      setWipNotice(null)
       // Keep current mode until we read offer meta; otherwise a freshly created
       // measurements-only offer can briefly fall back to full-form flow.
       setMeasurementsOnlyFlow(measurementsOnlyFlowRef.current)
@@ -2475,7 +2514,8 @@ export default function StepWizard() {
   }
 
   async function maybeUpdateOfferTitle(id: string) {
-    const dg = drafts['dateGenerale'] ?? (step?.key === 'dateGenerale' ? form : {})
+    const dgRaw = (drafts['dateGenerale'] ?? (step?.key === 'dateGenerale' ? form : {})) as Record<string, any>
+    const dg: Record<string, any> = { ...dgRaw, referinta: dgRaw.referinta ?? form.referinta }
     const cl = drafts['client'] ?? (step?.key === 'client' ? form : {})
     const title = [cl?.nume?.trim(), dg?.referinta?.trim()].filter(Boolean).join(' — ')
     try {
@@ -2705,12 +2745,12 @@ export default function StepWizard() {
                 aria-hidden={packagePickerMengenSub || wipNotice !== null}
               >
                 <div
-                  className={`grid grid-cols-1 sm:grid-cols-[repeat(2,minmax(0,260px))] gap-3 w-full max-w-[536px] mx-auto justify-center justify-items-stretch ${
+                  className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch ${
                     tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                   }`}
                 >
                   {/* 1) Dachstuhl */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
@@ -2735,7 +2775,7 @@ export default function StepWizard() {
                   </div>
 
                   {/* 2) Neubau */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/house.png" alt="Neubau" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
@@ -2760,7 +2800,7 @@ export default function StepWizard() {
                   </div>
 
                   {/* 3) Zubau / Aufstockung */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/aufstockung.png" alt="Zubau / Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
@@ -2786,7 +2826,7 @@ export default function StepWizard() {
                   </div>
 
                   {/* 4) Mengenübersicht */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-start-2 lg:col-span-2">
                     <div className="flex items-center justify-center mb-3">
                       <img src="/images/blueprint.png" alt="Mengenübersicht" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
@@ -2807,6 +2847,43 @@ export default function StepWizard() {
                       <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
+
+                  {/* 5) Gewerbe- und Wohnbau */}
+                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-start-4 lg:col-span-2">
+                    <div className="mb-3 flex justify-center">
+                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[#FF9F0F]/30 bg-white ring-1 ring-black/[0.08]">
+                        <img
+                          src="/images/gewerbe.png"
+                          alt="Gewerbe- und Wohnbau"
+                          className="absolute max-h-none object-cover object-center contrast-[1.16]"
+                          style={{
+                            width: '93%',
+                            height: '93%',
+                            left: '50%',
+                            top: '50%',
+                            transform: 'translate(calc(-50% - 4px), calc(-50% + 4px))',
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">
+                      Erstellung einer Preisschätzung für Gewerbe- und Wohnbauten
+                    </div>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      disabled={tokensBlocked}
+                      onClick={() => {
+                        if (tokensBlocked) return
+                        setWipNotice('gewerbe')
+                      }}
+                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      Kalkulation starten
+                      <ChevronRight size={18} className="opacity-85" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2820,7 +2897,7 @@ export default function StepWizard() {
               >
                 <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
                   <div
-                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(320px,320px))] gap-4 w-full max-w-[992px] justify-center justify-items-stretch items-stretch ${
+                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch items-stretch ${
                       tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                     }`}
                   >
@@ -2834,7 +2911,7 @@ export default function StepWizard() {
                         Zurück zur Auswahl
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-2 lg:col-start-2 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                       </div>
@@ -2859,7 +2936,7 @@ export default function StepWizard() {
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-2 lg:col-start-4 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2886,7 +2963,7 @@ export default function StepWizard() {
                       </button>
                     </div>
 
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full max-w-[320px] h-full mx-auto border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)]">
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-2 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/roof-blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
@@ -2912,6 +2989,42 @@ export default function StepWizard() {
                       </button>
                     </div>
 
+                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-4 lg:col-span-2">
+                      <div className="mb-3 flex justify-center">
+                        <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[#FF9F0F]/25 bg-white ring-1 ring-black/[0.08]">
+                          <img
+                            src="/images/gewerbe-blueprint.png"
+                            alt=""
+                            className="absolute max-h-none object-cover object-center contrast-[1.16]"
+                            style={{
+                              width: '93%',
+                              height: '93%',
+                              left: '50%',
+                              top: '50%',
+                              transform: 'translate(calc(-50% - 4px), calc(-50% + 4px))',
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau Mengenübersicht</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (tokensBlocked) return
+                          setPackagePickerMengenSub(false)
+                          setWipNotice('gewerbe_mengen')
+                        }}
+                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+
                   </div>
                 </div>
               </div>
@@ -2928,7 +3041,15 @@ export default function StepWizard() {
             >
               <div className="text-6xl mb-6">🚧</div>
               <h3 className="text-white font-extrabold text-2xl mb-3">
-                {wipNotice === 'aufstockung' ? 'Aufstockung' : wipNotice === 'zubau_aufstockung' ? 'Zubau / Aufstockung' : 'Zubau'}
+                {wipNotice === 'gewerbe'
+                  ? 'Gewerbe- und Wohnbau'
+                  : wipNotice === 'gewerbe_mengen'
+                    ? 'Gewerbe- und Wohnbau Mengenübersicht'
+                    : wipNotice === 'aufstockung'
+                      ? 'Aufstockung'
+                      : wipNotice === 'zubau_aufstockung'
+                        ? 'Zubau / Aufstockung'
+                        : 'Zubau'}
               </h3>
               <p className="text-sand/80 text-base max-w-xs leading-relaxed text-center">
                 Dieses Modul ist zur Zeit in Entwicklung.

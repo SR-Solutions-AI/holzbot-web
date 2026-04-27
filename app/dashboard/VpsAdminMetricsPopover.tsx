@@ -68,11 +68,11 @@ function widenSeries(s: number[]): number[] {
   return s
 }
 
-function MiniSparkline({ series, tone = 'gold' }: { series: number[]; tone?: 'gold' | 'violet' }) {
+function MiniSparkline({ series }: { series: number[] }) {
   const w = 58
   const h = 36
   const pad = 3
-  const stroke = tone === 'violet' ? '#a78bfa' : '#FF9F0F'
+  const stroke = '#FF9F0F'
   const s = widenSeries(series.filter((x) => Number.isFinite(x)))
   if (s.length === 0) {
     return <svg width={w} height={h} className="shrink-0" aria-hidden />
@@ -220,7 +220,7 @@ export function VpsAdminMetricsPopoverContent({ panels, history }: Props) {
         label="Memory usage"
         primary={pctPrimary(panels.memoryPercent)}
         secondary={memSub}
-        right={<MiniSparkline series={memSpark} tone="violet" />}
+        right={<MiniSparkline series={memSpark} />}
       />
       <HostMetricCard
         label="Disk usage"

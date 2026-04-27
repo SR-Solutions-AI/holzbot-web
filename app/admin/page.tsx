@@ -50,6 +50,10 @@ import {
   fetchAdminTenantOffers,
   fetchAdminTenantWorkspace,
   fetchAdminStatisticsSummary,
+  resolveAdminIncident,
+  closeAdminRun,
+  updateAdminTenantWorkspace,
+  type AdminStatisticsIncident,
   type AdminTenant,
   type AdminTenantOffer,
   type AdminTenantWorkspace,
@@ -285,7 +289,19 @@ const ORG_PROJECT_TITLES = [
 const ADMIN_OFFER_TYPE_OPTIONS = [
   { id: 'adm-meng', slug: 'mengenermittlung' },
   { id: 'adm-dach', slug: 'dachstuhl' },
+  { id: 'adm-zubaufull', slug: 'zubau_aufstockung' },
+  { id: 'adm-auf', slug: 'aufstockung' },
+  { id: 'adm-zubau', slug: 'zubau' },
   { id: 'adm-neu', slug: 'neubau' },
+] as const
+
+const ADMIN_PERMISSION_OFFER_TYPES = [
+  { slug: 'neubau', label: 'Angebot Neubau' },
+  { slug: 'mengenermittlung', label: 'Angebot Mengenermittlung' },
+  { slug: 'dachstuhl', label: 'Angebot Dachstuhl' },
+  { slug: 'aufstockung', label: 'Angebot Aufstockung' },
+  { slug: 'zubau', label: 'Angebot Zubau' },
+  { slug: 'zubau_aufstockung', label: 'Angebot Zubau / Aufstockung' },
 ] as const
 
 const ORG_PROJECT_DURATIONS = [
@@ -348,6 +364,11 @@ function formatMeanWallSeconds(sec: number | null): string {
   const r = s % 60
   if (m <= 0) return `${r}s`
   return `${m}m ${String(r).padStart(2, '0')}s`
+}
+
+function formatCostCents(cents: number | null | undefined): string {
+  if (cents == null || !Number.isFinite(cents)) return '—'
+  return `${(Math.round(cents) / 100).toFixed(2)}€`
 }
 
 function bumpDayCount(map: Map<string, number>, iso: string) {
@@ -959,7 +980,7 @@ function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
     historyStatusBadgeClass: hist.className,
     owner: o.owner_name,
     ownerMemberId: o.owner_id ?? '—',
-    offerSlug: o.offer_type_slug ?? 'neubau',
+    offerSlug: o.offer_type_slug ?? '',
     createdAt: Number.isNaN(created.getTime()) ? new Date() : created,
     createdAtIso: o.created_at,
     pipelineFinishedAtIso: o.pipeline_finished_at,
@@ -967,6 +988,39 @@ function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
     lastRunDurationSeconds: o.last_run_duration_seconds,
     isLiveRow: true,
   }
+}
+
+function inferOfferSlugFromText(text: string): string {
+  const t = text.toLowerCase()
+  if (t.includes('meng') || t.includes('mengen')) return 'mengenermittlung'
+  if (t.includes('dach')) return 'dachstuhl'
+  if (t.includes('zubau') && t.includes('aufstock')) return 'zubau_aufstockung'
+  if (t.includes('zubau')) return 'zubau'
+  if (t.includes('aufstock')) return 'aufstockung'
+  if (t.includes('neu') || t.includes('full house')) return 'neubau'
+  return ''
+}
+
+function projectMatchesOfferTypeFilter(project: AdminOrgProjectRow, filterSlug: string | undefined): boolean {
+  if (!filterSlug) return true
+  const normalizedSlug = inferOfferSlugFromText(project.offerSlug) || project.offerSlug.toLowerCase()
+  if (offerSlugMatchesAdminFilter(normalizedSlug, filterSlug)) return true
+  const fromLabel = inferOfferSlugFromText(project.offerKindLabel)
+  if (fromLabel && offerSlugMatchesAdminFilter(fromLabel, filterSlug)) return true
+  const fromTitle = inferOfferSlugFromText(project.title)
+  if (fromTitle && offerSlugMatchesAdminFilter(fromTitle, filterSlug)) return true
+  return false
+}
+
+function mapProcessingFolderToMoatKey(folder: string): string {
+  const f = folder.toLowerCase()
+  if (f.includes('plan_segmentation') || f.includes('segmentation')) return 'plan_segmentation'
+  if (f.includes('wall')) return 'wall_detection'
+  if (f.includes('room')) return 'rooms_detection'
+  if (f.includes('door')) return 'doors'
+  if (f.includes('window')) return 'windows'
+  if (f.includes('roof')) return 'roof'
+  return 'other'
 }
 
 /** Align DB offer_type slugs with admin filter options (see OfferHistoryFilterForm). */
@@ -1002,10 +1056,29 @@ export default function AdminPage() {
   const [projDraftDateFrom, setProjDraftDateFrom] = useState('')
   const [projDraftDateTo, setProjDraftDateTo] = useState('')
   const [projDraftUserIds, setProjDraftUserIds] = useState<string[]>([])
+  const [projDraftStatuses, setProjDraftStatuses] = useState<string[]>([])
   const [projAppliedOfferTypeId, setProjAppliedOfferTypeId] = useState('')
   const [projAppliedDateFrom, setProjAppliedDateFrom] = useState('')
   const [projAppliedDateTo, setProjAppliedDateTo] = useState('')
   const [projAppliedUserIds, setProjAppliedUserIds] = useState<string[]>([])
+  const [projAppliedStatuses, setProjAppliedStatuses] = useState<string[]>([])
+  const [showIncidentsPanel, setShowIncidentsPanel] = useState(false)
+  const [incidentBusyFingerprint, setIncidentBusyFingerprint] = useState<string | null>(null)
+  const [orgEditMode, setOrgEditMode] = useState(false)
+  const [orgDraftBranding, setOrgDraftBranding] = useState({ phone: '', email: '', address: '', website: '' })
+  const [orgSaving, setOrgSaving] = useState(false)
+  const [orgError, setOrgError] = useState<string | null>(null)
+  const [moatPopup, setMoatPopup] = useState<{ key: string; title: string; markedPlans: number; artifacts: number } | null>(null)
+  const [moatFiles, setMoatFiles] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    bySection: Record<string, Array<{ id: string; url: string; filename: string; folder: string }>>
+    sourceOfferId: string | null
+    message?: string
+  }>({ status: 'idle', bySection: {}, sourceOfferId: null })
+  const [orgProfilePopupOpen, setOrgProfilePopupOpen] = useState(false)
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState(false)
+  const [permissionDraftTier, setPermissionDraftTier] = useState(1)
+  const [permissionDraftOfferTypes, setPermissionDraftOfferTypes] = useState<string[]>([])
   const [customMode, setCustomMode] = useState<'manual' | 'plans' | 'offerTypes'>('manual')
   const [manualUsers, setManualUsers] = useState<string[]>(['Anna Keller', 'Lukas Meier'])
   const [planBucket, setPlanBucket] = useState<'all' | '0-10' | '11-30' | '31+'>('11-30')
@@ -1057,6 +1130,11 @@ export default function AdminPage() {
     measurementsOnlyOffer: false,
   })
   const [projectUploadedFiles, setProjectUploadedFiles] = useState<AdminProjectUploadedFilesState>({ status: 'idle' })
+  const [projectProcessingImages, setProjectProcessingImages] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    items: Record<string, Array<{ id: string; url: string; filename: string; plan_id?: string }>>
+    message?: string
+  }>({ status: 'idle', items: {} })
   const [projectEditorModalOpen, setProjectEditorModalOpen] = useState(false)
 
   const heatmapTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1298,14 +1376,59 @@ export default function AdminPage() {
         label: p.label,
         offers: p.offers,
         avgTime: p.avg_time_label,
+        incidents: p.incidents,
+        avgCost: p.avg_cost_cents,
       }))
     }
     return Array.from({ length: 8 }, (_, i) => ({
       label: `·${i + 1}`,
       offers: 0,
       avgTime: '—',
+      incidents: 0,
+      avgCost: null as number | null,
     }))
   }, [hasLiveOrgList, statsStatus, statsSummary])
+
+  const pipelineStageRows = useMemo(() => {
+    if (statsStatus === 'ok' && statsSummary?.pipeline_stages?.length) {
+      return statsSummary.pipeline_stages.map((stage) => ({
+        label: stage.label,
+        value: Math.max(0, Math.min(100, Math.round(stage.success_rate_pct))),
+        processed: stage.processed.toLocaleString('en-US'),
+        failed: stage.failed.toLocaleString('en-US'),
+        avg: formatMeanWallSeconds(stage.avg_time_seconds),
+        trend:
+          stage.trend_pct == null
+            ? '—'
+            : `${stage.trend_pct > 0 ? '+' : ''}${stage.trend_pct.toFixed(1)}%`,
+      }))
+    }
+    return PIPELINE_STAGES.map((s) => ({ ...s }))
+  }, [statsStatus, statsSummary])
+
+  const dataMoatRows = useMemo(() => {
+    if (statsStatus === 'ok' && statsSummary?.data_moat?.length) {
+      return statsSummary.data_moat.map((row) => ({
+        key: row.key,
+        title: row.label,
+        markedPlans: row.marked_plans,
+        artifacts: row.artifacts,
+      }))
+    }
+    return DATA_MOAT_ITEMS.map((row) => ({ ...row, key: row.title.toLowerCase().replace(/\s+/g, '_'), artifacts: row.markedPlans }))
+  }, [statsStatus, statsSummary])
+
+  const avgCostPerRunCents = useMemo(() => {
+    if (statsStatus === 'ok' && statsSummary?.cost) {
+      return statsSummary.cost.avg_cost_per_run_cents
+    }
+    return AVG_COST_PER_RUN_CENTS
+  }, [statsStatus, statsSummary])
+
+  const moatSectionFiles = useMemo(() => {
+    if (!moatPopup) return []
+    return moatFiles.bySection[moatPopup.key] ?? []
+  }, [moatPopup, moatFiles.bySection])
 
   const statisticsKpi = useMemo(() => {
     type Row = { value: string; delta: string }
@@ -1352,11 +1475,11 @@ export default function AdminPage() {
           delta: procDelta,
         },
         clients: {
-          value: `${t.profiles_acquired_current}/${t.profiles_churn_current}`,
-          delta: formatDeltaPct(t.profiles_acquired_current, t.profiles_acquired_previous),
+          value: `${t.organizations_current}/${t.organizations_churn_current}`,
+          delta: formatDeltaPct(t.organizations_churn_current, t.organizations_churn_previous),
         },
         incidents: {
-          value: String(t.incidents_current),
+          value: String(statsSummary.incidents.total),
           delta: formatDeltaPct(t.incidents_current, t.incidents_previous),
         },
         sparkOffers: [...statsSummary.kpi_series.offers],
@@ -1365,7 +1488,7 @@ export default function AdminPage() {
         sparkIncidents: [...statsSummary.kpi_series.incidents],
         sparkCaption: segCaption,
         procCaption: 'Mean wall time per segment',
-        clientsCaption: 'New members per segment (churn not tracked)',
+        clientsCaption: `Current orgs / deleted (${t.organizations_all_time} all-time)`,
       }
     }
     return {
@@ -1426,6 +1549,16 @@ export default function AdminPage() {
     if (adminTenantsStatus !== 'ok') return null
     return adminTenants.find((t) => t.id === selectedOrgId)?.logo_url ?? null
   }, [adminTenants, adminTenantsStatus, selectedOrgId])
+
+  useEffect(() => {
+    setOrgDraftBranding({
+      phone: selectedOrgMeta.phone,
+      email: selectedOrgMeta.email,
+      address: selectedOrgMeta.address,
+      website: liveWorkspace?.branding.website ?? '',
+    })
+    setOrgError(null)
+  }, [selectedOrgMeta.phone, selectedOrgMeta.email, selectedOrgMeta.address, liveWorkspace?.branding.website])
 
   const orgTokenBalanceDisplay = useMemo(() => {
     if (liveWorkspace) {
@@ -1590,14 +1723,15 @@ export default function AdminPage() {
     Boolean(projAppliedOfferTypeId) ||
     Boolean(projAppliedDateFrom) ||
     Boolean(projAppliedDateTo) ||
-    projAppliedUserIds.length > 0
+    projAppliedUserIds.length > 0 ||
+    projAppliedStatuses.length > 0
 
   const filteredOrgProjects = useMemo(() => {
     let list = orgProjectsBase
     if (projAppliedOfferTypeId) {
       const opt = ADMIN_OFFER_TYPE_OPTIONS.find((o) => o.id === projAppliedOfferTypeId)
       const slug = opt?.slug as string | undefined
-      list = list.filter((p) => offerSlugMatchesAdminFilter(p.offerSlug, slug))
+      list = list.filter((p) => projectMatchesOfferTypeFilter(p, slug))
     }
     if (projAppliedDateFrom) {
       const from = new Date(projAppliedDateFrom)
@@ -1611,6 +1745,9 @@ export default function AdminPage() {
     }
     if (projAppliedUserIds.length > 0) {
       list = list.filter((p) => projAppliedUserIds.includes(p.ownerMemberId))
+    }
+    if (projAppliedStatuses.length > 0) {
+      list = list.filter((p) => projAppliedStatuses.includes(p.status))
     }
     const q = projSearch.trim().toLowerCase()
     if (q) {
@@ -1628,6 +1765,7 @@ export default function AdminPage() {
     projAppliedDateFrom,
     projAppliedDateTo,
     projAppliedUserIds,
+    projAppliedStatuses,
     projSearch,
   ])
 
@@ -1639,6 +1777,11 @@ export default function AdminPage() {
       (tenantOffersStatus === 'ok' && tenantOffersLoadedForId !== selectedOrgId))
   const showTenantProjectsError = usingLiveProjects && tenantOffersStatus === 'error'
 
+  const moatSourceOfferId = useMemo(() => {
+    if (!tenantOffersMatchSelection || tenantOffers.length === 0) return null
+    return tenantOffers[0]?.id ?? null
+  }, [tenantOffersMatchSelection, tenantOffers])
+
   const selectedOrgProject = useMemo(() => {
     if (!selectedProjectRef) return null
     return orgProjectsBase.find((p) => p.id === selectedProjectRef) ?? null
@@ -1649,6 +1792,7 @@ export default function AdminPage() {
     if (!p?.isLiveRow || !isOfferUuid(p.id)) {
       setProjectEditorSnapshots({ status: 'idle' })
       setProjectUploadedFiles({ status: 'idle' })
+      setProjectProcessingImages({ status: 'idle', items: {} })
       setProjectExportAssets({
         loading: false,
         error: null,
@@ -1667,6 +1811,7 @@ export default function AdminPage() {
     let cancelled = false
     setProjectEditorSnapshots({ status: 'loading' })
     setProjectUploadedFiles({ status: 'loading' })
+    setProjectProcessingImages({ status: 'loading', items: {} })
     setProjectExportAssets({
       loading: true,
       error: null,
@@ -1680,10 +1825,11 @@ export default function AdminPage() {
     })
     ;(async () => {
       try {
-        const [snapRes, expRes, uploadedRes, roofRes, detRes] = await Promise.all([
+        const [snapRes, expRes, uploadedRes, procImgsRes, roofRes, detRes] = await Promise.all([
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/editor-snapshots`),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/export`),
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/uploaded-files`),
+          apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/processing-images`),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/roof-review-data?ts=${Date.now()}`).catch(() => null),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/detections-review-data?ts=${Date.now()}`).catch(() => null),
         ])
@@ -1839,6 +1985,10 @@ export default function AdminPage() {
         setProjectEditorSnapshots({ status: 'ok', items, blueprint_groups, roof_items })
         const uploadedItems = (uploadedRes?.items ?? []) as AdminUploadedFileRow[]
         setProjectUploadedFiles({ status: 'ok', items: uploadedItems })
+        setProjectProcessingImages({
+          status: 'ok',
+          items: ((procImgsRes ?? {}) as Record<string, Array<{ id: string; url: string; filename: string; plan_id?: string }>>),
+        })
         const plan = expRes?.files?.plan
         const offerMeta = (expRes?.offer?.meta ?? {}) as Record<string, unknown>
         const measurementsOnlyOffer = offerMeta.measurements_only_offer === true
@@ -1858,6 +2008,7 @@ export default function AdminPage() {
         const msg = e instanceof Error ? e.message : 'Failed to load offer assets'
         setProjectEditorSnapshots({ status: 'error', message: msg })
         setProjectUploadedFiles({ status: 'error', message: msg })
+        setProjectProcessingImages({ status: 'error', items: {}, message: msg })
         setProjectExportAssets({
           loading: false,
           error: msg,
@@ -1877,6 +2028,50 @@ export default function AdminPage() {
   }, [selectedOrgProject])
 
   useEffect(() => {
+    if (!moatPopup) return
+    if (!moatSourceOfferId || !isOfferUuid(moatSourceOfferId)) {
+      setMoatFiles({
+        status: 'error',
+        bySection: {},
+        sourceOfferId: null,
+        message: 'No live offer available for this organization yet.',
+      })
+      return
+    }
+    if (moatFiles.status === 'ok' && moatFiles.sourceOfferId === moatSourceOfferId) return
+    let cancelled = false
+    setMoatFiles({ status: 'loading', bySection: {}, sourceOfferId: moatSourceOfferId })
+    ;(async () => {
+      try {
+        const res = (await apiFetch(
+          `/admin/offers/${encodeURIComponent(moatSourceOfferId)}/processing-images`,
+        )) as Record<string, Array<{ id: string; url: string; filename: string }>>
+        if (cancelled) return
+        const bySection: Record<string, Array<{ id: string; url: string; filename: string; folder: string }>> = {}
+        for (const [folder, imgs] of Object.entries(res ?? {})) {
+          const key = mapProcessingFolderToMoatKey(folder)
+          if (!bySection[key]) bySection[key] = []
+          for (const img of imgs ?? []) {
+            bySection[key].push({ ...img, folder })
+          }
+        }
+        setMoatFiles({ status: 'ok', bySection, sourceOfferId: moatSourceOfferId })
+      } catch (e) {
+        if (cancelled) return
+        setMoatFiles({
+          status: 'error',
+          bySection: {},
+          sourceOfferId: moatSourceOfferId,
+          message: e instanceof Error ? e.message : 'Could not load data moat files.',
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [moatPopup, moatSourceOfferId, moatFiles.sourceOfferId, moatFiles.status])
+
+  useEffect(() => {
     if (!projectEditorModalOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setProjectEditorModalOpen(false)
@@ -1884,6 +2079,13 @@ export default function AdminPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [projectEditorModalOpen])
+
+  useEffect(() => {
+    if (!permissionsModalOpen) return
+    setPermissionDraftTier(liveWorkspace?.permissions?.usage_tier ?? liveWorkspace?.tokens?.tier ?? 1)
+    const current = liveWorkspace?.permissions?.allowed_offer_types ?? []
+    setPermissionDraftOfferTypes(current.length > 0 ? [...current] : ADMIN_PERMISSION_OFFER_TYPES.map((x) => x.slug))
+  }, [permissionsModalOpen, liveWorkspace])
 
   const projectPipelineSteps = useMemo(() => {
     if (!selectedOrgProject) return []
@@ -1965,6 +2167,7 @@ export default function AdminPage() {
     setProjAppliedDateFrom(projDraftDateFrom)
     setProjAppliedDateTo(projDraftDateTo)
     setProjAppliedUserIds(projDraftUserIds)
+    setProjAppliedStatuses(projDraftStatuses)
     setProjFilterOpen(false)
   }
 
@@ -1973,7 +2176,65 @@ export default function AdminPage() {
     setProjDraftDateFrom('')
     setProjDraftDateTo('')
     setProjDraftUserIds([])
+    setProjDraftStatuses([])
     setProjFilterOpen(false)
+  }
+
+  const resolveIncident = async (inc: AdminStatisticsIncident) => {
+    const fp = String(inc.fingerprint ?? '').trim()
+    if (!fp) return
+    try {
+      setIncidentBusyFingerprint(fp)
+      await resolveAdminIncident(fp)
+      if (dateFrom && dateTo) {
+        const filtered = orgFilters.filter((id) => adminTenants.some((t) => t.id === id))
+        const tenantIds = filtered.length > 0 ? filtered : adminTenants.map((t) => t.id)
+        const data = await fetchAdminStatisticsSummary({ from: dateFrom, to: dateTo, tenantIds })
+        setStatsSummary(data)
+      }
+    } finally {
+      setIncidentBusyFingerprint(null)
+    }
+  }
+
+  const closeIncidentRun = async (inc: AdminStatisticsIncident) => {
+    const runId = String(inc.run_id ?? '').trim()
+    if (!runId) return
+    try {
+      setIncidentBusyFingerprint(String(inc.fingerprint ?? runId))
+      await closeAdminRun(runId)
+      if (dateFrom && dateTo) {
+        const filtered = orgFilters.filter((id) => adminTenants.some((t) => t.id === id))
+        const tenantIds = filtered.length > 0 ? filtered : adminTenants.map((t) => t.id)
+        const data = await fetchAdminStatisticsSummary({ from: dateFrom, to: dateTo, tenantIds })
+        setStatsSummary(data)
+      }
+    } finally {
+      setIncidentBusyFingerprint(null)
+    }
+  }
+
+  const saveOrganizationData = async () => {
+    if (!usingLiveProjects || !selectedOrgId) return
+    try {
+      setOrgSaving(true)
+      setOrgError(null)
+      await updateAdminTenantWorkspace(selectedOrgId, {
+        branding: {
+          phone: orgDraftBranding.phone,
+          email: orgDraftBranding.email,
+          address: orgDraftBranding.address,
+          website: orgDraftBranding.website,
+        },
+      })
+      setOrgEditMode(false)
+      const ws = await fetchAdminTenantWorkspace(selectedOrgId)
+      setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
+    } catch (e) {
+      setOrgError(e instanceof Error ? e.message : 'Could not save organization data.')
+    } finally {
+      setOrgSaving(false)
+    }
   }
 
   useLayoutEffect(() => {
@@ -2317,7 +2578,7 @@ export default function AdminPage() {
               </p>
             ) : null}
             {clientOrgs.map((org) => {
-              const active = org.id === selectedOrgId
+              const active = activeView !== 'statistics' && org.id === selectedOrgId
               return (
                 <button
                   key={org.id}
@@ -2358,7 +2619,7 @@ export default function AdminPage() {
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 text-[#FFD29A] text-[11px] font-bold">€</span>
                         <div className="leading-tight">
                           <div className="text-[10px] uppercase tracking-wide text-sand/70">Avg. cost/run</div>
-                          <div className="text-sm font-bold text-white">{(AVG_COST_PER_RUN_CENTS / 100).toFixed(2)}€</div>
+                          <div className="text-sm font-bold text-white">{formatCostCents(avgCostPerRunCents)}</div>
                           <div className="text-[9px] text-sand/45">Model estimate</div>
                         </div>
                       </div>
@@ -2402,16 +2663,6 @@ export default function AdminPage() {
                           ].join(' ')}
                         >
                           All organizations
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOrgFilters([selectedOrgId])}
-                          className={[
-                            'rounded-md px-2.5 py-1 text-xs font-medium transition',
-                            orgFilters.length === 1 && orgFilters[0] === selectedOrgId ? 'bg-[#FF9F0F] text-white' : 'text-sand/80 hover:bg-white/8',
-                          ].join(' ')}
-                        >
-                          Selected client
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-1">
@@ -2471,23 +2722,73 @@ export default function AdminPage() {
                     series={statisticsKpi.sparkIncidents}
                     sparkCaption={statisticsKpi.sparkCaption}
                     valueFormat="count"
+                    onClick={() => setShowIncidentsPanel((v) => !v)}
+                    active={showIncidentsPanel}
                   />
                 </div>
+                {showIncidentsPanel && statsStatus === 'ok' && statsSummary?.incidents?.items?.length ? (
+                  <div className="rounded-xl border border-red-400/30 bg-red-500/10 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-red-100">Latest system incidents</div>
+                      <div className="text-xs text-red-200/80">
+                        {statsSummary.incidents.total} total · high {statsSummary.incidents.high}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      {statsSummary.incidents.items.slice(0, 4).map((inc, idx) => (
+                        <div
+                          key={`${inc.run_id ?? 'run'}-${inc.finished_at ?? inc.started_at ?? idx}`}
+                          className="rounded-lg border border-red-300/20 bg-black/20 px-2.5 py-1.5 text-xs text-red-50/90"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-1">
+                            <span className="font-semibold">
+                              {inc.type.replace(/_/g, ' ')} · {inc.stage}
+                            </span>
+                            <span className="text-[10px] text-red-200/70">{inc.finished_at ?? inc.started_at ?? '—'}</span>
+                          </div>
+                          <div className="mt-0.5 line-clamp-2 text-[11px] text-red-100/85">{inc.message}</div>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => resolveIncident(inc)}
+                              disabled={incidentBusyFingerprint === inc.fingerprint}
+                              className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFD29A] disabled:opacity-50"
+                            >
+                              Mark resolved
+                            </button>
+                            {inc.run_id ? (
+                              <button
+                                type="button"
+                                onClick={() => closeIncidentRun(inc)}
+                                disabled={incidentBusyFingerprint === inc.fingerprint}
+                                className="rounded-md border border-red-300/45 bg-red-500/20 px-2 py-0.5 text-[10px] font-semibold text-red-100 disabled:opacity-50"
+                              >
+                                Close run
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="grid grid-cols-1 gap-3 xl:min-h-[360px] xl:grid-cols-[1.6fr_1fr]">
-                  <div className="rounded-xl border border-white/10 bg-coffee-700/70 p-3 backdrop-blur-sm xl:h-full">
+                  <div className="flex h-full flex-col rounded-xl border border-white/10 bg-coffee-700/70 p-3 backdrop-blur-sm">
                     <div className="mb-3 flex items-center justify-between gap-2">
                       <div className="text-base font-semibold text-sand">Offer throughput trend</div>
                       <div className="text-sm text-sand/70">
                         {selectedRange} · {selectedOrgNames.length} orgs
                       </div>
                     </div>
-                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 xl:h-[calc(100%-2rem)]">
+                    <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-white/10 bg-black/20 p-3">
                       <div className="mb-2 flex items-center justify-between text-xs text-sand/70">
                         <span>Total offers: {statisticsKpi.throughputSub.offers}</span>
                         <span>Mean pipeline time: {statisticsKpi.throughputSub.avg}</span>
                       </div>
-                      <OffersThroughputChart points={throughputChartPoints} />
+                      <div className="min-h-0 flex-1">
+                        <OffersThroughputChart points={throughputChartPoints} />
+                      </div>
                     </div>
                   </div>
 
@@ -2498,7 +2799,7 @@ export default function AdminPage() {
                         <Layers3 size={14} className="text-sand/70" />
                       </div>
                       <div ref={pipelineScrollRef} className="admin-scroll-hide max-h-[300px] space-y-2 overflow-y-scroll pr-1 xl:max-h-[calc(100%-2rem)]">
-                        {PIPELINE_STAGES.map((stage) => (
+                        {pipelineStageRows.map((stage) => (
                           <PipelineRow
                             key={stage.label}
                             label={stage.label}
@@ -2531,7 +2832,7 @@ export default function AdminPage() {
                 <div className="rounded-xl border border-white/10 bg-coffee-700/60 p-3 backdrop-blur-sm">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div className="text-lg font-semibold text-sand">Data moat</div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
                       <button type="button" className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/55 px-3 py-1 text-sm font-semibold text-white transition hover:bg-[#FF9F0F]/70">
                         Export CSV
                       </button>
@@ -2543,9 +2844,15 @@ export default function AdminPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
-                    {DATA_MOAT_ITEMS.map((item) => (
-                      <MoatAction key={item.title} title={item.title} markedPlans={item.markedPlans} />
+                  <div className="hide-scroll flex gap-2 overflow-x-auto pb-1">
+                    {dataMoatRows.map((item) => (
+                      <MoatAction
+                        key={item.title}
+                        title={item.title}
+                        markedPlans={item.markedPlans}
+                        artifacts={item.artifacts}
+                        onOpen={() => setMoatPopup({ key: item.key, title: item.title, markedPlans: item.markedPlans, artifacts: item.artifacts })}
+                      />
                     ))}
                   </div>
                 </div>
@@ -2600,14 +2907,14 @@ export default function AdminPage() {
                       <div
                         className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#FF9F0F]/40 bg-[#FF9F0F]/10 px-2.5 py-1.5"
                         role="status"
-                        aria-label={`Cost per run ${(AVG_COST_PER_RUN_CENTS / 100).toFixed(2)} euros`}
+                        aria-label={`Cost per run ${formatCostCents(avgCostPerRunCents)} euros`}
                       >
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 text-[11px] font-bold text-[#FFD29A]">
                           €
                         </span>
                         <div className="leading-tight">
                           <div className="text-[10px] uppercase tracking-wide text-sand/70">Cost per run</div>
-                          <div className="text-sm font-bold text-white">{(AVG_COST_PER_RUN_CENTS / 100).toFixed(2)}€</div>
+                          <div className="text-sm font-bold text-white">{formatCostCents(avgCostPerRunCents)}</div>
                         </div>
                       </div>
                     </div>
@@ -2805,22 +3112,37 @@ export default function AdminPage() {
                       </span>
                       Generated images
                     </div>
-                    <div className="flex gap-2 overflow-x-auto pb-1">
-                      {[
-                        '/images/blueprint.png',
-                        '/images/roof-blueprint.png',
-                        '/images/second-bg.png',
-                        '/images/blueprint.png',
-                      ].map((src, i) => (
-                        <div
-                          key={`${src}-${i}`}
-                          className="relative h-24 w-36 shrink-0 overflow-hidden rounded-lg border border-[#FF9F0F]/25 bg-black/30 shadow-sm transition hover:border-[#FF9F0F]/45"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element -- static public assets */}
-                          <img src={src} alt="" className="h-full w-full object-cover opacity-90" />
-                        </div>
-                      ))}
-                    </div>
+                    {projectProcessingImages.status === 'loading' ? (
+                      <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/60">Loading generated images…</div>
+                    ) : projectProcessingImages.status === 'error' ? (
+                      <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">{projectProcessingImages.message ?? 'Could not load generated images.'}</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {Object.keys(projectProcessingImages.items).length === 0 ? (
+                          <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/60">No generated images for this run yet.</div>
+                        ) : (
+                          Object.entries(projectProcessingImages.items).map(([folder, imgs]) => (
+                            <div key={folder} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#FFD29A]">{folder.replace(/_/g, ' / ')}</div>
+                              <div className="hide-scroll flex gap-2 overflow-x-auto pb-1">
+                                {imgs.map((img) => (
+                                  <a
+                                    key={img.id}
+                                    href={img.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="relative h-24 w-36 shrink-0 overflow-hidden rounded-lg border border-[#FF9F0F]/25 bg-black/30 shadow-sm transition hover:border-[#FF9F0F]/45"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img src={img.url} alt={img.filename} className="h-full w-full object-cover opacity-90" />
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </section>
 
                   <div className="flex min-h-[100px] items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/10 px-4 py-8 text-center text-xs text-sand/45">
@@ -3007,6 +3329,7 @@ export default function AdminPage() {
                                 setProjDraftDateFrom(projAppliedDateFrom)
                                 setProjDraftDateTo(projAppliedDateTo)
                                 setProjDraftUserIds(projAppliedUserIds)
+                                setProjDraftStatuses(projAppliedStatuses)
                                 setProjSearchOpen(false)
                               }
                               return next
@@ -3315,6 +3638,28 @@ export default function AdminPage() {
                 Organization data
               </div>
               <div className="hide-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOrgEditMode((v) => !v)}
+                    className="rounded-md border border-white/20 bg-black/20 px-2.5 py-1 text-xs font-semibold text-sand/85 hover:border-[#FF9F0F]/45"
+                  >
+                    {orgEditMode ? 'Cancel edit' : 'Edit organization'}
+                  </button>
+                  {orgEditMode ? (
+                    <button
+                      type="button"
+                      onClick={saveOrganizationData}
+                      disabled={orgSaving}
+                      className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-2.5 py-1 text-xs font-semibold text-[#FFD29A] disabled:opacity-50"
+                    >
+                      {orgSaving ? 'Saving…' : 'Save'}
+                    </button>
+                  ) : null}
+                </div>
+                {orgError ? (
+                  <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">{orgError}</div>
+                ) : null}
                 {usingLiveProjects && tenantWorkspace.status === 'loading' && (
                   <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/65">
                     Loading organization details…
@@ -3349,20 +3694,52 @@ export default function AdminPage() {
                   <div className="space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5 text-xs">
                     <div className="flex items-center gap-2 text-sand/85">
                       <Phone size={12} className="shrink-0 text-[#FFB84D]" />
-                      {selectedOrgMeta.phone}
+                      {orgEditMode ? (
+                        <input
+                          value={orgDraftBranding.phone}
+                          onChange={(e) => setOrgDraftBranding((p) => ({ ...p, phone: e.target.value }))}
+                          className="sun-input h-7 text-xs"
+                        />
+                      ) : (
+                        selectedOrgMeta.phone
+                      )}
                     </div>
                     <div className="flex items-center gap-2 text-sand/85">
                       <Mail size={12} className="shrink-0 text-[#FFB84D]" />
-                      {selectedOrgMeta.email}
+                      {orgEditMode ? (
+                        <input
+                          value={orgDraftBranding.email}
+                          onChange={(e) => setOrgDraftBranding((p) => ({ ...p, email: e.target.value }))}
+                          className="sun-input h-7 text-xs"
+                        />
+                      ) : (
+                        selectedOrgMeta.email
+                      )}
                     </div>
                     <div className="flex items-center gap-2 text-sand/85">
                       <FolderKanban size={12} className="shrink-0 text-[#FFB84D]" />
-                      {selectedOrgMeta.address}
+                      {orgEditMode ? (
+                        <input
+                          value={orgDraftBranding.address}
+                          onChange={(e) => setOrgDraftBranding((p) => ({ ...p, address: e.target.value }))}
+                          className="sun-input h-7 text-xs"
+                        />
+                      ) : (
+                        selectedOrgMeta.address
+                      )}
                     </div>
-                    {liveWorkspace && liveWorkspace.branding.website.trim() !== '' && (
+                    {(orgEditMode || (liveWorkspace && liveWorkspace.branding.website.trim() !== '')) && (
                       <div className="flex items-center gap-2 text-sand/85">
                         <Globe size={12} className="shrink-0 text-[#FFB84D]" />
-                        <span className="truncate">{liveWorkspace.branding.website}</span>
+                        {orgEditMode ? (
+                          <input
+                            value={orgDraftBranding.website}
+                            onChange={(e) => setOrgDraftBranding((p) => ({ ...p, website: e.target.value }))}
+                            className="sun-input h-7 text-xs"
+                          />
+                        ) : (
+                          <span className="truncate">{liveWorkspace?.branding.website}</span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -3374,6 +3751,9 @@ export default function AdminPage() {
                     <p className="mb-2 text-[11px] leading-snug text-sand/55">
                       {liveWorkspace.tokens.display}
                       <span className="text-sand/45"> · period {liveWorkspace.tokens.period_ym} (Europe/Berlin)</span>
+                      {(liveWorkspace.tokens.bonus ?? 0) > 0 ? (
+                        <span className="block text-[#FFD29A]/90">Bonus added: +{liveWorkspace.tokens.bonus} monthly tokens</span>
+                      ) : null}
                       {!liveWorkspace.tokens.unlimited && liveWorkspace.tokens.limit != null && (
                         <span className="block text-sand/45">
                           {liveWorkspace.tokens.used} used of {liveWorkspace.tokens.limit} this month
@@ -3390,14 +3770,9 @@ export default function AdminPage() {
                   </div>
                   <button
                     type="button"
-                    disabled={!!liveWorkspace}
-                    title={
-                      liveWorkspace
-                        ? 'Quota is defined in tenant config (usage.token_tier); contact backend / Supabase to change.'
-                        : undefined
-                    }
+                    disabled={!liveWorkspace}
                     onClick={() => setTokensModalOpen(true)}
-                    className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:brightness-100"
+                    className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Coins size={15} />
                     Add more tokens
@@ -3408,7 +3783,7 @@ export default function AdminPage() {
                   <div className="mb-2 text-sm font-semibold text-sand">Users</div>
                   <p className="mb-2 text-[11px] text-sand/55">
                     {liveWorkspace
-                      ? 'Live directory from the database. Editing here does not persist (use Supabase or a future admin API).'
+                      ? 'Live directory from the database. Click a member to update name and role.'
                       : 'Click a member to edit name, email, password, and role.'}
                   </p>
                   <div className="space-y-2">
@@ -3457,6 +3832,7 @@ export default function AdminPage() {
                   <div className="space-y-2">
                     <button
                       type="button"
+                      onClick={() => setOrgProfilePopupOpen(true)}
                       className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2"
                     >
                       <Building2 size={15} className="text-white" />
@@ -3464,6 +3840,13 @@ export default function AdminPage() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => {
+                        if (!liveWorkspace) {
+                          setOrgError('Permissions are available only for live organizations.')
+                          return
+                        }
+                        setPermissionsModalOpen(true)
+                      }}
                       className="w-full rounded-xl border border-white/20 bg-black/20 py-2.5 text-sm font-semibold text-sand transition hover:border-[#FF9F0F]/45 hover:text-white inline-flex items-center justify-center gap-2"
                     >
                       <Shield size={15} />
@@ -3535,7 +3918,7 @@ export default function AdminPage() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: -8 }}
                 transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
-                className="fixed z-[9999] max-h-[min(520px,calc(100vh-16px))] w-[280px] overflow-y-auto overflow-x-hidden rounded-2xl border border-white/20 bg-coffee-850/95 shadow-2xl shadow-black/30 backdrop-blur-sm"
+                className="admin-scroll fixed z-[9999] max-h-[min(520px,calc(100vh-16px))] w-[292px] overflow-y-auto overflow-x-hidden rounded-2xl border border-white/20 bg-coffee-850/95 pr-1 shadow-2xl shadow-black/30 backdrop-blur-sm"
                 style={{ top: projFilterPanelPos.top, left: projFilterPanelPos.left }}
                 onMouseDown={(e) => e.stopPropagation()}
               >
@@ -3554,6 +3937,32 @@ export default function AdminPage() {
                   onApply={applyProjFilters}
                   onReset={resetProjDraftFilters}
                 />
+                <div className="border-t border-white/10 px-3 pb-3 pt-2">
+                  <div className="mb-1 text-[11px] font-semibold text-sand/70">Project status</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['Running', 'Queued', 'Completed', 'Failed', 'Cancelled'] as const).map((st) => {
+                      const active = projDraftStatuses.includes(st)
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() =>
+                            setProjDraftStatuses((prev) =>
+                              prev.includes(st) ? prev.filter((x) => x !== st) : [...prev, st],
+                            )
+                          }
+                          className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                            active
+                              ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]'
+                              : 'border-white/15 bg-black/20 text-sand/75'
+                          }`}
+                        >
+                          {st}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>,
@@ -3684,6 +4093,221 @@ export default function AdminPage() {
           </div>,
           document.body,
         )}
+
+      {moatPopup ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl border border-white/15 bg-coffee-850 p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="text-base font-semibold text-sand">{moatPopup.title}</div>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-sand/70 hover:bg-white/10 hover:text-white"
+                onClick={() => setMoatPopup(null)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
+                Marked plans: <span className="font-semibold text-[#FFD29A]">{moatPopup.markedPlans.toLocaleString('en-US')}</span>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
+                Artifacts: <span className="font-semibold text-[#FFD29A]">{moatPopup.artifacts.toLocaleString('en-US')}</span>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
+                Avg artifacts / marked plan:{' '}
+                <span className="font-semibold text-[#FFD29A]">
+                  {moatPopup.markedPlans > 0 ? (moatPopup.artifacts / moatPopup.markedPlans).toFixed(2) : '0.00'}
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2.5">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sand/55">Data moat sections</div>
+              <div className="space-y-1.5">
+                {dataMoatRows.map((row) => {
+                  const totalArtifacts = Math.max(1, dataMoatRows.reduce((acc, r) => acc + r.artifacts, 0))
+                  const pct = Math.round((row.artifacts / totalArtifacts) * 100)
+                  const active = row.key === moatPopup.key
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      onClick={() => setMoatPopup({ key: row.key, title: row.title, markedPlans: row.markedPlans, artifacts: row.artifacts })}
+                      className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs transition ${
+                        active
+                          ? 'border-[#FF9F0F]/55 bg-[#FF9F0F]/14 text-[#FFD29A]'
+                          : 'border-white/10 bg-black/20 text-sand/80 hover:border-[#FF9F0F]/35'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{row.title}</span>
+                      <span className="shrink-0 tabular-nums">
+                        {row.artifacts.toLocaleString('en-US')} artifacts · {pct}%
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2.5">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sand/55">Files</div>
+              {moatFiles.status === 'loading' ? (
+                <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/65">
+                  Loading files…
+                </div>
+              ) : moatFiles.status === 'error' ? (
+                <div className="rounded-md border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">
+                  {moatFiles.message ?? 'Could not load files.'}
+                </div>
+              ) : moatSectionFiles.length === 0 ? (
+                <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/60">
+                  No files found for this section on the latest live offer.
+                </div>
+              ) : (
+                <div className="hide-scroll flex gap-2 overflow-x-auto pb-1">
+                  {moatSectionFiles.map((img) => (
+                    <a
+                      key={img.id}
+                      href={img.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-44 shrink-0 rounded-lg border border-[#FF9F0F]/25 bg-black/20 p-1.5 transition hover:border-[#FF9F0F]/45"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.url} alt={img.filename} className="h-24 w-full rounded object-cover" />
+                      <div className="mt-1.5 truncate text-[10px] font-medium text-sand/85">{img.filename}</div>
+                      <div className="truncate text-[10px] text-sand/50">{img.folder.replace(/_/g, ' / ')}</div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {orgProfilePopupOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-6xl overflow-hidden rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="px-4 pt-3 text-base font-semibold text-sand">Organization profile · PDF preview page</div>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-sand/70 hover:bg-white/10 hover:text-white"
+                onClick={() => setOrgProfilePopupOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="h-[78vh] border-t border-white/10 bg-black/25">
+              <iframe
+                src="/dashboard/settings/angebotsanpassung"
+                title="Organization profile preview"
+                className="h-full w-full"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {permissionsModalOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+              <div className="text-base font-semibold text-sand">Manage permissions</div>
+              <button
+                type="button"
+                onClick={() => setPermissionsModalOpen(false)}
+                className="text-sm text-sand/70 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-3 p-4">
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-sand/55">Account plan</div>
+                <SelectSun
+                  value={String(permissionDraftTier)}
+                  onChange={(v) => setPermissionDraftTier(Math.max(1, Math.min(3, Number(v) || 1)))}
+                  options={[
+                    { value: '1', label: 'Starter (10/mo)' },
+                    { value: '2', label: 'Standard (25/mo)' },
+                    { value: '3', label: 'Unlimited' },
+                  ]}
+                  placeholder="Select plan"
+                />
+              </div>
+
+              <div>
+                <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-sand/55">
+                  Allowed offer types (create access)
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {ADMIN_PERMISSION_OFFER_TYPES.map((ot) => {
+                    const active = permissionDraftOfferTypes.includes(ot.slug)
+                    return (
+                      <button
+                        key={ot.slug}
+                        type="button"
+                        onClick={() =>
+                          setPermissionDraftOfferTypes((prev) =>
+                            prev.includes(ot.slug) ? prev.filter((x) => x !== ot.slug) : [...prev, ot.slug],
+                          )
+                        }
+                        className={`rounded-lg border px-2.5 py-1.5 text-left text-xs transition ${
+                          active
+                            ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]'
+                            : 'border-white/15 bg-black/20 text-sand/80 hover:border-[#FF9F0F]/35'
+                        }`}
+                      >
+                        {ot.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setPermissionsModalOpen(false)}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-sand/85 hover:border-[#FF9F0F]/35"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={orgSaving || !liveWorkspace}
+                onClick={() => {
+                  if (!liveWorkspace) return
+                  const cleaned = permissionDraftOfferTypes
+                    .map((x) => x.trim())
+                    .filter(Boolean) as Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'neubau'>
+                  void (async () => {
+                    try {
+                      setOrgSaving(true)
+                      setOrgError(null)
+                      await updateAdminTenantWorkspace(selectedOrgId, {
+                        usageTier: permissionDraftTier,
+                        allowedOfferTypes: cleaned,
+                      })
+                      const ws = await fetchAdminTenantWorkspace(selectedOrgId)
+                      setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
+                      setPermissionsModalOpen(false)
+                    } catch (e) {
+                      setOrgError(e instanceof Error ? e.message : 'Could not update permissions.')
+                    } finally {
+                      setOrgSaving(false)
+                    }
+                  })()
+                }}
+                className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Save permissions
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {customUsersOpen && (
         <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
@@ -3876,10 +4500,30 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                disabled={!!liveWorkspace}
+                disabled={orgSaving}
                 onClick={() => {
-                  if (liveWorkspace) return
                   const add = Math.max(0, parseInt(tokensAddAmount, 10) || 0)
+                  if (add <= 0) {
+                    setTokensModalOpen(false)
+                    return
+                  }
+                  if (liveWorkspace) {
+                    void (async () => {
+                      try {
+                        setOrgSaving(true)
+                        setOrgError(null)
+                        await updateAdminTenantWorkspace(selectedOrgId, { addTokens: add })
+                        const ws = await fetchAdminTenantWorkspace(selectedOrgId)
+                        setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
+                        setTokensModalOpen(false)
+                      } catch (e) {
+                        setOrgError(e instanceof Error ? e.message : 'Could not add tokens.')
+                      } finally {
+                        setOrgSaving(false)
+                      }
+                    })()
+                    return
+                  }
                   const base =
                     tokenBalancesByOrg[selectedOrgId] ?? parseTokenBalanceString(selectedOrgMeta.tokenBalance)
                   setTokenBalancesByOrg((prev) => ({ ...prev, [selectedOrgId]: base + add }))
@@ -3914,17 +4558,16 @@ export default function AdminPage() {
             <div className="space-y-3 p-4">
               {editMemberDraft.sourceProfileId ? (
                 <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/90">
-                  This account is stored in Supabase. Changes here are not saved yet.
+                  This account is stored in Supabase. Name and role are saved through admin API.
                 </p>
               ) : null}
               <label className="block">
                 <span className="wiz-label">Name</span>
                 <input
                   type="text"
-                  readOnly={!!editMemberDraft.sourceProfileId}
                   value={editMemberDraft.name}
                   onChange={(e) => setEditMemberDraft((d) => (d ? { ...d, name: e.target.value } : d))}
-                  className={`sun-input${editMemberDraft.sourceProfileId ? ' cursor-default opacity-80' : ''}`}
+                  className="sun-input"
                 />
               </label>
               <label className="block">
@@ -3951,20 +4594,16 @@ export default function AdminPage() {
               </label>
               <label className="block">
                 <span className="wiz-label">Role</span>
-                {editMemberDraft.sourceProfileId ? (
-                  <div className="sun-input cursor-default opacity-80">{editMemberDraft.role}</div>
-                ) : (
-                  <SelectSun
-                    value={editMemberDraft.role}
-                    onChange={(v) =>
-                      setEditMemberDraft((d) =>
-                        d ? { ...d, role: v as 'Admin' | 'Member' } : d,
-                      )
-                    }
-                    options={['Admin', 'Member']}
-                    placeholder="Select role"
-                  />
-                )}
+                <SelectSun
+                  value={editMemberDraft.role}
+                  onChange={(v) =>
+                    setEditMemberDraft((d) =>
+                      d ? { ...d, role: v as 'Admin' | 'Member' } : d,
+                    )
+                  }
+                  options={['Admin', 'Member']}
+                  placeholder="Select role"
+                />
               </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
@@ -3981,9 +4620,36 @@ export default function AdminPage() {
               </button>
               <button
                 type="button"
-                disabled={!!editMemberDraft.sourceProfileId}
+                disabled={orgSaving}
                 onClick={() => {
-                  if (editMemberIndex == null || !editMemberDraft || editMemberDraft.sourceProfileId) return
+                  if (editMemberIndex == null || !editMemberDraft) return
+                  if (editMemberDraft.sourceProfileId) {
+                    void (async () => {
+                      try {
+                        setOrgSaving(true)
+                        setOrgError(null)
+                        await updateAdminTenantWorkspace(selectedOrgId, {
+                          members: [
+                            {
+                              id: editMemberDraft.sourceProfileId!,
+                              full_name: editMemberDraft.name,
+                              role: editMemberDraft.role === 'Admin' ? 'admin' : 'user',
+                            },
+                          ],
+                        })
+                        const ws = await fetchAdminTenantWorkspace(selectedOrgId)
+                        setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
+                        setEditMemberModalOpen(false)
+                        setEditMemberDraft(null)
+                        setEditMemberIndex(null)
+                      } catch (e) {
+                        setOrgError(e instanceof Error ? e.message : 'Could not update member.')
+                      } finally {
+                        setOrgSaving(false)
+                      }
+                    })()
+                    return
+                  }
                   const list = [...(orgEditableUsers[selectedOrgId] ?? seedOrgUsersFromMeta(selectedOrgMeta))]
                   list[editMemberIndex] = { ...editMemberDraft }
                   setOrgEditableUsers((prev) => ({ ...prev, [selectedOrgId]: list }))
@@ -4074,6 +4740,8 @@ function KpiCard({
   series,
   sparkCaption,
   valueFormat = 'count',
+  onClick,
+  active = false,
 }: {
   title: string
   value: string
@@ -4082,10 +4750,20 @@ function KpiCard({
   series?: readonly number[]
   sparkCaption?: string
   valueFormat?: 'count' | 'duration'
+  onClick?: () => void
+  active?: boolean
 }) {
   const showSpark = series && series.length >= 2
   return (
-    <div className="rounded-xl border border-black/40 bg-coffee-700/90 p-2.5 shadow-soft backdrop-blur-sm">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-xl border p-2.5 text-left shadow-soft backdrop-blur-sm ${
+        active
+          ? 'border-[#FF9F0F]/60 bg-coffee-650/95'
+          : 'border-black/40 bg-coffee-700/90'
+      } ${onClick ? 'cursor-pointer transition hover:border-[#FF9F0F]/35' : 'cursor-default'}`}
+    >
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <div className="min-w-0 truncate text-[12px] leading-tight text-sand/70">{title}</div>
         <div className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border border-[#FF9F0F]/35 bg-[#FF9F0F]/15 text-[#FFB84D]">
@@ -4109,7 +4787,7 @@ function KpiCard({
           </div>
         ) : null}
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -4153,18 +4831,34 @@ function PipelineRow({
   )
 }
 
-function MoatAction({ title, markedPlans }: { title: string; markedPlans: number }) {
+function MoatAction({
+  title,
+  markedPlans,
+  artifacts,
+  onOpen,
+}: {
+  title: string
+  markedPlans: number
+  artifacts?: number
+  onOpen?: () => void
+}) {
   return (
     <button
       type="button"
-      className="group rounded-lg border border-white/12 bg-black/15 p-2 text-left transition hover:border-[#FF9F0F]/45 hover:bg-[#FF9F0F]/10"
+      onClick={onOpen}
+      className="group flex h-[112px] min-w-[170px] shrink-0 flex-col rounded-lg border border-white/12 bg-black/15 p-2 text-left transition hover:border-[#FF9F0F]/45 hover:bg-[#FF9F0F]/10"
     >
-      <div className="text-sm text-sand/70">{title}</div>
+      <div className="text-sm font-medium leading-tight text-sand/70">{title}</div>
       <div className="mt-1 text-xs text-sand/75">
         Marked plans:{' '}
         <span className="font-semibold text-[#FFD29A]">{new Intl.NumberFormat('en-US').format(markedPlans)}</span>
       </div>
-      <div className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-[#FFD29A]">
+      {artifacts != null ? (
+        <div className="mt-0.5 text-[11px] text-sand/60">
+          Artifacts: <span className="font-semibold text-sand/85">{new Intl.NumberFormat('en-US').format(artifacts)}</span>
+        </div>
+      ) : null}
+      <div className="mt-auto inline-flex items-center gap-1 pt-1 text-sm font-semibold text-[#FFD29A]">
         Open details
         <span className="transition-transform group-hover:translate-x-0.5">→</span>
       </div>
@@ -4175,27 +4869,28 @@ function MoatAction({ title, markedPlans }: { title: string; markedPlans: number
 function OffersThroughputChart({
   points,
 }: {
-  points: ReadonlyArray<{ label: string; offers: number; avgTime: string }>
+  points: ReadonlyArray<{ label: string; offers: number; avgTime: string; incidents: number; avgCost: number | null }>
 }) {
   const maxOffers = Math.max(...points.map((p) => p.offers))
   const minOffers = Math.min(...points.map((p) => p.offers))
   const range = Math.max(1, maxOffers - minOffers)
   const chartW = 100
-  const chartH = 70
-  const baseY = 62
+  const chartH = 100
+  const baseY = 92
+  const topPad = 8
   const xStep = points.length > 1 ? chartW / (points.length - 1) : chartW
   const coords = points.map((p, idx) => {
     const norm = (p.offers - minOffers) / range
-    const y = baseY - norm * chartH
+    const y = baseY - norm * (baseY - topPad)
     return { ...p, x: idx * xStep, y }
   })
   const polyline = coords.map((c) => `${c.x},${c.y}`).join(' ')
   const area = `${coords.map((c) => `${c.x},${c.y}`).join(' ')} ${chartW},${baseY} 0,${baseY}`
 
   return (
-    <div className="relative h-[240px] overflow-hidden rounded-lg border border-white/10 bg-black/15">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(255,255,255,.08)_1px,transparent_1px)] bg-size-[100%_25%]" />
-      <svg viewBox={`0 0 ${chartW} 70`} className="absolute inset-x-3 top-3 h-[170px] w-[calc(100%-1.5rem)]">
+    <div className="relative h-full min-h-[260px] overflow-hidden rounded-lg border border-white/10 bg-black/15">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_top,rgba(255,255,255,.08)_1px,transparent_1px)] bg-size-[100%_20%]" />
+      <svg viewBox={`0 0 ${chartW} ${chartH}`} className="absolute inset-2 h-[calc(100%-2.5rem)] w-[calc(100%-1rem)]">
         <defs>
           <linearGradient id="offersArea" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="rgba(255,184,77,0.35)" />
@@ -4208,18 +4903,20 @@ function OffersThroughputChart({
           <circle key={c.label} cx={c.x} cy={c.y} r="1.8" fill="#FF9F0F" stroke="#FFD29A" strokeWidth="0.7" />
         ))}
       </svg>
-      <div className="absolute inset-x-3 top-3 h-[170px]">
+      <div className="absolute inset-x-2 top-2 h-[calc(100%-2.5rem)]">
         {coords.map((c) => (
           <div
             key={c.label}
             className="group absolute -translate-x-1/2"
-            style={{ left: `${c.x}%`, top: `${(c.y / 70) * 100}%` }}
+            style={{ left: `${c.x}%`, top: `${(c.y / chartH) * 100}%` }}
           >
             <div className="h-4 w-4 rounded-full" />
             <div className="pointer-events-none absolute -top-14 left-1/2 z-20 min-w-[128px] -translate-x-1/2 rounded-md border border-[#FF9F0F]/35 bg-[#2b1f17]/95 px-2 py-1 text-xs text-sand opacity-0 shadow-soft transition-all duration-150 group-hover:-translate-y-1 group-hover:opacity-100">
               <div className="font-semibold text-[#FFD29A]">{c.label}</div>
               <div>Offers: {c.offers}</div>
               <div>Avg time: {c.avgTime}</div>
+              <div>Incidents: {c.incidents}</div>
+              <div>Avg cost: {formatCostCents(c.avgCost)}</div>
             </div>
           </div>
         ))}

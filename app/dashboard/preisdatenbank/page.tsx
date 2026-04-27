@@ -156,7 +156,7 @@ function cardSubtitle(cardTitle: string, currency: DisplayCurrency, _rawSubtitle
 /** Subtitlu alb pentru fiecare pas de formular (stepKey). */
 const STEP_SUBTITLES: Record<string, string> = {
   sistemConstructiv: 'Baustellenbedingungen und Profitmarge',
-  structuraCladirii: 'Fundament, Raumhöhe, Flächen und Treppen',
+  bodenDeckeBelag: 'Pfahlgründung, Fundament, Treppen, Geschossdecken und Bodenbeläge',
   daemmungDachdeckung: 'Dämmung, Unterdach, Dachstuhl und Dachdeckung',
   ferestreUsi: 'Glasflächen, Türen und Garagentor',
   materialeFinisaj: 'Innenausbau Innenwände, Außenwände und Fassade',

@@ -454,7 +454,7 @@ function VpsStatusChip({
         <div className="h-full rounded-full bg-[#FF9F0F]" style={{ width: `${width}%` }} />
       </div>
 
-      <div className="pointer-events-auto absolute left-0 top-full z-50 mt-2 origin-top-left rounded-xl border border-white/15 bg-black/95 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
+      <div className="pointer-events-none absolute left-0 top-full z-50 mt-2 origin-top-left rounded-xl border border-white/15 bg-black/95 p-3 text-sand opacity-0 shadow-lg backdrop-blur-sm translate-y-1 transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="text-[15px] font-bold text-white">{label}</div>
           <div className="inline-flex max-w-[160px] items-center gap-1 rounded-full border border-[#FF9F0F]/45 bg-[#FF9F0F]/14 px-2 py-0.5 text-[11px] font-semibold text-[#FFD29A]">

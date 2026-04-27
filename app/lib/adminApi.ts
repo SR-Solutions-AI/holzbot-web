@@ -69,6 +69,7 @@ export type AdminTenantWorkspace = {
     used: number
     limit: number | null
     remaining: number | null
+    bonus?: number
     unlimited: boolean
     period_ym: string
     tier: number
@@ -77,6 +78,10 @@ export type AdminTenantWorkspace = {
   }
   profiles: AdminTenantWorkspaceProfile[]
   stats: { offer_count: number }
+  permissions?: {
+    usage_tier: number
+    allowed_offer_types: string[]
+  }
 }
 
 export async function fetchAdminTenantWorkspace(tenantId: string): Promise<AdminTenantWorkspace> {
@@ -88,6 +93,38 @@ export type AdminStatisticsThroughputPoint = {
   offers: number
   avg_wall_seconds: number | null
   avg_time_label: string
+  incidents: number
+  avg_cost_cents: number | null
+}
+
+export type AdminStatisticsIncident = {
+  run_id: string | null
+  offer_id: string | null
+  tenant_id: string | null
+  stage: string
+  severity: 'low' | 'medium' | 'high'
+  message: string
+  started_at: string | null
+  finished_at: string | null
+  type: 'failed_run' | 'stuck_run' | 'error_event'
+  fingerprint?: string
+}
+
+export type AdminPipelineStageSummary = {
+  key: string
+  label: string
+  processed: number
+  failed: number
+  avg_time_seconds: number | null
+  success_rate_pct: number
+  trend_pct: number | null
+}
+
+export type AdminDataMoatSummaryRow = {
+  key: 'plan_segmentation' | 'wall_detection' | 'rooms_detection' | 'doors' | 'windows' | 'roof'
+  label: string
+  marked_plans: number
+  artifacts: number
 }
 
 export type AdminStatisticsSummary = {
@@ -106,6 +143,10 @@ export type AdminStatisticsSummary = {
     profiles_churn_previous: number
     incidents_current: number
     incidents_previous: number
+    organizations_current: number
+    organizations_all_time: number
+    organizations_churn_current: number
+    organizations_churn_previous: number
   }
   throughput: AdminStatisticsThroughputPoint[]
   kpi_series: {
@@ -113,6 +154,20 @@ export type AdminStatisticsSummary = {
     avg_wall_seconds: number[]
     clients_net: number[]
     incidents: number[]
+  }
+  incidents: {
+    total: number
+    high: number
+    medium: number
+    low: number
+    items: AdminStatisticsIncident[]
+  }
+  pipeline_stages: AdminPipelineStageSummary[]
+  data_moat: AdminDataMoatSummaryRow[]
+  cost: {
+    runs_count: number
+    total_cost_cents: number
+    avg_cost_per_run_cents: number | null
   }
 }
 
@@ -126,4 +181,33 @@ export async function fetchAdminStatisticsSummary(params: {
   q.set('to', params.to)
   if (params.tenantIds?.length) q.set('tenant_ids', params.tenantIds.join(','))
   return apiFetch(`/admin/statistics/summary?${q.toString()}`)
+}
+
+export async function resolveAdminIncident(fingerprint: string): Promise<{ ok: boolean }> {
+  return apiFetch('/admin/incidents/resolve', {
+    method: 'POST',
+    body: { fingerprint },
+  })
+}
+
+export async function closeAdminRun(runId: string): Promise<{ ok: boolean; alreadyClosed?: boolean }> {
+  return apiFetch(`/admin/runs/${encodeURIComponent(runId)}/close`, {
+    method: 'POST',
+  })
+}
+
+export async function updateAdminTenantWorkspace(
+  tenantId: string,
+  payload: {
+    branding?: { phone?: string; email?: string; address?: string; website?: string }
+    usageTier?: number
+    addTokens?: number
+    allowedOfferTypes?: Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'neubau'>
+    members?: Array<{ id: string; full_name?: string; role?: 'admin' | 'org_leader' | 'user' }>
+  },
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/admin/tenants/${encodeURIComponent(tenantId)}/workspace`, {
+    method: 'PATCH',
+    body: payload,
+  })
 }

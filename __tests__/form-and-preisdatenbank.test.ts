@@ -43,7 +43,6 @@ describe('Preisdatenbank – acoperire completă', () => {
   describe('Fiecare secțiune Preisdatenbank', () => {
     const expectedSectionTitles = [
       'Allgemeine Projektinformationen',
-      'Gebäudestruktur',
       'Fenster & Türen',
       'Wandaufbau',
       'Materialien & Ausbaustufe',
@@ -59,6 +58,15 @@ describe('Preisdatenbank – acoperire completă', () => {
         expect(Array.isArray(section!.subsections)).toBe(true)
         expect(section!.subsections.length).toBeGreaterThan(0)
       })
+    })
+
+    it('Geschossdecken und Bodenaufbauten include Pfahlgründung, Fundament și Treppe (fost Gebäudestruktur)', () => {
+      const section = priceSections.find((s) => s.title === 'Geschossdecken und Bodenaufbauten')
+      expect(section).toBeDefined()
+      const titles = section!.subsections.map((s) => s.title)
+      expect(titles).toContain('Pfahlgründung')
+      expect(titles).toContain('Fundament')
+      expect(titles).toContain('Treppe')
     })
   })
 
