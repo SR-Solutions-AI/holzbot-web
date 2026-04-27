@@ -478,10 +478,10 @@ const HOLZBOT_LICENSE_FEATURES = [
 ] as const
 
 const HOLZBOT_PRICE_TIERS = [
-  { label: '5 Projekte / Monat', price: '190 €' },
-  { label: '10 Projekte / Monat', price: '390 €' },
-  { label: '25 Projekte / Monat', price: '590 €' },
-  { label: 'Unbegrenzte Projekte', price: '990 €', highlight: true },
+  { label: '5 Projekte / Monat', price: '299 €' },
+  { label: '10 Projekte / Monat', price: '499 €' },
+  { label: '25 Projekte / Monat', price: '999 €' },
+  { label: 'Unlimitiert', price: '1499 €', highlight: true },
 ] as const
 
 function PricingSection() {
