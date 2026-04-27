@@ -186,7 +186,7 @@ export async function fetchAdminStatisticsSummary(params: {
 export async function resolveAdminIncident(fingerprint: string): Promise<{ ok: boolean }> {
   return apiFetch('/admin/incidents/resolve', {
     method: 'POST',
-    body: { fingerprint },
+    body: JSON.stringify({ fingerprint }),
   })
 }
 
@@ -208,6 +208,6 @@ export async function updateAdminTenantWorkspace(
 ): Promise<{ ok: boolean }> {
   return apiFetch(`/admin/tenants/${encodeURIComponent(tenantId)}/workspace`, {
     method: 'PATCH',
-    body: payload,
+    body: JSON.stringify(payload),
   })
 }
