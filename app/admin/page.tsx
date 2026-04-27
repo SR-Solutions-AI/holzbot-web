@@ -1369,6 +1369,8 @@ export default function AdminPage() {
         label: p.label,
         offers: p.offers,
         avgTime: p.avgTime,
+        incidents: 0,
+        avgCost: null as number | null,
       }))
     }
     if (statsStatus === 'ok' && statsSummary) {
