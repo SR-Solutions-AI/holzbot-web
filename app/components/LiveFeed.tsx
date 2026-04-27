@@ -296,7 +296,7 @@ const isImage = (f: FeedFile) => (f.mime?.startsWith('image/') ?? true) || /\.(p
 const isPdf = (f: FeedFile) => f.mime?.includes('pdf') || /\.pdf(\?|$)/i.test(f.url)
 const isDisplayable = (f: FeedFile) => isImage(f)
 
-/** Prev. 3D izometrică din Scale (04_walls_3d.png) — ascunsă în livefeed pentru toate fluxurile (Neubau + Dachstuhl). */
+/** Prev. 3D izometrică din Scale (04_walls_3d.png) — ascunsă în livefeed pentru toate fluxurile (Einfamilienhaus + Dachstuhl). */
 const shouldHideScaleWalls3dFromFeed = (stage: string, f: FeedFile): boolean => {
   if (stage !== 'scale') return false
   // Signed Supabase URLs often omit the filename; API sends caption + storage_path.
@@ -688,10 +688,10 @@ export default function LiveFeed() {
   const [canDownloadAdminPdf, setCanDownloadAdminPdf] = useState(false)
   const [progress, setProgress] = useState(0) // 0-100
   const [currentStageName, setCurrentStageName] = useState<string | null>(null)
-  /** Neubau vs Dachstuhl: titluri și fallback progres */
-  const [offerFlow, setOfferFlow] = useState<OfferFlow>('neubau')
+  /** Einfamilienhaus vs Dachstuhl: titluri și fallback progres */
+  const [offerFlow, setOfferFlow] = useState<OfferFlow>('einfamilienhaus')
   const [isMeasurementsOnlyOffer, setIsMeasurementsOnlyOffer] = useState(false)
-  const flowModeRef = useRef<OfferFlow>('neubau')
+  const flowModeRef = useRef<OfferFlow>('einfamilienhaus')
 
   const filesByStage = useRef<Record<string, FeedFile[]>>({})
   const processedStages = useRef<Set<string>>(new Set())
@@ -742,7 +742,7 @@ export default function LiveFeed() {
 
   const STORAGE_KEY_OFFER = 'holzbot_dashboard_offer'
   const STORAGE_KEY_RUNNING = 'holzbot_dashboard_running'
-  const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean, flow: OfferFlow = 'neubau') => {
+  const persistOfferState = (offerId: string | null, runId: string | null, isComputing: boolean, flow: OfferFlow = 'einfamilienhaus') => {
     try {
       if (typeof window === 'undefined') return
       if (!offerId) {
@@ -931,8 +931,8 @@ export default function LiveFeed() {
       setComputing(false)
       setProgress(0)
       setCurrentStageName(null)
-      flowModeRef.current = 'neubau'
-      setOfferFlow('neubau')
+      flowModeRef.current = 'einfamilienhaus'
+      setOfferFlow('einfamilienhaus')
       setIsMeasurementsOnlyOffer(false)
     }
     
@@ -950,7 +950,7 @@ export default function LiveFeed() {
       const runId = rid
       const detailFlow = e.detail?.flow as OfferFlow | undefined
       const explicitFlow: OfferFlow | undefined =
-        detailFlow === 'neubau' ||
+        detailFlow === 'einfamilienhaus' ||
         detailFlow === 'dachstuhl' ||
         detailFlow === 'aufstockung' ||
         detailFlow === 'zubau' ||
@@ -963,7 +963,7 @@ export default function LiveFeed() {
         explicitFlow === 'zubau' ||
         explicitFlow === 'zubau_aufstockung'
           ? explicitFlow
-          : 'neubau'
+          : 'einfamilienhaus'
       flowModeRef.current = provisional
       setOfferFlow(provisional)
       setIsMeasurementsOnlyOffer(e?.detail?.measurementsOnlyOffer === true)
@@ -1193,13 +1193,13 @@ export default function LiveFeed() {
         allStagesCompleted.current = false
         setProgress(0)
         setCurrentStageName(null)
-        flowModeRef.current = 'neubau'
-        setOfferFlow('neubau')
+        flowModeRef.current = 'einfamilienhaus'
+        setOfferFlow('einfamilienhaus')
       setIsMeasurementsOnlyOffer(false)
         return
       }
 
-      let offerFlowResolved: OfferFlow = 'neubau'
+      let offerFlowResolved: OfferFlow = 'einfamilienhaus'
       try {
         const o = await apiFetch(`/offers/${encodeURIComponent(id)}`)
         const meta = o?.meta ?? o?.offer?.meta
@@ -2113,7 +2113,7 @@ export default function LiveFeed() {
                         ? 'Zubau Mengenermittlung'
                         : offerFlow === 'zubau_aufstockung'
                           ? 'Zubau / Aufstockung Mengenermittlung'
-                          : 'Neubau Mengenermittlung'
+                          : 'Einfamilienhaus Mengenermittlung'
                   : offerFlow === 'dachstuhl'
                     ? 'Dachstuhl Angebot'
                     : offerFlow === 'aufstockung'
@@ -2122,7 +2122,7 @@ export default function LiveFeed() {
                         ? 'Zubau Angebot'
                         : offerFlow === 'zubau_aufstockung'
                           ? 'Zubau / Aufstockung Angebot'
-                          : 'Neubau Angebot'}
+                          : 'Einfamilienhaus Angebot'}
               </span>
               <div className="text-xs font-medium text-sand/80 truncate">
                 {currentStageName || 'Verarbeitung...'}

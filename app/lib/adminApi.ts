@@ -202,7 +202,7 @@ export async function updateAdminTenantWorkspace(
     branding?: { phone?: string; email?: string; address?: string; website?: string }
     usageTier?: number
     addTokens?: number
-    allowedOfferTypes?: Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'neubau'>
+    allowedOfferTypes?: Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'einfamilienhaus' | 'neubau'>
     members?: Array<{ id: string; full_name?: string; role?: 'admin' | 'org_leader' | 'user' }>
   },
 ): Promise<{ ok: boolean }> {

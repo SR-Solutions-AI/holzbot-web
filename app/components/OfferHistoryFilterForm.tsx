@@ -13,6 +13,7 @@ export const WIZARD_OFFER_SLUGS = [
   'mengenermittlung',
   'mengen',
   'dachstuhl',
+  'einfamilienhaus',
   'neubau',
   'aufstockung',
   'zubau',
@@ -24,11 +25,12 @@ const SLUG_TO_LABEL: Record<string, string> = {
   mengenermittlung: 'Mengenermittlung',
   mengen: 'Mengenermittlung',
   dachstuhl: 'Dachstuhl Angebot',
-  neubau: 'Neubau Angebot',
+  einfamilienhaus: 'Einfamilienhaus Angebot',
+  neubau: 'Einfamilienhaus Angebot',
   aufstockung: 'Aufstockung Angebot',
   zubau: 'Zubau Angebot',
   zubau_aufstockung: 'Zubau / Aufstockung Angebot',
-  full_house: 'Neubau Angebot',
+  full_house: 'Einfamilienhaus Angebot',
 }
 
 export function offerTypeLabel(slug: string | null | undefined): string {
@@ -78,7 +80,7 @@ export function OfferHistoryFilterForm({
     offerTypeOptions.find((o) => o.slug === 'zubau_aufstockung'),
     offerTypeOptions.find((o) => o.slug === 'aufstockung'),
     offerTypeOptions.find((o) => o.slug === 'zubau'),
-    offerTypeOptions.find((o) => o.slug === 'neubau' || o.slug === 'full_house'),
+    offerTypeOptions.find((o) => o.slug === 'einfamilienhaus' || o.slug === 'neubau' || o.slug === 'full_house'),
   ].filter(Boolean) as OfferHistoryOfferTypeOption[]
 
   useEffect(() => {

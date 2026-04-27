@@ -57,7 +57,7 @@ function getOfferTypeBadgeLabel(item: OfferListItem): string {
     if (flow === 'zubau_aufstockung') return 'Zubau / Aufstockung Mengenübersicht'
     if (flow === 'aufstockung') return 'Aufstockung Mengenübersicht'
     if (flow === 'zubau') return 'Zubau Mengenübersicht'
-    return 'Neubau Mengenübersicht'
+    return 'Einfamilienhaus Mengenübersicht'
   }
   if (flow === 'dachstuhl') return 'Dachstuhl Angebot'
   if (flow === 'zubau_aufstockung') return 'Zubau / Aufstockung Angebot'

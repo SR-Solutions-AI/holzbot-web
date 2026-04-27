@@ -272,7 +272,7 @@ function seedOrgUsersFromMeta(meta: OrgMeta): OrgUserEditable[] {
 }
 
 const ORG_PROJECT_TITLES = [
-  'Neubau Angebot',
+  'Einfamilienhaus Angebot',
   'Dachstuhl revision',
   'Mengenermittlung MFH',
   'Sanierung Holzbau',
@@ -292,11 +292,11 @@ const ADMIN_OFFER_TYPE_OPTIONS = [
   { id: 'adm-zubaufull', slug: 'zubau_aufstockung' },
   { id: 'adm-auf', slug: 'aufstockung' },
   { id: 'adm-zubau', slug: 'zubau' },
-  { id: 'adm-neu', slug: 'neubau' },
+  { id: 'adm-neu', slug: 'einfamilienhaus' },
 ] as const
 
 const ADMIN_PERMISSION_OFFER_TYPES = [
-  { slug: 'neubau', label: 'Angebot Neubau' },
+  { slug: 'einfamilienhaus', label: 'Angebot Einfamilienhaus' },
   { slug: 'mengenermittlung', label: 'Angebot Mengenermittlung' },
   { slug: 'dachstuhl', label: 'Angebot Dachstuhl' },
   { slug: 'aufstockung', label: 'Angebot Aufstockung' },
@@ -997,7 +997,7 @@ function inferOfferSlugFromText(text: string): string {
   if (t.includes('zubau') && t.includes('aufstock')) return 'zubau_aufstockung'
   if (t.includes('zubau')) return 'zubau'
   if (t.includes('aufstock')) return 'aufstockung'
-  if (t.includes('neu') || t.includes('full house')) return 'neubau'
+  if (t.includes('neu') || t.includes('full house')) return 'einfamilienhaus'
   return ''
 }
 
@@ -1026,7 +1026,7 @@ function mapProcessingFolderToMoatKey(folder: string): string {
 /** Align DB offer_type slugs with admin filter options (see OfferHistoryFilterForm). */
 function offerSlugMatchesAdminFilter(offerSlug: string, filterSlug: string | undefined): boolean {
   if (!filterSlug) return true
-  if (filterSlug === 'neubau') return offerSlug === 'neubau' || offerSlug === 'full_house'
+  if (filterSlug === 'einfamilienhaus') return offerSlug === 'einfamilienhaus' || offerSlug === 'neubau' || offerSlug === 'full_house'
   if (filterSlug === 'mengenermittlung') return offerSlug === 'mengenermittlung' || offerSlug === 'mengen'
   if (filterSlug === 'dachstuhl') return offerSlug === 'dachstuhl'
   return offerSlug === filterSlug
@@ -1082,7 +1082,7 @@ export default function AdminPage() {
   const [customMode, setCustomMode] = useState<'manual' | 'plans' | 'offerTypes'>('manual')
   const [manualUsers, setManualUsers] = useState<string[]>(['Anna Keller', 'Lukas Meier'])
   const [planBucket, setPlanBucket] = useState<'all' | '0-10' | '11-30' | '31+'>('11-30')
-  const [offerTypeTargets, setOfferTypeTargets] = useState<string[]>(['Neubau'])
+  const [offerTypeTargets, setOfferTypeTargets] = useState<string[]>(['Einfamilienhaus'])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const statsScrollRef = useRef<HTMLDivElement>(null)
@@ -1604,7 +1604,7 @@ export default function AdminPage() {
     const seed = selectedOrgId.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0)
     const pfx = selectedOrgMeta.codePrefix
     const userCount = Math.max(1, selectedOrgMeta.users.length)
-    const offerCycle = ['mengenermittlung', 'dachstuhl', 'neubau'] as const
+    const offerCycle = ['mengenermittlung', 'dachstuhl', 'einfamilienhaus'] as const
     return Array.from({ length: 12 }).map((_, idx) => {
       const dayOffset = (seed + idx * 11) % 48
       const d = new Date()
@@ -4283,7 +4283,7 @@ export default function AdminPage() {
                   if (!liveWorkspace) return
                   const cleaned = permissionDraftOfferTypes
                     .map((x) => x.trim())
-                    .filter(Boolean) as Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'neubau'>
+                    .filter(Boolean) as Array<'mengenermittlung' | 'dachstuhl' | 'zubau_aufstockung' | 'aufstockung' | 'zubau' | 'einfamilienhaus'>
                   void (async () => {
                     try {
                       setOrgSaving(true)
@@ -4385,7 +4385,7 @@ export default function AdminPage() {
                 <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                   <div className="text-sm text-sand/85 mb-2">Target users by offer type access</div>
                   <div className="flex flex-wrap gap-2">
-                    {['Neubau', 'Dachstuhl', 'Mengenermittlung', 'Custom offers'].map((ot) => {
+                    {['Einfamilienhaus', 'Dachstuhl', 'Mengenermittlung', 'Custom offers'].map((ot) => {
                       const active = offerTypeTargets.includes(ot)
                       return (
                         <button
