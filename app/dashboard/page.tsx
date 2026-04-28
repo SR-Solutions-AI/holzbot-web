@@ -58,15 +58,21 @@ export default function Home() {
         offerId?: string
         runId?: string | null
         isComputing?: boolean
-        flow?: OfferFlow | 'neubau'
+        flow?: OfferFlow | 'neubau' | 'gewerbe_wohnbau'
       }
       const offerId = data?.offerId
       if (!offerId) return
       const runId = data?.runId ?? null
       const isComputing = data?.isComputing === true
       const flow =
-        data?.flow === 'dachstuhl' || data?.flow === 'einfamilienhaus' || data?.flow === 'neubau' || data?.flow === 'aufstockung' || data?.flow === 'zubau' || data?.flow === 'zubau_aufstockung'
-          ? (data.flow === 'neubau' ? 'einfamilienhaus' : data.flow)
+        data?.flow === 'dachstuhl' ||
+        data?.flow === 'einfamilienhaus' ||
+        data?.flow === 'neubau' ||
+        data?.flow === 'gewerbe_wohnbau' ||
+        data?.flow === 'aufstockung' ||
+        data?.flow === 'zubau' ||
+        data?.flow === 'zubau_aufstockung'
+          ? (data.flow === 'neubau' || data.flow === 'gewerbe_wohnbau' ? 'einfamilienhaus' : data.flow)
           : undefined
       const timer = window.setTimeout(() => {
         if (isComputing && runId) {

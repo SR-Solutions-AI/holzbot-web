@@ -241,7 +241,7 @@ function FAQSection() {
                         <ul className="space-y-3 ml-7">
                             <li className="flex items-start gap-3">
                                 <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
-                                <span className="text-lg md:text-xl text-sand/90"><span className="font-semibold text-white">Einfamilienhausten oder Dachstühle</span> zu Ihren Hauptleistungen zählen</span>
+                                <span className="text-lg md:text-xl text-sand/90">Einfamilienhäuser, Gewerbe- und Wohnbauten, Aufstockungen und Dachstühle zu Ihren Hauptleistungen zählen.</span>
                             </li>
                             <li className="flex items-start gap-3">
                                 <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
@@ -254,6 +254,10 @@ function FAQSection() {
                             <li className="flex items-start gap-3">
                                 <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
                                 <span className="text-lg md:text-xl text-sand/90">Sie Preise oft <span className="font-semibold text-white">zu spät nennen</span>, weil mehrere Anfragen parallel bearbeitet werden müssen</span>
+                            </li>
+                            <li className="flex items-start gap-3">
+                                <div className="mt-1.5 w-2 h-2 rounded-full bg-[#FF9F0F] shrink-0" />
+                                <span className="text-lg md:text-xl text-sand/90">Sie wegen Fehlern bei Ausschreibungen oft Zeit und Geld verlieren</span>
                             </li>
                         </ul>
                     </div>

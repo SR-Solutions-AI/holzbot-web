@@ -16,13 +16,14 @@ export function inferOfferFlow(meta: OfferFlowMeta | null | undefined): OfferFlo
   if (!meta) return 'einfamilienhaus'
   if (meta.roof_only_offer === true) return 'dachstuhl'
   const wp = (meta.wizard_package ?? '').toString().toLowerCase()
-  if (wp === 'einfamilienhaus' || wp === 'neubau' || wp === 'full_house') return 'einfamilienhaus'
+  if (wp === 'einfamilienhaus' || wp === 'neubau' || wp === 'gewerbe_wohnbau' || wp === 'full_house') return 'einfamilienhaus'
   if (wp === 'dachstuhl') return 'dachstuhl'
   if (wp === 'aufstockung') return 'aufstockung'
   if (wp === 'zubau') return 'zubau'
   if (wp === 'zubau_aufstockung') return 'zubau_aufstockung'
   const slug = (meta.offer_type_slug ?? '').toString().toLowerCase()
-  if (slug === 'einfamilienhaus' || slug === 'neubau' || slug === 'full_house') return 'einfamilienhaus'
+  if (slug === 'einfamilienhaus' || slug === 'neubau' || slug === 'gewerbe_wohnbau' || slug === 'full_house')
+    return 'einfamilienhaus'
   if (slug === 'dachstuhl') return 'dachstuhl'
   if (slug === 'aufstockung') return 'aufstockung'
   if (slug === 'zubau') return 'zubau'

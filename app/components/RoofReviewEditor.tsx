@@ -130,7 +130,7 @@ function reorderRoofPlansToEmbeddedSlots(plans: PlanData[], seeds: ImageDimsSeed
 
 export type RoofSurfaceTab = 'surfaces' | 'windows'
 
-type Tool = 'select' | 'add' | 'remove' | 'edit'
+type Tool = 'select' | 'add' | 'remove' | 'edit' | 'bulk_select'
 
 function clampRoofOverhangM(v: number): number {
   return Math.max(0, Math.min(5, v))
@@ -511,7 +511,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
       toolProp !== undefined &&
       roofSurfaceTabProp !== undefined,
   )
-  const tool = chromeParent ? toolProp! : toolInternal
+  const tool = chromeParent ? (toolProp === 'bulk_select' ? 'select' : toolProp!) : toolInternal
   const setTool = chromeParent ? setToolProp! : setToolInternal
   /** Einheitlicher Editor mit Parent-Chrome: weniger Abstand, kompaktere Fläche unter dem Plan. */
   const compactUi = chromeParent

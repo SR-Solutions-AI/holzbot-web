@@ -60,7 +60,7 @@ type PolygonCanvasProps = {
   /** Nur tab=stair_opening (Rechteck wie Tür/Fenster) */
   stairOpeningRects?: DoorRect[]
   onStairOpeningRectsChange?: (rects: DoorRect[]) => void
-  tool: 'select' | 'add' | 'remove' | 'edit'
+  tool: 'select' | 'add' | 'remove' | 'edit' | 'bulk_select'
   selectedIndex: number | null
   newPoints: Point[] | null
   newDoorType?: 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
@@ -85,6 +85,16 @@ type PolygonCanvasProps = {
    * Cu `showRoomPolygonsUnderDoors`: pe tab Dachfenster evidențiază mai clar suprafețele de acoperiș (contur + etichetă).
    */
   highlightRoofSurfaceUnderlay?: boolean
+  /**
+   * tab=doors: Räume sind klickbar (Mehrfachauswahl / Gruppenverschieben) — z. B. Gewerbe-Wohnbau-Editor.
+   */
+  interactiveRoomPolygonsInDoorsTab?: boolean
+  /** Schlüssel `r:0`, `d:1` für Mehrfachauswahl */
+  bulkSelectedKeys?: string[]
+  /** Klick auf leeren Hintergrund: `pick === null` (ohne Shift: Auswahl leeren). */
+  onBulkPick?: (pick: { layer: 'room' | 'door'; index: number } | null, shiftKey: boolean) => void
+  /** Rechteckauswahl in Bildkoordinaten für Mehrfachauswahl. */
+  onBulkMarqueeSelect?: (rect: { x1: number; y1: number; x2: number; y2: number }, shiftKey: boolean) => void
   className?: string
   /**
    * Când devine true după ce containerul era ascuns (ex. tab Dach cu display:none), forțează recalcul fit.
@@ -257,6 +267,10 @@ export function DetectionsPolygonCanvas({
   dimUnselectedRoomPolygons = false,
   showRoomPolygonsUnderDoors = false,
   highlightRoofSurfaceUnderlay = false,
+  interactiveRoomPolygonsInDoorsTab = false,
+  bulkSelectedKeys = [],
+  onBulkPick,
+  onBulkMarqueeSelect,
   newDoorType = 'door',
   className = '',
   layoutActive = true,
@@ -279,6 +293,19 @@ export function DetectionsPolygonCanvas({
     | { kind: 'vertex'; polyIndex: number; vertexIndex: number }
     | { kind: 'edge'; polyIndex: number; edgeIndex: number; initV0: Point; initV1: Point; startImage: Point }
     | { kind: 'poly'; polyIndex: number; startImage: Point; initPoints?: Point[]; initBbox?: [number, number, number, number] }
+    | {
+        kind: 'bulk'
+        startImage: Point
+        roomInits: Record<number, Point[]>
+        doorInits: Record<number, [number, number, number, number]>
+      }
+    | {
+        kind: 'bulk_marquee'
+        startCanvas: { x: number; y: number }
+        currentCanvas: { x: number; y: number }
+        startImage: Point
+        currentImage: Point
+      }
   const [dragging, setDragging] = useState<DragState | null>(null)
   const [imageLoaded, setImageLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -958,13 +985,14 @@ export function DetectionsPolygonCanvas({
         }
         drawAufstockungRoofOverlayPreview(ctx, ox, oy, s, roofOverlayRooms)
       }
-      if (showRoomPolygonsUnderDoors && tab === 'doors') {
+      if ((showRoomPolygonsUnderDoors || interactiveRoomPolygonsInDoorsTab) && tab === 'doors') {
         const underlayColors = ['#3b82f6', '#22c55e', '#eab308', '#8b5cf6', '#06b6d4']
         rooms.forEach((room, i) => {
           const pts = room.points
           if (pts.length < 2) return
-          ctx.fillStyle = underlayColors[i % underlayColors.length]
-          ctx.globalAlpha = highlightRoofSurfaceUnderlay ? 0.28 : 0.14
+          const bulkPick = bulkSelectedKeys.includes(`r:${i}`)
+          ctx.fillStyle = interactiveRoomPolygonsInDoorsTab ? roomColors[i % roomColors.length] : underlayColors[i % underlayColors.length]
+          ctx.globalAlpha = highlightRoofSurfaceUnderlay ? 0.28 : interactiveRoomPolygonsInDoorsTab ? 0.2 : 0.14
           ctx.beginPath()
           ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
           for (let k = 1; k < pts.length; k++) {
@@ -973,8 +1001,12 @@ export function DetectionsPolygonCanvas({
           ctx.closePath()
           ctx.fill()
           ctx.globalAlpha = 1
-          ctx.strokeStyle = highlightRoofSurfaceUnderlay ? 'rgba(255,159,15,0.85)' : 'rgba(255,255,255,0.28)'
-          ctx.lineWidth = highlightRoofSurfaceUnderlay ? 2.25 : 1.25
+          ctx.strokeStyle = bulkPick
+            ? 'rgba(255,159,15,0.95)'
+            : highlightRoofSurfaceUnderlay
+              ? 'rgba(255,159,15,0.85)'
+              : 'rgba(255,255,255,0.28)'
+          ctx.lineWidth = bulkPick ? 2.75 : highlightRoofSurfaceUnderlay ? 2.25 : 1.25
           ctx.stroke()
           if (highlightRoofSurfaceUnderlay && pts.length >= 3) {
             let cx = 0
@@ -1009,7 +1041,7 @@ export function DetectionsPolygonCanvas({
       }
       rectsForDoorTab.forEach((door, i) => {
         const [x1, y1, x2, y2] = door.bbox
-        const selected = selectedIndex === i
+        const selected = selectedIndex === i || (tab === 'doors' && bulkSelectedKeys.includes(`d:${i}`))
         const style = tab === 'stair_opening' ? stairPreviewStyle : getDoorStyle(door.type)
         ctx.fillStyle = style.fill
         ctx.globalAlpha = selected ? 0.5 : 0.35
@@ -1031,6 +1063,22 @@ export function DetectionsPolygonCanvas({
           })
         }
       })
+      if (dragging?.kind === 'bulk_marquee') {
+        const x = Math.min(dragging.startCanvas.x, dragging.currentCanvas.x)
+        const y = Math.min(dragging.startCanvas.y, dragging.currentCanvas.y)
+        const w = Math.abs(dragging.currentCanvas.x - dragging.startCanvas.x)
+        const h = Math.abs(dragging.currentCanvas.y - dragging.startCanvas.y)
+        if (w >= 1 && h >= 1) {
+          ctx.save()
+          ctx.setLineDash([7, 5])
+          ctx.lineWidth = 1.5
+          ctx.strokeStyle = 'rgba(255,159,15,0.95)'
+          ctx.fillStyle = 'rgba(255,159,15,0.16)'
+          ctx.fillRect(x, y, w, h)
+          ctx.strokeRect(x, y, w, h)
+          ctx.restore()
+        }
+      }
       if (newPoints && newPoints.length >= 1) {
         const newStyle = tab === 'stair_opening' ? stairPreviewStyle : getDoorStyle(newDoorType)
         const endPt = newPoints.length === 2 ? newPoints[1] : previewEndPoint
@@ -1077,6 +1125,8 @@ export function DetectionsPolygonCanvas({
     dimUnselectedRoomPolygons,
     showRoomPolygonsUnderDoors,
     highlightRoofSurfaceUnderlay,
+    interactiveRoomPolygonsInDoorsTab,
+    bulkSelectedKeys,
     blendAufstockungPhase1Overlays,
     blendZubauSiblingOverlays,
     useAufstockungsBasisDemolitionLabels,
@@ -1087,7 +1137,15 @@ export function DetectionsPolygonCanvas({
 
   useEffect(() => { draw() }, [draw])
 
-  const hitTest = useCallback((cx: number, cy: number): { kind: 'poly' | 'vertex' | 'edge'; index: number; vertexIndex?: number; edgeIndex?: number } | null => {
+  type HitResult = {
+    kind: 'poly' | 'vertex' | 'edge'
+    index: number
+    vertexIndex?: number
+    edgeIndex?: number
+    layer?: 'room' | 'door'
+  }
+
+  const hitTest = useCallback((cx: number, cy: number): HitResult | null => {
     if (!effective) return null
     const pt = toImage(cx, cy)
     if (!pt) return null
@@ -1170,11 +1228,32 @@ export function DetectionsPolygonCanvas({
             if (dist(corners[vi], [px, py]) <= doorVertexR) return { kind: 'vertex', index: i, vertexIndex: vi }
           }
         }
-        return { kind: 'poly', index: i }
+        if (tab === 'doors') return { kind: 'poly' as const, index: i, layer: 'door' as const }
+        return { kind: 'poly' as const, index: i }
+      }
+      if (tab === 'doors' && interactiveRoomPolygonsInDoorsTab) {
+        for (let i = rooms.length - 1; i >= 0; i--) {
+          const pts = rooms[i]?.points
+          if (!pts || pts.length < 3) continue
+          if (pointInPolygon(px, py, pts)) return { kind: 'poly' as const, index: i, layer: 'room' as const }
+        }
       }
     }
     return null
-  }, [effective, tab, rooms, doors, demolitionPolys, zubauBestandPolys, zubauWallLines, stairOpeningRects, tool, toImage, selectedIndex])
+  }, [
+    effective,
+    tab,
+    rooms,
+    doors,
+    demolitionPolys,
+    zubauBestandPolys,
+    zubauWallLines,
+    stairOpeningRects,
+    tool,
+    toImage,
+    selectedIndex,
+    interactiveRoomPolygonsInDoorsTab,
+  ])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -1217,6 +1296,37 @@ export function DetectionsPolygonCanvas({
 
     if (tool === 'add' && (tab === 'doors' || tab === 'stair_opening')) {
       if (placePt) onAddPoint(placePt[0], placePt[1])
+      return
+    }
+
+    if (tool === 'bulk_select') {
+      if (!onBulkPick) return
+      if (hit?.kind === 'poly') {
+        const inferredLayer: 'room' | 'door' | null =
+          hit.layer === 'room' || hit.layer === 'door'
+            ? hit.layer
+            : tab === 'rooms'
+              ? 'room'
+              : tab === 'doors'
+                ? 'door'
+                : null
+        if (inferredLayer) {
+          onBulkPick({ layer: inferredLayer, index: hit.index }, e.shiftKey)
+        } else if (!e.shiftKey) {
+          onBulkPick(null, false)
+        }
+      } else if (pt) {
+        ;(e.target as Element).setPointerCapture(e.pointerId)
+        setDragging({
+          kind: 'bulk_marquee',
+          startCanvas: { x: cx, y: cy },
+          currentCanvas: { x: cx, y: cy },
+          startImage: [pt[0], pt[1]],
+          currentImage: [pt[0], pt[1]],
+        })
+      } else if (!e.shiftKey) {
+        onBulkPick(null, false)
+      }
       return
     }
 
@@ -1278,12 +1388,45 @@ export function DetectionsPolygonCanvas({
     }
 
     if (hit?.kind === 'poly') {
+      if (tab === 'doors' && hit.layer === 'room' && tool === 'remove') {
+        onEditStart?.()
+        onRoomsChange(rooms.filter((_, ri) => ri !== hit.index))
+        return
+      }
+      if (
+        tool === 'select' &&
+        bulkSelectedKeys.length > 0 &&
+        pt &&
+        tab === 'doors' &&
+        (hit.layer === 'room' || hit.layer === 'door')
+      ) {
+        const key = hit.layer === 'room' ? `r:${hit.index}` : `d:${hit.index}`
+        if (bulkSelectedKeys.includes(key)) {
+          onEditStart?.()
+          ;(e.target as Element).setPointerCapture(e.pointerId)
+          const roomInits: Record<number, Point[]> = {}
+          const doorInits: Record<number, [number, number, number, number]> = {}
+          for (const k of bulkSelectedKeys) {
+            if (k.startsWith('r:')) {
+              const idx = Number(k.slice(2))
+              const rtp = roomsRef.current[idx]?.points
+              if (rtp) roomInits[idx] = rtp.map((p) => [...p] as Point)
+            } else if (k.startsWith('d:')) {
+              const idx = Number(k.slice(2))
+              const bb = doorsRef.current[idx]?.bbox
+              if (bb) doorInits[idx] = [...bb] as [number, number, number, number]
+            }
+          }
+          setDragging({ kind: 'bulk', startImage: [pt[0], pt[1]], roomInits, doorInits })
+          return
+        }
+      }
       if ((tab === 'doors' || tab === 'stair_opening') && tool === 'remove') {
         onRemoveSelected(hit.index)
         return
       }
       // Select: tap = schimbare tip (callback); drag după prag = mutare dreptunghi
-      if ((tab === 'doors' || tab === 'stair_opening') && tool === 'select' && pt) {
+      if ((tab === 'doors' || tab === 'stair_opening') && tool === 'select' && pt && hit.layer !== 'room') {
         onSelect(hit.index)
         doorTapPendingRef.current = { index: hit.index, clientX: e.clientX, clientY: e.clientY, pt: [pt[0], pt[1]] }
         ;(e.target as Element).setPointerCapture(e.pointerId)
@@ -1344,7 +1487,35 @@ export function DetectionsPolygonCanvas({
     } else {
       onSelect(null)
     }
-  }, [effective, tool, tab, newPoints, userPan, stackedView, hitTest, toImage, toImageForPlacement, onSelect, onAddPoint, onCloseNewPolygon, onRemoveSelected, onInsertVertex, onRoomTypeLabelClick, onEditStart, onZubauWallLinesChange, rooms, doors, demolitionPolys, zubauBestandPolys, zubauWallLines, stairOpeningRects, wallLineDraft])
+  }, [
+    effective,
+    tool,
+    tab,
+    newPoints,
+    userPan,
+    stackedView,
+    hitTest,
+    toImage,
+    toImageForPlacement,
+    onSelect,
+    onAddPoint,
+    onCloseNewPolygon,
+    onRemoveSelected,
+    onInsertVertex,
+    onRoomTypeLabelClick,
+    onEditStart,
+    onZubauWallLinesChange,
+    onBulkPick,
+    onRoomsChange,
+    rooms,
+    doors,
+    demolitionPolys,
+    zubauBestandPolys,
+    zubauWallLines,
+    stairOpeningRects,
+    wallLineDraft,
+    bulkSelectedKeys,
+  ])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const canvas = canvasRef.current
@@ -1552,6 +1723,44 @@ export function DetectionsPolygonCanvas({
           )
           onStairOpeningRectsChange(next)
         }
+      } else if (dragging.kind === 'bulk' && pt) {
+        const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+        const dx = pt[0] - dragging.startImage[0]
+        const dy = pt[1] - dragging.startImage[1]
+        const { roomInits, doorInits } = dragging
+        const nextRooms = roomsRef.current.map((r, i) => {
+          const init = roomInits[i]
+          if (!init) return r
+          return {
+            ...r,
+            points: init.map((p) => [clamp(p[0] + dx, 0, imageWidth), clamp(p[1] + dy, 0, imageHeight)] as Point),
+          }
+        })
+        const nextDoors = doorsRef.current.map((d, i) => {
+          const init = doorInits[i]
+          if (!init) return d
+          const [a, b, c, d0] = init
+          const ax1 = clamp(a + dx, 0, imageWidth)
+          const ay1 = clamp(b + dy, 0, imageHeight)
+          const ax2 = clamp(c + dx, 0, imageWidth)
+          const ay2 = clamp(d0 + dy, 0, imageHeight)
+          let x1 = Math.min(ax1, ax2)
+          let x2 = Math.max(ax1, ax2)
+          let y1 = Math.min(ay1, ay2)
+          let y2 = Math.max(ay1, ay2)
+          const minPx = 1
+          if (x2 - x1 < minPx) x2 = x1 + minPx
+          if (y2 - y1 < minPx) y2 = y1 + minPx
+          return { ...d, bbox: [x1, y1, x2, y2] as [number, number, number, number] }
+        })
+        onRoomsChange(nextRooms)
+        onDoorsChange(nextDoors)
+      } else if (dragging.kind === 'bulk_marquee' && pt) {
+        setDragging({
+          ...dragging,
+          currentCanvas: { x: cx, y: cy },
+          currentImage: [pt[0], pt[1]],
+        })
       }
     }
   }, [panning, panStart, dragging, effective, tool, tab, newPoints, wallLineDraft, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onZubauBestandPolysChange, onZubauWallLinesChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange])
@@ -1565,6 +1774,20 @@ export function DetectionsPolygonCanvas({
         onDoorActivate?.(pendingTap.index)
       }
     }
+    if (dragging?.kind === 'bulk_marquee') {
+      const dxPx = dragging.currentCanvas.x - dragging.startCanvas.x
+      const dyPx = dragging.currentCanvas.y - dragging.startCanvas.y
+      const moved = Math.hypot(dxPx, dyPx)
+      if (moved > 6 && onBulkMarqueeSelect) {
+        const x1 = Math.min(dragging.startImage[0], dragging.currentImage[0])
+        const y1 = Math.min(dragging.startImage[1], dragging.currentImage[1])
+        const x2 = Math.max(dragging.startImage[0], dragging.currentImage[0])
+        const y2 = Math.max(dragging.startImage[1], dragging.currentImage[1])
+        onBulkMarqueeSelect({ x1, y1, x2, y2 }, e.shiftKey)
+      } else if (onBulkPick && !e.shiftKey) {
+        onBulkPick(null, false)
+      }
+    }
     try { (e.target as Element).releasePointerCapture(e.pointerId) } catch (_) {}
     setDragging(null)
     setPanning(false)
@@ -1574,7 +1797,7 @@ export function DetectionsPolygonCanvas({
       edgeDragTimeoutRef.current = null
     }
     pendingEdgeDragRef.current = null
-  }, [onDoorActivate])
+  }, [dragging, onDoorActivate, onBulkMarqueeSelect, onBulkPick])
   const handlePointerLeave = useCallback((e: React.PointerEvent) => {
     try { (e.target as Element).releasePointerCapture(e.pointerId) } catch (_) {}
     setDragging(null)
@@ -1623,7 +1846,9 @@ export function DetectionsPolygonCanvas({
 
   const canvasCursor = (() => {
     if (panning) return 'grabbing'
-    if (dragging?.kind === 'vertex' || dragging?.kind === 'edge' || dragging?.kind === 'poly') return 'move'
+    if (dragging?.kind === 'vertex' || dragging?.kind === 'edge' || dragging?.kind === 'poly' || dragging?.kind === 'bulk')
+      return 'move'
+    if (tool === 'bulk_select') return 'crosshair'
     if (tool === 'add') return 'crosshair'
     if (tool === 'remove') return 'default'
     if (tool === 'edit') return 'default'

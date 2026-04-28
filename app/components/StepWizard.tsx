@@ -35,6 +35,11 @@ const AUFSTOCKUNG_ZUBAU_ALLOWED_EMAILS = new Set(['holzbau@holzbot.com', 'betonb
 function isAufstockungZubauAllowed(email: string | null | undefined): boolean {
   return typeof email === 'string' && AUFSTOCKUNG_ZUBAU_ALLOWED_EMAILS.has(email.toLowerCase().trim())
 }
+/** Nur dieses Konto darf Gewerbe- und Wohnbau starten; alle anderen sehen WIP. */
+const GEWERBE_WOHNBAU_ALLOWED_EMAILS = new Set(['holzbau@holzbot.com'])
+function isGewerbeWohnbauAllowed(email: string | null | undefined): boolean {
+  return typeof email === 'string' && GEWERBE_WOHNBAU_ALLOWED_EMAILS.has(email.toLowerCase().trim())
+}
 
 /** Preview-uri modale „Angebot bearbeiten” (`public/images/hzbform.png`, `hzbeditor.png`). */
 const EDIT_OFFER_DLG_IMG_FORM = '/images/hzbform.png'
@@ -647,7 +652,9 @@ export default function StepWizard() {
   /** null = closed; delete_offer = bisheriges Verhalten (Angebot löschen); abort_edit = Bearbeiten verlassen, PDF zurück */
   const [cancelDialog, setCancelDialog] = useState<null | 'delete_offer' | 'abort_edit'>(null)
 
-  const [selectedPackage, setSelectedPackage] = useState<'mengen' | 'dachstuhl' | 'einfamilienhaus' | 'aufstockung' | 'zubau' | 'zubau_aufstockung' | null>(null)
+  const [selectedPackage, setSelectedPackage] = useState<
+    'mengen' | 'dachstuhl' | 'einfamilienhaus' | 'gewerbe_wohnbau' | 'aufstockung' | 'zubau' | 'zubau_aufstockung' | null
+  >(null)
   /** După „Mengenermittlung“: alegere Einfamilienhaus vs Dachstuhl (fără formular complet, doar Upload + Editor + PDF măsurători). */
   const [packagePickerMengenSub, setPackagePickerMengenSub] = useState(false)
   /** Monatslimit für Projekte erreicht; Paket-Karten nicht klickbar. */
@@ -995,7 +1002,14 @@ export default function StepWizard() {
       const steps = uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[])
       setDynamicSteps(steps)
       applyInitialWizardIndexForSteps(steps)
-    } else if (measurementsOnlyFlow && (selectedPackage === 'einfamilienhaus' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || selectedPackage === 'zubau_aufstockung')) {
+    } else if (
+      measurementsOnlyFlow &&
+      (selectedPackage === 'einfamilienhaus' ||
+        selectedPackage === 'gewerbe_wohnbau' ||
+        selectedPackage === 'aufstockung' ||
+        selectedPackage === 'zubau' ||
+        selectedPackage === 'zubau_aufstockung')
+    ) {
       const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
       const steps = uploadOnly.length ? uploadOnly : (formStepsFromJson as any[])
       setDynamicSteps(steps)
@@ -1004,7 +1018,15 @@ export default function StepWizard() {
       const steps = formStepsDachstuhl as any[]
       setDynamicSteps(steps)
       applyInitialWizardIndexForSteps(steps)
-    } else if ((selectedPackage === 'einfamilienhaus' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || selectedPackage === 'zubau_aufstockung') && formStepsFromJson.length > 0) {
+    } else if (
+      (selectedPackage === 'einfamilienhaus' ||
+        selectedPackage === 'gewerbe_wohnbau' ||
+        selectedPackage === 'mengen' ||
+        selectedPackage === 'aufstockung' ||
+        selectedPackage === 'zubau' ||
+        selectedPackage === 'zubau_aufstockung') &&
+      formStepsFromJson.length > 0
+    ) {
       const steps = formStepsFromJson as any[]
       setDynamicSteps(steps)
       applyInitialWizardIndexForSteps(steps)
@@ -1167,6 +1189,14 @@ export default function StepWizard() {
             offer?: { meta?: { roof_only_offer?: boolean; wizard_package?: string | null }; offer_type_slug?: string | null }
           }
           const meta = row?.offer?.meta ?? row?.meta
+          const rawWp = String(meta?.wizard_package ?? '').toLowerCase()
+          if (rawWp === 'gewerbe_wohnbau') {
+            roofOnlyOfferRef.current = false
+            setActiveRoofOnlyOffer(false)
+            setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
+            setSelectedPackage('gewerbe_wohnbau')
+            return
+          }
           const slug = row?.offer?.offer_type_slug ?? null
           const resolvedWizardPackage = resolveOfferFlowWithExplicit(meta, slug, explicitFlow)
           const ro = resolvedWizardPackage === 'dachstuhl'
@@ -1598,28 +1628,36 @@ export default function StepWizard() {
           if (u && u !== id) return
         }
         const offerMeta = offerRow?.offer?.meta ?? offerRow?.meta
-        const slug = offerRow?.offer?.offer_type_slug ?? null
-        const resolvedWizardPackage = inferOfferFlow({
-          ...(offerMeta as OfferFlowMeta | null),
-          offer_type_slug: slug ?? undefined,
-        })
+        const rawWpSel = String(offerMeta?.wizard_package ?? '').toLowerCase()
         setOfferId(id)
         offerIdRef.current = id
-        const ro = resolvedWizardPackage === 'dachstuhl'
-        roofOnlyOfferRef.current = ro
-        setActiveRoofOnlyOffer(ro)
-        setForm((prev) => ({ ...prev, wizardPackage: resolvedWizardPackage }))
-        setSelectedPackage(
-          resolvedWizardPackage === 'aufstockung'
-            ? 'aufstockung'
-            : resolvedWizardPackage === 'zubau_aufstockung'
-              ? 'zubau_aufstockung'
-            : resolvedWizardPackage === 'zubau'
-              ? 'zubau'
-              : ro
-                ? 'dachstuhl'
-                : 'einfamilienhaus',
-        )
+        if (rawWpSel === 'gewerbe_wohnbau') {
+          roofOnlyOfferRef.current = false
+          setActiveRoofOnlyOffer(false)
+          setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
+          setSelectedPackage('gewerbe_wohnbau')
+        } else {
+          const slug = offerRow?.offer?.offer_type_slug ?? null
+          const resolvedWizardPackage = inferOfferFlow({
+            ...(offerMeta as OfferFlowMeta | null),
+            offer_type_slug: slug ?? undefined,
+          })
+          const ro = resolvedWizardPackage === 'dachstuhl'
+          roofOnlyOfferRef.current = ro
+          setActiveRoofOnlyOffer(ro)
+          setForm((prev) => ({ ...prev, wizardPackage: resolvedWizardPackage }))
+          setSelectedPackage(
+            resolvedWizardPackage === 'aufstockung'
+              ? 'aufstockung'
+              : resolvedWizardPackage === 'zubau_aufstockung'
+                ? 'zubau_aufstockung'
+              : resolvedWizardPackage === 'zubau'
+                ? 'zubau'
+                : ro
+                  ? 'dachstuhl'
+                  : 'einfamilienhaus',
+          )
+        }
         setMeasurementsOnlyFlow(offerMeta?.measurements_only_offer === true)
         setCurrentOfferMeasurementsOnly(offerMeta?.measurements_only_offer === true)
       } catch {
@@ -2034,7 +2072,9 @@ export default function StepWizard() {
               ? (offerTypesBySlug['dachstuhl'] ?? null)
               : selectedPackage === 'einfamilienhaus'
                 ? (offerTypesBySlug['einfamilienhaus'] ?? null)
-                : null
+                : selectedPackage === 'gewerbe_wohnbau'
+                  ? (offerTypesBySlug['gewerbe_wohnbau'] ?? offerTypesBySlug['einfamilienhaus'] ?? null)
+                  : null
         const offer_type_id =
           selectedPackageOfferTypeId ||
           pendingOfferTypeIdRef.current ||
@@ -2353,11 +2393,15 @@ export default function StepWizard() {
             ? 'zubau'
           : formWizardPackage === 'dachstuhl'
             ? 'dachstuhl'
+            : formWizardPackage === 'gewerbe_wohnbau'
+              ? 'gewerbe_wohnbau'
             : 'einfamilienhaus')
       const roofOnly = roofOnlyOfferRef.current || effectivePackage === 'dachstuhl'
       const wizardPackage =
         roofOnly
           ? 'dachstuhl'
+          : effectivePackage === 'gewerbe_wohnbau'
+            ? 'gewerbe_wohnbau'
           : effectivePackage === 'aufstockung' || effectivePackage === 'zubau' || effectivePackage === 'zubau_aufstockung'
             ? effectivePackage
             : 'einfamilienhaus'
@@ -2561,7 +2605,17 @@ export default function StepWizard() {
   /** Aufstockung / Zubau (Vollangebot + Mengen): nur für Holzbau-Dev-Mail. */
   const isDevAccount = isAufstockungZubauAllowed(currentUserEmail)
   const showPackagePicker = !computing && !pdfUrl && !offerId && selectedPackage === null
-  const showForm = (selectedPackage === 'einfamilienhaus' || selectedPackage === 'dachstuhl' || selectedPackage === 'mengen' || selectedPackage === 'aufstockung' || selectedPackage === 'zubau' || selectedPackage === 'zubau_aufstockung' || offerId) && !computing && !pdfUrl
+  const showForm =
+    (selectedPackage === 'einfamilienhaus' ||
+      selectedPackage === 'gewerbe_wohnbau' ||
+      selectedPackage === 'dachstuhl' ||
+      selectedPackage === 'mengen' ||
+      selectedPackage === 'aufstockung' ||
+      selectedPackage === 'zubau' ||
+      selectedPackage === 'zubau_aufstockung' ||
+      offerId) &&
+    !computing &&
+    !pdfUrl
   const showProgressHeader = !computing && !pdfUrl && !showPackagePicker && showForm
   const centerWizardSteps = progressBarSteps.length > 0 && progressBarSteps.length <= 5
   const effectiveWizardPackage =
@@ -2780,7 +2834,7 @@ export default function StepWizard() {
                       <img src="/images/house.png" alt="Einfamilienhaus" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                     </div>
                     <div className="text-white font-extrabold text-lg text-center">Einfamilienhaus</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Einfamilienhausten</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Einfamilienhäuser</div>
                     <div className="flex-1" />
                     <button
                       type="button"
@@ -2876,7 +2930,11 @@ export default function StepWizard() {
                       disabled={tokensBlocked}
                       onClick={() => {
                         if (tokensBlocked) return
-                        setWipNotice('gewerbe')
+                        if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setWipNotice('gewerbe'); return }
+                        roofOnlyOfferRef.current = false
+                        setMeasurementsOnlyFlow(false)
+                        setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
+                        setSelectedPackage('gewerbe_wohnbau')
                       }}
                       className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
@@ -2924,6 +2982,7 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
+                        if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setWipNotice('gewerbe_mengen'); return }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
@@ -3015,8 +3074,11 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
-                          setWipNotice('gewerbe_mengen')
+                          setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
+                          setSelectedPackage('gewerbe_wohnbau')
                         }}
                         className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
@@ -3034,7 +3096,7 @@ export default function StepWizard() {
             <div
               className={`absolute inset-0 z-30 flex flex-col items-center justify-center px-4 transition-all duration-300 ease-out ${
                 wipNotice !== null
-                  ? 'opacity-100 scale-100 pointer-events-auto bg-[#2A1E17]/94 backdrop-blur-sm ring-1 ring-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+                  ? 'opacity-100 scale-100 pointer-events-auto bg-black/40 backdrop-blur-sm ring-1 ring-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
                   : 'opacity-0 scale-[0.97] pointer-events-none translate-y-2 bg-transparent'
               }`}
               aria-hidden={wipNotice === null}
