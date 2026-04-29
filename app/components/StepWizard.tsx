@@ -3024,7 +3024,6 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
-                        if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setWipNotice('gewerbe_mengen'); return }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
@@ -3116,6 +3115,7 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
+                          if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setPackagePickerMengenSub(false); setWipNotice('gewerbe_mengen'); return }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
                           setPackagePickerMengenSub(false)
