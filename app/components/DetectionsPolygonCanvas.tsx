@@ -1543,7 +1543,7 @@ export function DetectionsPolygonCanvas({
           return
         }
         if (!e.shiftKey) {
-          onBulkPick(null, false)
+          onBulkPick?.(null, false)
           onSelect(null)
           return
         }
@@ -2006,7 +2006,7 @@ export function DetectionsPolygonCanvas({
         const y2 = Math.max(dragging.startImage[1], dragging.currentImage[1])
         onBulkMarqueeSelect({ x1, y1, x2, y2 }, e.shiftKey)
       } else if (onBulkPick && !e.shiftKey) {
-        onBulkPick(null, false)
+        onBulkPick?.(null, false)
       }
     }
     try { (e.target as Element).releasePointerCapture(e.pointerId) } catch (_) {}
