@@ -496,7 +496,7 @@ export type PreisdatenbankSection = { title: string; subtitle: string; subsectio
  * Workflow-ul de pricing citește aceste chei la fiecare rulare.
  */
 export type PricingVariableDef = { key: string; label: string; unit: string; default: number }
-export type PricingVariablesSubsectionDef = { title: string; variables: PricingVariableDef[] }
+export type PricingVariablesSubsectionDef = { title: string; fieldTag?: string; variables: PricingVariableDef[] }
 export type PricingVariablesSectionDef = { title: string; subtitle: string; subsections: PricingVariablesSubsectionDef[] }
 
 export const PRICING_VARIABLES_SECTIONS: PricingVariablesSectionDef[] = [
