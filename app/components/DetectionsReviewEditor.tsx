@@ -24,8 +24,6 @@ import {
   Copy,
   ClipboardPaste,
   ScanSearch,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react'
 import {
   DetectionsPolygonCanvas,
@@ -119,13 +117,14 @@ function matchRoofRowToSeedIndex(
   return best
 }
 
-/** Tip canonic pentru uși/ferestre: door | window | sliding_door | garage_door | stairs. */
+/** Tip canonic pentru uși/ferestre: door | window | sliding_door | garage_door | stairs | lift. */
 function normalizeDoorType(type: string | undefined): string {
   const t = (type || 'door').toLowerCase().trim()
   if (t === 'window' || t === 'fenster' || t === 'geam') return 'window'
   if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return 'sliding_door'
   if (t === 'garage_door' || t === 'garagentor') return 'garage_door'
   if (t === 'stairs' || t === 'treppe') return 'stairs'
+  if (t === 'lift' || t === 'aufzug' || t === 'elevator') return 'lift'
   return 'door'
 }
 
@@ -151,6 +150,7 @@ type EditorConstraints = {
   allowWintergartenRoomType: boolean
   allowBalkonRoomType: boolean
   allowRoofWindows: boolean
+  allowLift: boolean
 }
 
 function mergeEditorConstraints(raw: Partial<EditorConstraints> | undefined | null): EditorConstraints {
@@ -161,6 +161,7 @@ function mergeEditorConstraints(raw: Partial<EditorConstraints> | undefined | nu
     allowWintergartenRoomType: true,
     allowBalkonRoomType: true,
     allowRoofWindows: raw?.allowRoofWindows !== false,
+    allowLift: raw?.allowLift !== false,
   }
 }
 
@@ -189,6 +190,7 @@ export type ReviewTab =
   | 'roof_windows'
   | 'phase1_demolition'
   | 'phase1_stair'
+  | 'pillars'
 
 export type ReviewImage = { url: string; caption?: string }
 
@@ -207,19 +209,21 @@ type PlanData = {
   doors: DoorRect[]
   roofDemolitions?: RoofDemolitionPoly[]
   stairOpenings?: Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
+  pillars?: RoomPolygon[]
   zubauBestandPolygons?: RoofDemolitionPoly[]
   zubauWallDemolitionLines?: ZubauWallLine[]
   customDemolitionPrice?: number | null
   statikChoice?: StatikChoice
 }
 
-type DoorType = 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
+type DoorType = 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs' | 'lift'
 const DOOR_TYPE_LABELS_DE: Record<DoorType, string> = {
   door: 'Tür',
   window: 'Fenster',
   sliding_door: 'Schiebetür',
   garage_door: 'Garagentor',
   stairs: 'Treppe',
+  lift: 'Aufzug',
 }
 const DOOR_TOOLBAR_ACTIVE: Record<DoorType, string> = {
   door: 'bg-[#22c55e]/30 text-green-300 border border-green-400/50',
@@ -227,8 +231,9 @@ const DOOR_TOOLBAR_ACTIVE: Record<DoorType, string> = {
   sliding_door: 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50',
   garage_door: 'bg-purple-500/30 text-purple-200 border border-purple-400/50',
   stairs: 'bg-orange-600/30 text-orange-200 border border-orange-500/50',
+  lift: 'bg-fuchsia-600/30 text-fuchsia-200 border border-fuchsia-500/50',
 }
-const ALL_DOOR_TYPES: DoorType[] = ['door', 'window', 'sliding_door', 'garage_door', 'stairs']
+const ALL_DOOR_TYPES: DoorType[] = ['door', 'window', 'sliding_door', 'garage_door', 'stairs', 'lift']
 
 function sanitizeRoomsAndDoorsAgainstConstraints(
   rooms: RoomPolygon[],
@@ -704,8 +709,12 @@ export function DetectionsReviewEditor({
   }, [editorConstraints, roofOnlyOffer])
 
   const allowedDoorTypes = useMemo(
-    () => ALL_DOOR_TYPES.filter((t) => t !== 'garage_door' || editorConstraints.allowGarageDoor),
-    [editorConstraints.allowGarageDoor],
+    () =>
+      ALL_DOOR_TYPES.filter((t) =>
+        (t !== 'garage_door' || editorConstraints.allowGarageDoor) &&
+        (t !== 'lift' || editorConstraints.allowLift || String(wizardPackageFromApi).toLowerCase().trim() === 'gewerbe_wohnbau'),
+      ),
+    [editorConstraints.allowGarageDoor, editorConstraints.allowLift, wizardPackageFromApi],
   )
 
   useEffect(() => {
@@ -867,73 +876,6 @@ export function DetectionsReviewEditor({
     })
   }, [isGewerbeWohnbau, planIndexClamped, plansData])
 
-  const handleBulkScale = useCallback((factor: number) => {
-    if (!isGewerbeWohnbau || planIndexClamped >= plansData.length || bulkSelection.length === 0) return
-    const plan = plansData[planIndexClamped]
-    if (!plan) return
-    const roomIndices = bulkSelection.filter((k) => k.startsWith('r:')).map((k) => Number(k.slice(2))).filter((v) => Number.isFinite(v))
-    const doorIndices = bulkSelection.filter((k) => k.startsWith('d:')).map((k) => Number(k.slice(2))).filter((v) => Number.isFinite(v))
-    const points: Point[] = []
-    roomIndices.forEach((idx) => {
-      const pts = plan.rooms[idx]?.points ?? []
-      pts.forEach((p) => points.push([p[0], p[1]]))
-    })
-    doorIndices.forEach((idx) => {
-      const bb = plan.doors[idx]?.bbox
-      if (!bb) return
-      points.push([bb[0], bb[1]], [bb[2], bb[3]])
-    })
-    if (points.length === 0) return
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    points.forEach(([x, y]) => {
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x)
-      maxY = Math.max(maxY, y)
-    })
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
-    const w = Number(plan.imageWidth) || 0
-    const h = Number(plan.imageHeight) || 0
-    if (w <= 0 || h <= 0) return
-    const roomSet = new Set(roomIndices)
-    const doorSet = new Set(doorIndices)
-    pushHistory()
-    setPlansData((prev) =>
-      prev.map((pl, i) => {
-        if (i !== planIndexClamped) return pl
-        const nextRooms = pl.rooms.map((room, ri) => {
-          if (!roomSet.has(ri)) return room
-          return {
-            ...room,
-            points: room.points.map(([x, y]) => [clamp(cx + (x - cx) * factor, 0, w), clamp(cy + (y - cy) * factor, 0, h)] as Point),
-          }
-        })
-        const nextDoors = pl.doors.map((door, di) => {
-          if (!doorSet.has(di)) return door
-          const [a, b, c, d] = door.bbox
-          const sx1 = clamp(cx + (a - cx) * factor, 0, w)
-          const sy1 = clamp(cy + (b - cy) * factor, 0, h)
-          const sx2 = clamp(cx + (c - cx) * factor, 0, w)
-          const sy2 = clamp(cy + (d - cy) * factor, 0, h)
-          let x1 = Math.min(sx1, sx2)
-          let y1 = Math.min(sy1, sy2)
-          let x2 = Math.max(sx1, sx2)
-          let y2 = Math.max(sy1, sy2)
-          const minPx = 1
-          if (x2 - x1 < minPx) x2 = Math.min(w, x1 + minPx)
-          if (y2 - y1 < minPx) y2 = Math.min(h, y1 + minPx)
-          return { ...door, bbox: [x1, y1, x2, y2] as [number, number, number, number] }
-        })
-        return { ...pl, rooms: nextRooms, doors: nextDoors }
-      }),
-    )
-  }, [isGewerbeWohnbau, planIndexClamped, plansData, bulkSelection, pushHistory])
-
   const handleBulkPaste = useCallback(() => {
     if (!isGewerbeWohnbau || !bulkClipboard || planIndexClamped >= plansData.length) return
     if (bulkClipboard.rooms.length === 0 && bulkClipboard.doors.length === 0) return
@@ -954,7 +896,7 @@ export function DetectionsReviewEditor({
       ...addedR.map((_, k) => `r:${rStart + k}`),
       ...addedD.map((_, k) => `d:${dStart + k}`),
     ])
-    setTool('select')
+    setTool('bulk_select')
   }, [isGewerbeWohnbau, bulkClipboard, planIndexClamped, plansData, pushHistory])
 
   const handleBulkDelete = useCallback(() => {
@@ -1027,7 +969,7 @@ export function DetectionsReviewEditor({
   const getTabForPlan = useCallback(
     (planIdx: number): ReviewTab => {
       const raw = tabPerPlan[planIdx] ?? 'rooms'
-      if (roofOnlyOffer && raw === 'doors') return 'rooms'
+      if (roofOnlyOffer && (raw === 'doors' || raw === 'pillars')) return 'rooms'
       if (!editorConstraints.allowRoofWindows && raw === 'roof_windows') return 'roof'
       const auf = effectiveFloorKinds.length > 0
       const rawFloorKind = normalizeFloorKindRaw(floorKinds[planIdx] ?? '')
@@ -1047,7 +989,7 @@ export function DetectionsReviewEditor({
       })()
       if (auf && kind === 'zubau') {
         const zraw = raw === 'rooms' ? 'zubau_extension' : raw
-        const allowed: ReviewTab[] = ['zubau_bestand', 'zubau_extension', 'zubau_walls', 'doors', 'roof']
+        const allowed: ReviewTab[] = ['zubau_bestand', 'zubau_extension', 'zubau_walls', 'doors', 'pillars', 'roof']
         if (editorConstraints.allowRoofWindows) allowed.push('roof_windows')
         if (hasUpperConstruction) allowed.push('phase1_demolition')
         return allowed.includes(zraw as ReviewTab) ? (zraw as ReviewTab) : 'zubau_extension'
@@ -1057,7 +999,7 @@ export function DetectionsReviewEditor({
         return 'rooms'
       }
       if (auf && (kind === 'aufstockung' || (!isZubauFlow && kind === 'new'))) {
-        const allowed: ReviewTab[] = ['rooms', 'doors', 'roof']
+        const allowed: ReviewTab[] = ['rooms', 'doors', 'pillars', 'roof']
         if (editorConstraints.allowRoofWindows) allowed.push('roof_windows')
         if (hasUpperConstruction) allowed.push('phase1_demolition')
         return allowed.includes(raw as ReviewTab) ? (raw as ReviewTab) : 'rooms'
@@ -1160,6 +1102,16 @@ export function DetectionsReviewEditor({
                 },
               )
               .filter(Boolean) as Array<DoorRect & { price_key?: string; quantity?: number; area_m2?: number }>
+            const rawPillars = Array.isArray((p as { pillars?: unknown }).pillars)
+              ? ((p as { pillars: unknown[] }).pillars as RoomPolygon[])
+              : []
+            const pillars = rawPillars
+              .map((pl) => {
+                const pts = Array.isArray(pl.points) ? mergeClosePolygonPoints(pl.points, MERGE_VERTEX_DIST_PX) : []
+                if (pts.length < 3) return null
+                return { ...pl, points: pts }
+              })
+              .filter(Boolean) as RoomPolygon[]
             const rawZubauBest = Array.isArray((p as { zubauBestandPolygons?: unknown }).zubauBestandPolygons)
               ? ((p as { zubauBestandPolygons: unknown[] }).zubauBestandPolygons as RoofDemolitionPoly[])
               : []
@@ -1188,6 +1140,7 @@ export function DetectionsReviewEditor({
             metersPerPixel: typeof p.metersPerPixel === 'number' ? p.metersPerPixel : null,
             roofDemolitions,
             stairOpenings,
+            pillars,
             zubauBestandPolygons,
             zubauWallDemolitionLines,
             customDemolitionPrice: typeof (p as { customDemolitionPrice?: unknown }).customDemolitionPrice === 'number' ? (p as { customDemolitionPrice?: unknown }).customDemolitionPrice as number : null,
@@ -1277,7 +1230,7 @@ export function DetectionsReviewEditor({
     const ord = floorPlanOrderRef.current
     const n = snapshot.length
     const body: {
-      plans: { rooms: RoomPolygon[]; doors: DoorRect[]; roofDemolitions?: unknown[]; stairOpenings?: unknown[]; customDemolitionPrice?: number | null; statikChoice?: StatikChoice }[]
+      plans: { rooms: RoomPolygon[]; doors: DoorRect[]; roofDemolitions?: unknown[]; stairOpenings?: unknown[]; pillars?: unknown[]; customDemolitionPrice?: number | null; statikChoice?: StatikChoice }[]
       floorPlanOrder?: number[]
       floorKinds?: string[]
       statikChoice?: StatikChoice
@@ -1288,6 +1241,7 @@ export function DetectionsReviewEditor({
         doors: p.doors,
         roofDemolitions: Array.isArray(p.roofDemolitions) ? p.roofDemolitions : [],
         stairOpenings: Array.isArray(p.stairOpenings) ? p.stairOpenings : [],
+        pillars: Array.isArray(p.pillars) ? p.pillars : [],
         zubauBestandPolygons: Array.isArray(p.zubauBestandPolygons) ? p.zubauBestandPolygons : [],
         zubauWallDemolitionLines: Array.isArray(p.zubauWallDemolitionLines) ? p.zubauWallDemolitionLines : [],
         customDemolitionPrice: typeof p.customDemolitionPrice === 'number' ? p.customDemolitionPrice : null,
@@ -1627,6 +1581,15 @@ export function DetectionsReviewEditor({
     })
   }, [])
 
+  const setPillars = useCallback((planIdx: number, pillars: RoomPolygon[]) => {
+    setPlansData((prev) => {
+      const next = [...prev]
+      if (planIdx >= next.length) return next
+      next[planIdx] = { ...next[planIdx], pillars }
+      return next
+    })
+  }, [])
+
   const setDoors = useCallback((planIdx: number, doors: DoorRect[]) => {
     setPlansData((prev) => {
       const next = [...prev]
@@ -1787,6 +1750,14 @@ export function DetectionsReviewEditor({
   ])
 
   const handleRemoveSelected = useCallback((index?: number) => {
+    if (
+      isGewerbeWohnbau &&
+      bulkSelection.length > 0 &&
+      (getTabForPlan(planIndexClamped) === 'rooms' || getTabForPlan(planIndexClamped) === 'doors')
+    ) {
+      handleBulkDelete()
+      return
+    }
     const idx = index ?? selectedPolygonIndex
     if (idx === null || typeof idx !== 'number' || idx < 0) return
     pushHistory()
@@ -1801,6 +1772,12 @@ export function DetectionsReviewEditor({
       if (tabNow === 'rooms') {
         if (idx >= plan.rooms.length) return prev
         out[pi] = { ...plan, rooms: plan.rooms.filter((_, i) => i !== idx) }
+        return out
+      }
+      if (tabNow === 'pillars') {
+        const list = plan.pillars ?? []
+        if (idx >= list.length) return prev
+        out[pi] = { ...plan, pillars: list.filter((_, i) => i !== idx) }
         return out
       }
       if (tabNow === 'phase1_demolition') {
@@ -1837,7 +1814,7 @@ export function DetectionsReviewEditor({
       return prev
     })
     setSelectedPolygonIndex(null)
-  }, [getTabForPlan, selectedPolygonIndex, planIndexClamped, pushHistory])
+  }, [isGewerbeWohnbau, bulkSelection.length, getTabForPlan, planIndexClamped, handleBulkDelete, selectedPolygonIndex, pushHistory])
 
   useEffect(() => {
     const onDeleteKey = (e: KeyboardEvent) => {
@@ -1849,13 +1826,13 @@ export function DetectionsReviewEditor({
           target.isContentEditable)
       if (isTypingTarget) return
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (selectedPolygonIndex == null) return
+      if (selectedPolygonIndex == null && bulkSelection.length === 0) return
       e.preventDefault()
       handleRemoveSelected()
     }
     window.addEventListener('keydown', onDeleteKey)
     return () => window.removeEventListener('keydown', onDeleteKey)
-  }, [selectedPolygonIndex, handleRemoveSelected])
+  }, [selectedPolygonIndex, bulkSelection.length, handleRemoveSelected])
 
   const handleRequestCloseNewPolygon = useCallback(() => {
     if (!newPolygonPoints || newPolygonPoints.length < 3 || !currentPlan) return
@@ -1878,6 +1855,16 @@ export function DetectionsReviewEditor({
       setNewPolygonPoints(null)
       return
     }
+    if (t === 'pillars') {
+      pushHistory()
+      const prev = currentPlan.pillars ?? []
+      setPillars(planIndexClamped, [
+        ...prev,
+        { points: [...newPolygonPoints], roomType: 'Pilon', roomName: 'Pilon', roomInsulated: false },
+      ])
+      setNewPolygonPoints(null)
+      return
+    }
     setPendingNewRoomPoints([...newPolygonPoints])
     setNewPolygonPoints(null)
   }, [
@@ -1889,6 +1876,7 @@ export function DetectionsReviewEditor({
     resolveMppForPlanIndex,
     setRoofDemolitions,
     setZubauBestandPolygons,
+    setPillars,
   ])
 
   const handlePickDemolitionPriceKey = useCallback(
@@ -2050,7 +2038,7 @@ export function DetectionsReviewEditor({
   useEffect(() => {
     if (activeTab === 'roof' || activeTab === 'roof_windows') {
       setBulkSelection([])
-      setTool((t) => (t === 'bulk_select' ? 'select' : t))
+      setTool('select')
     }
   }, [activeTab])
 
@@ -2317,9 +2305,9 @@ export function DetectionsReviewEditor({
                   ? 'Ecken ziehen'
                   : ''
           : tool === 'bulk_select' && (activeTab === 'rooms' || activeTab === 'doors')
-            ? 'Mehrfachauswahl: Klick ersetzt · Shift+Klick toggelt · Click+Drag macht Rechteckauswahl · Leert auf leeren Hintergrund'
+            ? 'Mehrfachauswahl: Shift+Klick fügt hinzu/entfernt · Aufziehen wählt Bereich · Klick auf leer setzt Auswahl zurück'
             : tool === 'select' && activeTab === 'doors'
-            ? 'Element wählen und ziehen zum Verschieben'
+              ? 'Element wählen und ziehen zum Verschieben'
             : tool === 'select'
               ? 'Auf Element klicken und ziehen zum Verschieben'
               : tool === 'add' && (activeTab === 'rooms' || activeTab === 'zubau_extension')
@@ -2710,6 +2698,26 @@ export function DetectionsReviewEditor({
           </button>
           <span className="text-[10px] text-sand/60">Verschieben</span>
         </div>
+        {isGewerbeWohnbau &&
+          !roofOnlyOffer &&
+          (activeTab === 'rooms' || activeTab === 'doors') &&
+          !isAufstockungFlow && (
+          <div className="flex flex-col items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setTool('bulk_select')
+                setSelectedPolygonIndex(null)
+                setNewPolygonPoints(null)
+              }}
+              title="Mehrfachauswahl (Shift+Klick / Aufziehen)"
+              className={`p-2 rounded-lg transition-colors cursor-pointer ${tool === 'bulk_select' ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/70 hover:bg-white/5'}`}
+            >
+              <ScanSearch size={18} />
+            </button>
+            <span className="text-[10px] text-sand/60">Mehrfachauswahl</span>
+          </div>
+        )}
         <div className="flex flex-col items-center gap-0.5">
           <button
             type="button"
@@ -2731,7 +2739,9 @@ export function DetectionsReviewEditor({
                   : activeTab === 'rooms'
                     ? 'Polygon (Zimmer) hinzufügen'
                     : activeTab === 'doors'
-                      ? 'Tür oder Fenster hinzufügen'
+                      ? 'Tür, Fenster oder Lift hinzufügen'
+                      : activeTab === 'pillars'
+                        ? 'Polygon (Pilon) hinzufügen'
                       : activeTab === 'roof'
                         ? 'Polygon (Dachfläche) hinzufügen'
                         : 'Dachfenster hinzufügen'
@@ -2748,6 +2758,10 @@ export function DetectionsReviewEditor({
             onClick={() => {
               if (activeTab === 'roof' || activeTab === 'roof_windows') {
                 setTool('remove')
+                return
+              }
+              if (bulkSelection.length > 0) {
+                handleBulkDelete()
                 return
               }
               setTool('remove')
@@ -2776,6 +2790,25 @@ export function DetectionsReviewEditor({
           </button>
           <span className="text-[10px] text-sand/60">Bearbeiten</span>
         </div>
+        {isGewerbeWohnbau &&
+          !roofOnlyOffer &&
+          (activeTab === 'rooms' || activeTab === 'doors') &&
+          !isAufstockungFlow && (
+          <>
+            <div className="flex flex-col items-center gap-0.5">
+              <button type="button" onClick={handleBulkCopy} disabled={bulkSelection.length === 0} title="Auswahl dieser Etage kopieren" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkSelection.length > 0 ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
+                <Copy size={18} />
+              </button>
+              <span className="text-[10px] text-sand/60">Kopieren</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5">
+              <button type="button" onClick={handleBulkPaste} disabled={!bulkClipboard || (bulkClipboard.rooms.length === 0 && bulkClipboard.doors.length === 0)} title="Auf dieser Etage einfügen, dann mit Verschieben als Gruppe bewegen" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkClipboard && (bulkClipboard.rooms.length > 0 || bulkClipboard.doors.length > 0) ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
+                <ClipboardPaste size={18} />
+              </button>
+              <span className="text-[10px] text-sand/60">Einfügen</span>
+            </div>
+          </>
+        )}
         <div className="flex flex-col items-center gap-0.5">
           <button
             type="button"
@@ -2791,53 +2824,6 @@ export function DetectionsReviewEditor({
           <span className="text-[10px] text-sand/60">Rückgängig</span>
         </div>
       </div>
-      {isGewerbeWohnbau &&
-        !roofOnlyOffer &&
-        (activeTab === 'rooms' || activeTab === 'doors') &&
-        !isAufstockungFlow && (
-        <div className="w-full max-w-5xl flex items-center justify-center">
-          <div className="flex flex-wrap items-center justify-center gap-2 rounded-xl border border-[#FF9F0F]/35 bg-black/20 px-2 py-1.5">
-            <span className="text-[10px] uppercase tracking-wide text-[#FF9F0F]/85">Auswahl-Menü</span>
-            <div className="h-7 w-px bg-white/15" />
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={() => { setTool('bulk_select'); setSelectedPolygonIndex(null); setNewPolygonPoints(null) }} title="Mehrfachauswahl (Räume und Fenster/Türen)" className={`p-2 rounded-lg transition-colors cursor-pointer ${tool === 'bulk_select' ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/70 hover:bg-white/5'}`}>
-                <ScanSearch size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Auswahl</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={handleBulkCopy} disabled={bulkSelection.length === 0} title="Auswahl dieser Etage kopieren" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkSelection.length > 0 ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
-                <Copy size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Kopieren</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={handleBulkPaste} disabled={!bulkClipboard || (bulkClipboard.rooms.length === 0 && bulkClipboard.doors.length === 0)} title="Auf dieser Etage einfügen, dann mit Verschieben als Gruppe bewegen" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkClipboard && (bulkClipboard.rooms.length > 0 || bulkClipboard.doors.length > 0) ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
-                <ClipboardPaste size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Einfügen</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={handleBulkDelete} disabled={bulkSelection.length === 0} title="Auswahl löschen" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkSelection.length > 0 ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
-                <Trash2 size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Löschen</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={() => handleBulkScale(1.1)} disabled={bulkSelection.length === 0} title="Auswahl vergrößern" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkSelection.length > 0 ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
-                <ZoomIn size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Scale +</span>
-            </div>
-            <div className="flex flex-col items-center gap-0.5">
-              <button type="button" onClick={() => handleBulkScale(0.9)} disabled={bulkSelection.length === 0} title="Auswahl verkleinern" className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${bulkSelection.length > 0 ? 'text-sand/70 hover:bg-white/5' : 'text-sand/50'}`}>
-                <ZoomOut size={18} />
-              </button>
-              <span className="text-[10px] text-sand/60">Scale -</span>
-            </div>
-          </div>
-        </div>
-      )}
       </div>
       )}
       {missingFormDialog && (
@@ -3062,8 +3048,8 @@ export function DetectionsReviewEditor({
               isGewerbeWohnbau &&
               !roofOnlyOffer &&
               !isAufstockungFlow &&
-              (planTab === 'rooms' || planTab === 'doors') &&
-              (tool === 'bulk_select' || (tool === 'select' && bulkSelection.length > 0))
+              (planTab === 'rooms' || planTab === 'doors' || planTab === 'pillars') &&
+              tool === 'bulk_select'
             const canvasTab = mixedGewerbeCanvas
               ? 'doors'
               : planTab === 'doors'
@@ -3076,7 +3062,9 @@ export function DetectionsReviewEditor({
                       ? 'zubau_bestand'
                       : planTab === 'zubau_walls'
                         ? 'zubau_walls'
-                        : 'rooms'
+                        : planTab === 'pillars'
+                          ? 'rooms'
+                          : 'rooms'
             if (!plan || !imageUrlForPlan) return null
             return (
               <div className="w-full flex flex-col flex-1 min-h-0 min-w-0 gap-1.5">
@@ -3147,6 +3135,16 @@ export function DetectionsReviewEditor({
                           >
                             <DoorOpen size={14} strokeWidth={2} />
                             <span>Fenster / Türen</span>
+                          </button>
+                        )}
+                        {!roofOnlyOffer && isGewerbeWohnbau && (
+                          <button
+                            type="button"
+                            onClick={() => { setTabForPlan(i, 'pillars'); setSelectedPolygonIndex(null); setNewPolygonPoints(null); if (tool === 'add') setTool('select') }}
+                            className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'pillars' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                          >
+                            <LayoutGrid size={14} strokeWidth={2} />
+                            <span>Piloni</span>
                           </button>
                         )}
                         <button
@@ -3240,6 +3238,16 @@ export function DetectionsReviewEditor({
                     >
                       <DoorOpen size={14} strokeWidth={2} />
                       <span>Fenster / Türen</span>
+                    </button>
+                    )}
+                    {isAufstockungKind && !roofOnlyOffer && isGewerbeWohnbau && (
+                    <button
+                      type="button"
+                      onClick={() => { setTabForPlan(i, 'pillars'); setSelectedPolygonIndex(null); setNewPolygonPoints(null); if (tool === 'add') setTool('select') }}
+                      className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'pillars' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
+                    >
+                      <LayoutGrid size={14} strokeWidth={2} />
+                      <span>Piloni</span>
                     </button>
                     )}
                     {isAufstockungKind && (
@@ -3372,7 +3380,7 @@ export function DetectionsReviewEditor({
                     imageUrl={imageUrlForPlan}
                     imageWidth={plan.imageWidth}
                     imageHeight={plan.imageHeight}
-                    rooms={plan.rooms}
+                    rooms={planTab === 'pillars' ? (plan.pillars ?? []) : plan.rooms}
                     doors={plan.doors}
                     demolitionPolys={plan.roofDemolitions ?? []}
                     onDemolitionPolysChange={(polys) => setRoofDemolitions(i, polys)}
@@ -3418,6 +3426,11 @@ export function DetectionsReviewEditor({
                           ri !== polyIndex ? r : { ...r, points: r.points.map((p: Point, vi: number) => vi === vertexIndex ? [x, y] as Point : p) }
                         )
                         setRooms(i, next)
+                      } else if (planTab === 'pillars') {
+                        const next = (plan.pillars ?? []).map((r, ri) =>
+                          ri !== polyIndex ? r : { ...r, points: r.points.map((p: Point, vi: number) => vi === vertexIndex ? [x, y] as Point : p) }
+                        )
+                        setPillars(i, next)
                       } else if (planTab === 'zubau_bestand') {
                         const list = plan.zubauBestandPolygons ?? []
                         const next = list.map((d, ri) =>
@@ -3476,7 +3489,8 @@ export function DetectionsReviewEditor({
                     }}
                     onRoomsChange={(rooms: RoomPolygon[]) => {
                       if (existingFloorReadOnly) return
-                      setRooms(i, rooms)
+                      if (planTab === 'pillars') setPillars(i, rooms)
+                      else setRooms(i, rooms)
                     }}
                     onDoorsChange={(doors: DoorRect[]) => {
                       if (existingFloorReadOnly) return

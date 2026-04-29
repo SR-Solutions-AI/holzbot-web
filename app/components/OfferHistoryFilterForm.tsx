@@ -19,6 +19,7 @@ export const WIZARD_OFFER_SLUGS = [
   'zubau',
   'zubau_aufstockung',
   'full_house',
+  'gewerbe_wohnbau',
 ] as const
 
 const SLUG_TO_LABEL: Record<string, string> = {
@@ -31,6 +32,7 @@ const SLUG_TO_LABEL: Record<string, string> = {
   zubau: 'Zubau Angebot',
   zubau_aufstockung: 'Zubau / Aufstockung Angebot',
   full_house: 'Einfamilienhaus Angebot',
+  gewerbe_wohnbau: 'Gewerbe- und Wohnbau Angebot',
 }
 
 export function offerTypeLabel(slug: string | null | undefined): string {

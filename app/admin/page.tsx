@@ -45,6 +45,7 @@ import { DatePickerPopover } from '../components/DatePickerPopover'
 import { SelectSun } from '../components/SunSelect'
 import { OfferHistoryFilterForm } from '../components/OfferHistoryFilterForm'
 import PdfThumbnail from '../components/PdfThumbnail'
+import { SUBSCRIPTION_TIER_ADMIN_LABELS_DE } from '@/lib/subscriptionPriceTiers'
 import {
   fetchAdminTenants,
   fetchAdminTenantOffers,
@@ -4229,12 +4230,11 @@ export default function AdminPage() {
                 <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-sand/55">Account plan</div>
                 <SelectSun
                   value={String(permissionDraftTier)}
-                  onChange={(v) => setPermissionDraftTier(Math.max(1, Math.min(3, Number(v) || 1)))}
-                  options={[
-                    { value: '1', label: 'Starter (10/mo)' },
-                    { value: '2', label: 'Standard (25/mo)' },
-                    { value: '3', label: 'Unlimited' },
-                  ]}
+                  onChange={(v) => setPermissionDraftTier(Math.max(1, Math.min(4, Number(v) || 1)))}
+                  options={SUBSCRIPTION_TIER_ADMIN_LABELS_DE.map((label, idx) => ({
+                    value: String(idx + 1),
+                    label,
+                  }))}
                   placeholder="Select plan"
                 />
               </div>

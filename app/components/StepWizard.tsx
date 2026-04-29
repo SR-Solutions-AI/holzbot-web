@@ -355,13 +355,19 @@ function tStepLabel(key: string, fallback: string) {
   const fromJson = typeof fallback === 'string' && fallback.trim()
   return fromJson ? fallback : (DE.steps as any)?.[key] ?? key
 }
+function stripPriceHintFromLabel(label: string): string {
+  return label
+    .replace(/\s*\(\s*preis pro[^)]*\)\s*/gi, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
 function tFieldLabel(stepKey: string, fieldName: string, fallback: string | undefined) {
   if (fieldName === 'raumhoeheCm') return 'Durchschnittliche Raumhöhe im Haus'
   if (fieldName === 'tuerhoeheCm') return 'Türhöhe'
   const fromJson = typeof fallback === 'string' && fallback.trim()
-  if (fromJson) return fallback
+  if (fromJson) return stripPriceHintFromLabel(fallback)
   const fb = fieldName ?? ''
-  return (DE.fieldsGlobal as any)?.[fb] ?? fb
+  return stripPriceHintFromLabel((DE.fieldsGlobal as any)?.[fb] ?? fb)
 }
 function tPlaceholder(stepKey: string, fieldName: string, fallback?: string) {
   return typeof fallback === 'string' && fallback.trim() ? fallback : undefined
@@ -452,8 +458,19 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
       return true
     }
     if (stepKey === 'structuraCladirii' && fieldName === 'treppeTyp' && !hasFloorAboveGround) return true
+    if (stepKey === 'structuraCladirii' && fieldName === 'aufzugTyp' && !asBool(form.aufzugVorhanden)) return true
+    if (stepKey === 'structuraCladirii' && fieldName === 'pilonType' && !asBool(form.piloni)) return true
+    if (stepKey === 'structuraCladirii' && fieldName === 'aufzugVorhanden') {
+      const wp = String((form as any).wizardPackage ?? '').toLowerCase()
+      return wp !== 'gewerbe_wohnbau'
+    }
+    if (stepKey === 'structuraCladirii' && fieldName === 'aufzugTyp') {
+      const wp = String((form as any).wizardPackage ?? '').toLowerCase()
+      return wp !== 'gewerbe_wohnbau' || !asBool(form.aufzugVorhanden)
+    }
     if (stepKey === 'daemmungDachdeckung' && fieldName === 'dachfensterTyp' && !asBool(form.dachfensterImDach)) return true
     if (stepKey === 'ferestreUsi' && fieldName === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) return true
+    if (fieldName === 'tipSemineu') return true
     if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'materialeFinisaj') && fieldName === 'tipAcoperis') return true
     if (stepKey === 'structuraCladirii' && fieldName === 'floorsNumber') return true
     if (!nivelOferta) return false
@@ -496,6 +513,20 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
             : wizardPackage === 'zubau_aufstockung'
               ? 'Bitte markieren Sie mindestens ein Geschoss als Zubau oder Aufstockung.'
               : 'Bitte markieren Sie mindestens ein neues Geschoss.'
+      }
+    }
+    if (wizardPackage === 'gewerbe_wohnbau') {
+      const listaEtajeLocal = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+      const requestedHeights = Array.isArray((form as any).roomHeightsCm) ? (form as any).roomHeightsCm : []
+      const tipFundatieBeci = String((form as any).tipFundatieBeci ?? '')
+      const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
+      const expectedCount = listaEtajeLocal.filter((f: unknown) => {
+        const floor = String(f ?? '').toLowerCase()
+        return floor === 'intermediar' || floor.startsWith('mansarda')
+      }).length + (hasBasement ? 1 : 0)
+      const validHeights = requestedHeights.filter((h: unknown) => Number.isFinite(Number(h)) && Number(h) >= 200 && Number(h) <= 400)
+      if (validHeights.length !== expectedCount) {
+        e.roomHeightsCm = 'Bitte geben Sie für jede Wohnebene eine Raumhöhe zwischen 200 und 400 cm an.'
       }
     }
   }
@@ -545,6 +576,8 @@ const FIELD_TAG_FALLBACK_BY_NAME: Record<string, string> = {
   sichtdachstuhl: 'visible_roof_structure',
   dachfensterTyp: 'roof_skylight_type',
   deckenInnenausbau: 'decke_innenausbau',
+  aufzugTyp: 'lift_type',
+  pilonType: 'pillar_type',
 }
 
 /* =============== Grid selector acoperiș =============== */
@@ -4228,6 +4261,8 @@ const FOUNDATION_OPTIONS = [
   'Keller (mit Ausbau)',
 ] as const
 const STAIR_TYPE_OPTIONS = ['Standard', 'Holz', 'Beton', 'Metall', 'Sonder'] as const
+const LIFT_TYPE_OPTIONS = ['Hydraulikaufzug', 'Seilaufzug', 'Panoramaaufzug', 'Lastenaufzug'] as const
+const PILLAR_TYPE_OPTIONS = ['Stahlbeton', 'Stahl', 'Holz', 'Verbund'] as const
 
 function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR', wizardPackage }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency; wizardPackage?: string }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
@@ -4236,6 +4271,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
 
   const tipFundatieBeci = form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
   const pilons = form.pilons === true
+  const aufzugVorhanden = form.aufzugVorhanden === true
   const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
   const aufstockungFloorKinds = Array.isArray(form.aufstockungFloorKinds) ? form.aufstockungFloorKinds : []
   const groundFloorKind = (() => {
@@ -4243,11 +4279,18 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     return v === 'zubau' ? v : 'existing'
   })()
   const resolvedWizardPackage = String(wizardPackage ?? form.wizardPackage ?? '').toLowerCase()
+  const isGewerbeWohnbauFlow = resolvedWizardPackage === 'gewerbe_wohnbau'
   const isAufstockungFlow = resolvedWizardPackage === 'aufstockung' || resolvedWizardPackage === 'zubau' || resolvedWizardPackage === 'zubau_aufstockung'
   const isLegacyZubauOnlyFlow = resolvedWizardPackage === 'zubau'
   const isUnifiedZubauAufstockungFlow = resolvedWizardPackage === 'zubau_aufstockung'
+  const adaptKellerLabel = useCallback(
+    (label: string) => (isGewerbeWohnbauFlow ? label.replace(/Keller/g, 'Keller / Tiefgarage') : label),
+    [isGewerbeWohnbauFlow],
+  )
   const tipFundatieBeciSelectOptions = [...FOUNDATION_OPTIONS]
   const stairTypeOptions = preisdatenbankOptionsByTag['stairs_type'] ?? []
+  const liftTypeOptions = preisdatenbankOptionsByTag['lift_type'] ?? []
+  const pillarTypeOptions = preisdatenbankOptionsByTag['pillar_type'] ?? []
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const hasBase = true
   const basementUse = isKellerMitAusbauChoice(tipFundatieBeci)
@@ -4279,7 +4322,50 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   const hasPod = listaEtaje.some((e: string) => e === 'pod')
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const mansardaType = listaEtaje.find((e: string) => e.startsWith('mansarda'))?.split('_')[1] ?? null
-  const canAddFloors = !hasPod && !hasMansarda && listaEtaje.length < 4
+  const maxFloorEntries = isGewerbeWohnbauFlow ? 7 : 4
+  const canAddFloors = !hasPod && !hasMansarda && listaEtaje.length < maxFloorEntries
+  const isLivableFloorType = useCallback((floorType: unknown) => {
+    const normalized = String(floorType ?? '').toLowerCase()
+    return normalized === 'intermediar' || normalized.startsWith('mansarda')
+  }, [])
+  const remapRoomHeights = useCallback((prevLista: string[], nextLista: string[], prevHeightsRaw: unknown[], fallbackRaw: unknown, prevHasBasement = false, nextHasBasement = false) => {
+    const prevHeights = prevHeightsRaw.map((v) => Number(v))
+    const fallbackNum = Number(fallbackRaw)
+    const fallback =
+      Number.isFinite(fallbackNum) && fallbackNum >= 200 && fallbackNum <= 400
+        ? fallbackNum
+        : 270
+    const prevLivableHeights: number[] = []
+    const prevBasementHeight = prevHasBasement ? prevHeights[0] : undefined
+    const floorsOffset = prevHasBasement ? 1 : 0
+    let prevIdx = 0
+    for (const floor of prevLista) {
+      if (!isLivableFloorType(floor)) continue
+      const raw = prevHeights[prevIdx + floorsOffset]
+      const prevValue = prevLivableHeights[prevLivableHeights.length - 1]
+      const candidate =
+        Number.isFinite(raw) && raw >= 200 && raw <= 400
+          ? raw
+          : (prevValue ?? fallback)
+      prevLivableHeights.push(candidate)
+      prevIdx += 1
+    }
+    const nextLivableHeights: number[] = []
+    let nextIdx = 0
+    for (const floor of nextLista) {
+      if (!isLivableFloorType(floor)) continue
+      const carry = prevLivableHeights[nextIdx]
+      const previous = nextLivableHeights[nextLivableHeights.length - 1]
+      nextLivableHeights.push(carry ?? previous ?? fallback)
+      nextIdx += 1
+    }
+    if (!nextHasBasement) return nextLivableHeights
+    const basementHeight =
+      Number.isFinite(prevBasementHeight) && (prevBasementHeight as number) >= 200 && (prevBasementHeight as number) <= 400
+        ? (prevBasementHeight as number)
+        : (nextLivableHeights[0] ?? fallback)
+    return [basementHeight, ...nextLivableHeights]
+  }, [isLivableFloorType])
   const floorsNumber = etajeIntermediare
   const normalizeAufstockungFloorKinds = useCallback(
     (source: unknown[], targetFloors: string[] = listaEtaje) =>
@@ -4426,9 +4512,22 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
 
   const handleAddFloor = (floorType: string) => {
     const nextLista = [...listaEtaje, floorType]
+    const shouldAddHeight = floorType === 'intermediar' || floorType.startsWith('mansarda')
     setForm(prev => ({
       ...prev,
       listaEtaje: nextLista,
+      ...(isGewerbeWohnbauFlow && shouldAddHeight
+        ? {
+            roomHeightsCm: remapRoomHeights(
+              listaEtaje,
+              nextLista,
+              Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [],
+              prev.raumhoeheCm,
+              hasBasement,
+              hasBasement,
+            ),
+          }
+        : {}),
       ...(isAufstockungFlow
         ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], nextLista) }
         : {}),
@@ -4634,7 +4733,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
         </div>
 
       <div className="flex-1 min-w-0 relative z-10 space-y-4 !pb-0 !mb-0">
-        <label className="flex flex-col gap-1.5" data-field="raumhoeheCm">
+        <label className={`flex flex-col gap-1.5 ${isGewerbeWohnbauFlow ? 'hidden' : ''}`} data-field="raumhoeheCm">
           <span className="wiz-label text-sun/90">
             {adaptCurrencyCopy(tFieldLabel('structuraCladirii', 'raumhoeheCm', undefined), displayCurrency)}
           </span>
@@ -4701,14 +4800,64 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
           <div className={errors.tipFundatieBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
             <SelectSun
               value={tipFundatieBeciSelectOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (tipFundatieBeciSelectOptions[0] ?? '')}
-              onChange={(v) => setForm(prev => ({ ...prev, tipFundatieBeci: v }))}
+              onChange={(v) =>
+                setForm((prev) => {
+                  if (!isGewerbeWohnbauFlow) return { ...prev, tipFundatieBeci: v }
+                  const prevTip = String(prev.tipFundatieBeci ?? '')
+                  const prevHasBasement = prevTip.includes('Keller') && !prevTip.includes('Kein Keller')
+                  const nextHasBasement = String(v).includes('Keller') && !String(v).includes('Kein Keller')
+                  return {
+                    ...prev,
+                    tipFundatieBeci: v,
+                    roomHeightsCm: remapRoomHeights(
+                      listaEtaje,
+                      listaEtaje,
+                      Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [],
+                      prev.raumhoeheCm,
+                      prevHasBasement,
+                      nextHasBasement,
+                    ),
+                  }
+                })
+              }
               options={tipFundatieBeciSelectOptions}
               placeholder="Wählen Sie eine Option"
-              displayFor={(opt) => adaptCurrencyCopy(opt, displayCurrency)}
+              displayFor={(opt) => adaptCurrencyCopy(adaptKellerLabel(opt), displayCurrency)}
             />
           </div>
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
         </label>
+        {isGewerbeWohnbauFlow && hasBasement && (
+          <label className="flex flex-col gap-1" data-field="roomHeightsCmBasement">
+            <span className="wiz-label text-sun/90">{adaptKellerLabel('Raumhöhe Keller')}</span>
+            <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
+              <input
+                type="number"
+                min={200}
+                max={400}
+                step={1}
+                className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={(() => {
+                  const values = Array.isArray(form.roomHeightsCm) ? form.roomHeightsCm : []
+                  const raw = Number(values[0] ?? form.raumhoeheCm ?? 270)
+                  return String(Number.isFinite(raw) ? raw : 270)
+                })()}
+                onChange={(e) => {
+                  const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
+                  const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                  setForm((prev: Record<string, any>) => {
+                    const values = Array.isArray(prev.roomHeightsCm) ? [...prev.roomHeightsCm] : []
+                    values[0] = safeVal
+                    return { ...prev, roomHeightsCm: values, raumhoeheCm: safeVal }
+                  })
+                }}
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-0 flex min-w-10 items-center justify-center rounded-r-xl bg-[#E88E0C] px-2 text-[11px] font-medium tracking-wide text-white">
+                cm
+              </span>
+            </div>
+          </label>
+        )}
 
         {(!isAufstockungFlow || isLegacyZubauOnlyFlow || isUnifiedZubauAufstockungFlow) ? (
           <label className="flex items-center gap-2 mt-1" data-field="pilons">
@@ -4726,6 +4875,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
         <div className="space-y-2 pt-2 border-t border-[#e3c7ab22]">
           {errors.listaEtaje && <span className="text-xs text-orange-400">{errors.listaEtaje}</span>}
           {errors.aufstockungFloorKinds && <span className="text-xs text-orange-400">{errors.aufstockungFloorKinds}</span>}
+          {errors.roomHeightsCm && <span className="text-xs text-orange-400">{errors.roomHeightsCm}</span>}
           {isLegacyZubauOnlyFlow ? (
             <label className="flex flex-col gap-1 p-2 bg-panel/40 rounded-lg border border-white/10">
               <span className="wiz-label text-sun/90 text-xs">Erdgeschoss-Typ</span>
@@ -4788,6 +4938,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                         setForm(prev => ({
                           ...prev,
                           listaEtaje: cutLista,
+                          ...(isGewerbeWohnbauFlow
+                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, cutLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                            : {}),
                           ...(isAufstockungFlow
                             ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], cutLista) }
                             : {}),
@@ -4797,6 +4950,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                         setForm(prev => ({
                           ...prev,
                           listaEtaje: newLista,
+                          ...(isGewerbeWohnbauFlow
+                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, newLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                            : {}),
                           ...(isAufstockungFlow
                             ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], newLista) }
                             : {}),
@@ -4814,6 +4970,44 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                     placeholder="Wählen Sie eine Option"
                   />
                 </div>
+                {isGewerbeWohnbauFlow && isLivableFloorType(etaj) && (
+                  <div className="w-[120px]">
+                    <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
+                      <input
+                        type="number"
+                        min={200}
+                        max={400}
+                        step={1}
+                        className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        value={(() => {
+                          const livableIdx = listaEtaje
+                            .slice(0, idx + 1)
+                            .filter((f: string) => isLivableFloorType(f))
+                            .length - 1 + (hasBasement ? 1 : 0)
+                          const values = Array.isArray(form.roomHeightsCm) ? form.roomHeightsCm : []
+                          const raw = Number(values[livableIdx] ?? form.raumhoeheCm ?? 270)
+                          return String(Number.isFinite(raw) ? raw : 270)
+                        })()}
+                        onChange={(e) => {
+                          const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
+                          const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                          setForm((prev: Record<string, any>) => {
+                            const values = Array.isArray(prev.roomHeightsCm) ? [...prev.roomHeightsCm] : []
+                            const livableIdx = listaEtaje
+                              .slice(0, idx + 1)
+                              .filter((f: string) => isLivableFloorType(f))
+                              .length - 1 + (hasBasement ? 1 : 0)
+                            values[livableIdx] = safeVal
+                            return { ...prev, roomHeightsCm: values, raumhoeheCm: safeVal }
+                          })
+                        }}
+                      />
+                      <span className="pointer-events-none absolute inset-y-0 right-0 flex min-w-10 items-center justify-center rounded-r-xl bg-[#E88E0C] px-2 text-[11px] font-medium tracking-wide text-white">
+                        cm
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -4822,6 +5016,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                       return {
                         ...prev,
                         listaEtaje: nextLista,
+                        ...(isGewerbeWohnbauFlow
+                          ? { roomHeightsCm: remapRoomHeights(listaEtaje, nextLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                          : {}),
                         ...(isAufstockungFlow
                           ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], nextLista) }
                           : {}),
@@ -4945,7 +5142,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
         {hasFloorAboveGround && (
           <label className="flex flex-col gap-1" data-field="treppeTyp">
             <span className="wiz-label text-sun/90">
-              {adaptCurrencyCopy('Treppentyp (Preis pro Stück)', displayCurrency)}
+              {adaptCurrencyCopy('Treppentyp', displayCurrency)}
             </span>
             <div className={errors.treppeTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
               <SelectSun
@@ -4962,6 +5159,83 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             </div>
             {errors.treppeTyp && <span className="text-xs text-orange-400">{errors.treppeTyp}</span>}
           </label>
+        )}
+
+        {isGewerbeWohnbauFlow && (
+          <>
+            {aufzugVorhanden && (
+              <label className="flex flex-col gap-1" data-field="aufzugTyp">
+                <span className="wiz-label text-sun/90">Aufzugtyp</span>
+                <div className={errors.aufzugTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
+                  <SelectSun
+                    value={String(form.aufzugTyp || (liftTypeOptions[0] ?? LIFT_TYPE_OPTIONS[0]))}
+                    onChange={(v) => setForm(prev => ({ ...prev, aufzugTyp: v }))}
+                    options={liftTypeOptions.length > 0 ? liftTypeOptions : Array.from(LIFT_TYPE_OPTIONS)}
+                    placeholder="Wählen Sie eine Option"
+                    displayFor={(opt) => {
+                      const key = optionValueToPriceKey['lift_type']?.[opt]
+                      const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
+                      return adaptCurrencyCopy(raw, displayCurrency)
+                    }}
+                  />
+                </div>
+                {errors.aufzugTyp && <span className="text-xs text-orange-400">{errors.aufzugTyp}</span>}
+              </label>
+            )}
+            {form.piloni === true && (
+              <label className="flex flex-col gap-1" data-field="pilonType">
+                <span className="wiz-label text-sun/90">Pilonen-Typ</span>
+                <div className={errors.pilonType ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
+                  <SelectSun
+                    value={String(form.pilonType || (pillarTypeOptions[0] ?? PILLAR_TYPE_OPTIONS[0]))}
+                    onChange={(v) => setForm(prev => ({ ...prev, pilonType: v }))}
+                    options={pillarTypeOptions.length > 0 ? pillarTypeOptions : Array.from(PILLAR_TYPE_OPTIONS)}
+                    placeholder="Wählen Sie eine Option"
+                    displayFor={(opt) => {
+                      const key = optionValueToPriceKey['pillar_type']?.[opt]
+                      const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
+                      return adaptCurrencyCopy(raw, displayCurrency)
+                    }}
+                  />
+                </div>
+                {errors.pilonType && <span className="text-xs text-orange-400">{errors.pilonType}</span>}
+              </label>
+            )}
+            <div className="space-y-2 pt-3 mt-3 border-t border-[#e3c7ab22]">
+              <label className="flex items-center gap-2 mt-1" data-field="aufzugVorhanden">
+                <input
+                  type="checkbox"
+                  className="sun-checkbox"
+                  checked={aufzugVorhanden}
+                  onChange={(e) =>
+                    setForm((prev: Record<string, any>) => ({
+                      ...prev,
+                      aufzugVorhanden: e.target.checked,
+                      ...(e.target.checked ? {} : { aufzugTyp: '' }),
+                    }))
+                  }
+                />
+                <span className="text-sm font-medium text-sun/90">Aufzug vorhanden</span>
+                {errors.aufzugVorhanden && <span className="ml-2 text-xs text-orange-400">{errors.aufzugVorhanden}</span>}
+              </label>
+              <label className="flex items-center gap-2 mt-1" data-field="piloni">
+                <input
+                  type="checkbox"
+                  className="sun-checkbox"
+                  checked={form.piloni === true}
+                  onChange={(e) =>
+                    setForm((prev: Record<string, any>) => ({
+                      ...prev,
+                      piloni: e.target.checked,
+                      ...(e.target.checked ? {} : { pilonType: '' }),
+                    }))
+                  }
+                />
+                <span className="text-sm font-medium text-sun/90">Piloni vorhanden</span>
+                {errors.piloni && <span className="ml-2 text-xs text-orange-400">{errors.piloni}</span>}
+              </label>
+            </div>
+          </>
         )}
 
         </div>
@@ -4995,6 +5269,8 @@ function DynamicFields({
 }) {
   const fmt = (s: string) => adaptCurrencyCopy(s, displayCurrency)
   const wp = String(wizardPackage ?? '').toLowerCase()
+  const replaceKellerForGewerbe = (label: string) =>
+    wp === 'gewerbe_wohnbau' ? label.replace(/Keller/g, 'Keller / Tiefgarage') : label
   const isAufstockungWizard = wp === 'aufstockung' || wp === 'zubau'
   const hideGarageForAufstockungOnly = wp === 'aufstockung'
 
@@ -5009,6 +5285,7 @@ function DynamicFields({
   return (
     <div className="grid grid-cols-1 gap-3">
       {currentFields.map(f => {
+        if (f.name === 'tipSemineu') return null
         if (stepKey === 'structuraCladirii' && f.name === 'treppeTyp') {
           const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
           const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
@@ -5045,17 +5322,6 @@ function DynamicFields({
           const rawVal = form[f.name]
           const selectValue = (rawVal != null && typeof rawVal === 'object' && 'value' in rawVal) ? String((rawVal as any).value) : (rawVal != null ? String(rawVal) : '')
 
-          // Kamin/Ofen: afișare cu prețuri (ca pe VPS)
-          const isFireplaceField = f.name === 'tipSemineu'
-          const fireplaceLabels: Record<string, string> = {
-            'Kein Kamin': 'Kein Kamin',
-            'Klassischer Holzofen': 'Klassischer Holzofen – ca. 8.500 €',
-            'Moderner Design-Kaminofen': 'Moderner Design-Kaminofen – ca. 12.000 €',
-            'Pelletofen (automatisch)': 'Pelletofen (automatisch) – ca. 11.000 €',
-            'Einbaukamin': 'Einbaukamin – ca. 14.000 €',
-            'Kachel-/wassergeführter Kamin': 'Kachel-/wassergeführter Kamin – ca. 18.000 €',
-          }
-
           return (
             <label key={f.name} className="flex flex-col gap-1" data-field={f.name}>
               <span className="wiz-label text-sun/90">{displayLabel}</span>
@@ -5086,26 +5352,18 @@ function DynamicFields({
                   displayFor={(opt) => {
                     const val = typeof opt === 'string' ? opt : optValue(opt)
                     if (f.name === 'nivelOferta' && /\bhaus\b/i.test(val)) {
-                      return fmt(val.replace(/\s*haus\b/gi, '').replace(/\s+/g, ' ').trim())
+                      return fmt(replaceKellerForGewerbe(val.replace(/\s*haus\b/gi, '').replace(/\s+/g, ' ').trim()))
                     }
                     const tag = (f as any).tag || FIELD_TAG_FALLBACK_BY_NAME[f.name]
                     const priceKey = tag && optionValueToPriceKey[tag]?.[val]
                     const override = priceKey && paramLabelOverrides[priceKey]
-                    if (override) return fmt(override)
-                    if (isFireplaceField && fireplaceLabels[val]) return fmt(fireplaceLabels[val])
+                    if (override) return fmt(replaceKellerForGewerbe(override))
                     const objLabel = typeof opt === 'object' && opt !== null && (opt as any).label != null && (opt as any).label !== '' ? String((opt as any).label) : null
-                    return fmt(objLabel ?? tOption(stepKey, f.name, val))
+                    return fmt(replaceKellerForGewerbe(objLabel ?? tOption(stepKey, f.name, val)))
                   }}
                 />
               </div>
               {hasErr && <span className="text-xs text-orange-400">{errors[f.name]}</span>}
-              {isFireplaceField && form[f.name] && form[f.name] !== 'Kein Kamin' && (
-                <span className="text-xs text-sand/70 mt-1">
-                  {fmt(
-                    '*Schornstein wird dazugerechnet mit Anzahl der Stockwerke (4.500 € Standardpreis + 1.500 € pro Geschoss)',
-                  )}
-                </span>
-              )}
             </label>
           )
         }

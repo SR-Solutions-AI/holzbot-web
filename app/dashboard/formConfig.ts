@@ -73,6 +73,9 @@ export const formSteps: Step[] = [
     fields: [
       { type: 'select', name: 'tipFundatieBeci', label: 'Untergeschoss / Fundament', options: ['Kein Keller (nur Bodenplatte)', 'Keller (ohne Ausbau)', 'Keller (mit Ausbau)'] },
       { type: 'bool', name: 'pilons', label: 'Pfahlgründung erforderlich' },
+      { type: 'select', name: 'pilonType', label: 'Pilonen-Typ', options: ['Stahlbeton', 'Stahl', 'Holz', 'Verbund'], tag: 'pillar_type' },
+      { type: 'bool', name: 'aufzugVorhanden', label: 'Aufzug vorhanden' },
+      { type: 'select', name: 'aufzugTyp', label: 'Aufzugtyp', options: ['Hydraulikaufzug', 'Seilaufzug', 'Panoramaaufzug', 'Lastenaufzug'], tag: 'lift_type' },
       { type: 'number', name: 'raumhoeheCm', label: 'Durchschnittliche Raumhöhe im Haus', min: 200, max: 400 },
       {
         type: 'select',
@@ -151,7 +154,6 @@ export const formSteps: Step[] = [
       { type: 'select', name: 'nivelEnergetic', label: 'Gewünschtes Energieniveau', options: ['Standard', 'KfW 55', 'KfW 40', 'KfW 40+'] },
       { type: 'select', name: 'tipIncalzire',   label: 'Heizungssystem', options: ['Gaz', 'Pompa de căldură', 'Electric'] },
       { type: 'bool',   name: 'ventilatie',     label: 'Lüftung / Wärmerückgewinnung' },
-      { type: 'select', name: 'tipSemineu', label: 'Welchen Kamin / Ofen wünscht der Kunde?', options: ['Kein Kamin', 'Klassischer Holzofen', 'Moderner Design-Kaminofen', 'Pelletofen (automatisch)', 'Einbaukamin', 'Kachel-/wassergeführter Kamin'] },
     ],
   },
 
@@ -478,7 +480,6 @@ export const preisdatenbankSteps: Step[] = [
     priceSectionKey: 'sonderpositionen',
     fields: [
       { type: 'price', name: 'treppe', label: 'Treppe (pro Stück)', unit: '€', default: 4500 },
-      { type: 'price', name: 'kamin', label: 'Kaminanschluss', unit: '€', default: 420 },
       { type: 'price', name: 'sockel', label: 'Sockelarbeiten (laufend)', unit: '€/m', default: 35 },
       { type: 'price', name: 'abdichtung', label: 'Abdichtung (z. B. Keller)', unit: '€/m²', default: 75 },
     ],
@@ -654,6 +655,10 @@ export const PRICING_VARIABLES_SECTIONS: PricingVariablesSectionDef[] = [
         variables: [
           { key: 'floor_coeff_per_m2', label: 'Boden (€/m²)', unit: '€/m²', default: 0 },
           { key: 'ceiling_coeff_per_m2', label: 'Decke (€/m²)', unit: '€/m²', default: 0 },
+          { key: 'pillar_type_stahlbeton_m3_price', label: 'Pilonen Stahlbeton (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_stahl_m3_price', label: 'Pilonen Stahl (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_holz_m3_price', label: 'Pilonen Holz (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_verbund_m3_price', label: 'Pilonen Verbund (€/m³)', unit: '€/m³', default: 0 },
         ],
       },
     ],
@@ -672,6 +677,16 @@ export const PRICING_VARIABLES_SECTIONS: PricingVariablesSectionDef[] = [
           { key: 'stairs_type_beton_piece_price', label: 'Treppentyp Beton (€/Stück)', unit: '€/Stück', default: 0 },
           { key: 'stairs_type_metall_piece_price', label: 'Treppentyp Metall (€/Stück)', unit: '€/Stück', default: 0 },
           { key: 'stairs_type_sonder_piece_price', label: 'Treppentyp Sonder (€/Stück)', unit: '€/Stück', default: 0 },
+        ],
+      },
+      {
+        title: 'Aufzug',
+        fieldTag: 'lift_type',
+        variables: [
+          { key: 'lift_type_hydraulikaufzug_piece_price', label: 'Hydraulikaufzug (€/Stück)', unit: '€/Stück', default: 0 },
+          { key: 'lift_type_seilaufzug_piece_price', label: 'Seilaufzug (€/Stück)', unit: '€/Stück', default: 0 },
+          { key: 'lift_type_panoramaaufzug_piece_price', label: 'Panoramaaufzug (€/Stück)', unit: '€/Stück', default: 0 },
+          { key: 'lift_type_lastenaufzug_piece_price', label: 'Lastenaufzug (€/Stück)', unit: '€/Stück', default: 0 },
         ],
       },
     ],

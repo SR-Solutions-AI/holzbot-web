@@ -44,6 +44,8 @@ function translateText(text?: string | null): string {
 }
 
 function getOfferTypeBadgeLabel(item: OfferListItem): string {
+  const wizardPackage = String(item.meta?.wizard_package ?? '').toLowerCase()
+  const isGewerbeWohnbau = wizardPackage === 'gewerbe_wohnbau' || String(item.offer_type_slug ?? '').toLowerCase() === 'gewerbe_wohnbau'
   const flow = inferOfferFlow({
     roof_only_offer: item.meta?.roof_only_offer,
     wizard_package: item.meta?.wizard_package,
@@ -53,12 +55,14 @@ function getOfferTypeBadgeLabel(item: OfferListItem): string {
   const isMeasurementsOnly = item.meta?.measurements_only_offer === true
 
   if (isMeasurementsOnly) {
+    if (isGewerbeWohnbau) return 'Gewerbe- und Wohnbau Mengenübersicht'
     if (flow === 'dachstuhl') return 'Dachstuhl Mengenübersicht'
     if (flow === 'zubau_aufstockung') return 'Zubau / Aufstockung Mengenübersicht'
     if (flow === 'aufstockung') return 'Aufstockung Mengenübersicht'
     if (flow === 'zubau') return 'Zubau Mengenübersicht'
     return 'Einfamilienhaus Mengenübersicht'
   }
+  if (isGewerbeWohnbau) return 'Gewerbe- und Wohnbau Angebot'
   if (flow === 'dachstuhl') return 'Dachstuhl Angebot'
   if (flow === 'zubau_aufstockung') return 'Zubau / Aufstockung Angebot'
   if (flow === 'aufstockung') return 'Aufstockung Angebot'

@@ -729,7 +729,20 @@ export default function PreisdatenbankPage() {
       </div>
       <div className="flex flex-col gap-10 md:gap-12">
         {sections
-          .map((section, originalIndex) => ({ section, originalIndex }))
+          .map((section, originalIndex) => ({
+            section: {
+              ...section,
+              subsections: section.subsections.filter((sub) => {
+                const title = String(sub.title || '').toLowerCase()
+                if (title.includes('kamin') || title.includes('schornstein') || title.includes('horn')) return false
+                return !sub.variables.some((v) => {
+                  const id = String(v.id || '').toLowerCase()
+                  return id.includes('kamin') || id.includes('fireplace') || id.includes('horn') || id.includes('schornstein')
+                })
+              }),
+            },
+            originalIndex,
+          }))
           .map(({ section, originalIndex: sectionIndex }) => {
           // Grupăm cardurile cu un singur element (unu sub altul)
           const items: Array<
@@ -741,6 +754,17 @@ export default function PreisdatenbankPage() {
           while (i < section.subsections.length) {
             const sub = section.subsections[i]
             const nextSub = section.subsections[i + 1]
+            if (sub.title === 'Treppe' && nextSub?.title === 'Aufzug') {
+              items.push({
+                type: 'stack',
+                subs: [
+                  { sub: section.subsections[i], subsectionIndex: i },
+                  { sub: section.subsections[i + 1], subsectionIndex: i + 1 },
+                ],
+              })
+              i += 2
+              continue
+            }
             if (sub.title === 'Kaminabzug' && nextSub?.title === 'Kamin / Ofen') {
               items.push({
                 type: 'kaminCard',

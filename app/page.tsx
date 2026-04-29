@@ -6,6 +6,7 @@ import { apiFetch } from './lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 import { motion, Variants } from 'framer-motion'
 import { LogIn, ArrowRight, Hammer, XCircle, CheckCircle2, FileText, Clock, TrendingUp, Shield, Users, Briefcase, Download, Check, Plus, Lightbulb, Mail, Play, Pause, RotateCcw, SkipBack, SkipForward, FileSearch } from 'lucide-react'
+import { SUBSCRIPTION_PRICE_TIERS } from '@/lib/subscriptionPriceTiers'
 
 // --- CONFIG ---
 const BACKGROUND_IMAGE_URL = '/images/landing-bg.png'
@@ -481,13 +482,6 @@ const HOLZBOT_LICENSE_FEATURES = [
   },
 ] as const
 
-const HOLZBOT_PRICE_TIERS = [
-  { label: '5 Projekte / Monat', price: '299 €' },
-  { label: '10 Projekte / Monat', price: '499 €' },
-  { label: '25 Projekte / Monat', price: '999 €' },
-  { label: 'Unlimitiert', price: '1499 €', highlight: true },
-] as const
-
 function PricingSection() {
   return (
     <section
@@ -549,10 +543,10 @@ function PricingSection() {
                   <p className="text-sand/65 text-xs md:text-sm mb-4">Transparente Preise basierend auf Nutzung.</p>
 
                   <div className="rounded-xl border border-white/10 overflow-hidden bg-black/45">
-                    {HOLZBOT_PRICE_TIERS.map((tier, i) => (
+                    {SUBSCRIPTION_PRICE_TIERS.map((tier, i) => (
                       <div
                         key={tier.label}
-                        className={`flex flex-row items-center justify-between gap-3 px-3.5 py-3 ${'highlight' in tier && tier.highlight ? 'bg-[#FF9F0F]/[0.06]' : ''} ${i < HOLZBOT_PRICE_TIERS.length - 1 ? 'border-b border-white/10' : ''}`}
+                        className={`flex flex-row items-center justify-between gap-3 px-3.5 py-3 ${'highlight' in tier && tier.highlight ? 'bg-[#FF9F0F]/[0.06]' : ''} ${i < SUBSCRIPTION_PRICE_TIERS.length - 1 ? 'border-b border-white/10' : ''}`}
                       >
                         <span className={`text-xs md:text-sm leading-snug ${'highlight' in tier && tier.highlight ? 'text-white font-semibold' : 'text-sand/90 font-medium'}`}>{tier.label}</span>
                         <div className="flex items-baseline gap-1.5 shrink-0">

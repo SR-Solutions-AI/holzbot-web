@@ -693,6 +693,7 @@ export default function LiveFeed() {
   const [currentStageName, setCurrentStageName] = useState<string | null>(null)
   /** Einfamilienhaus vs Dachstuhl: titluri și fallback progres */
   const [offerFlow, setOfferFlow] = useState<OfferFlow>('einfamilienhaus')
+  const [isGewerbeWohnbauFlow, setIsGewerbeWohnbauFlow] = useState(false)
   const [isMeasurementsOnlyOffer, setIsMeasurementsOnlyOffer] = useState(false)
   const flowModeRef = useRef<OfferFlow>('einfamilienhaus')
 
@@ -880,6 +881,8 @@ export default function LiveFeed() {
         if (cancelled) return
         const meta = o?.meta ?? o?.offer?.meta
         const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+        const wp = String(meta?.wizard_package ?? '').toLowerCase()
+        setIsGewerbeWohnbauFlow(wp === 'gewerbe_wohnbau' || String(slug ?? '').toLowerCase() === 'gewerbe_wohnbau')
         const inferred = inferOfferFlow({ ...meta, offer_type_slug: slug })
         flowModeRef.current = inferred
         setOfferFlow(inferred)
@@ -936,6 +939,7 @@ export default function LiveFeed() {
       setCurrentStageName(null)
       flowModeRef.current = 'einfamilienhaus'
       setOfferFlow('einfamilienhaus')
+      setIsGewerbeWohnbauFlow(false)
       setIsMeasurementsOnlyOffer(false)
     }
     
@@ -969,6 +973,7 @@ export default function LiveFeed() {
           : 'einfamilienhaus'
       flowModeRef.current = provisional
       setOfferFlow(provisional)
+      setIsGewerbeWohnbauFlow(false)
       setIsMeasurementsOnlyOffer(e?.detail?.measurementsOnlyOffer === true)
 
       setOfferId(offerId); 
@@ -987,6 +992,8 @@ export default function LiveFeed() {
           if (!offerEventMatchesUrlAndRef(offerId)) return
           const meta = o?.meta ?? o?.offer?.meta
           const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+          const wp = String(meta?.wizard_package ?? '').toLowerCase()
+          setIsGewerbeWohnbauFlow(wp === 'gewerbe_wohnbau' || String(slug ?? '').toLowerCase() === 'gewerbe_wohnbau')
           const resolved = resolveOfferFlowWithExplicit(meta, slug, explicitFlow)
           flowModeRef.current = resolved
           setOfferFlow(resolved)
@@ -1198,7 +1205,8 @@ export default function LiveFeed() {
         setCurrentStageName(null)
         flowModeRef.current = 'einfamilienhaus'
         setOfferFlow('einfamilienhaus')
-      setIsMeasurementsOnlyOffer(false)
+        setIsGewerbeWohnbauFlow(false)
+        setIsMeasurementsOnlyOffer(false)
         return
       }
 
@@ -1207,6 +1215,8 @@ export default function LiveFeed() {
         const o = await apiFetch(`/offers/${encodeURIComponent(id)}`)
         const meta = o?.meta ?? o?.offer?.meta
         const slug = o?.offer_type_slug ?? o?.offer?.offer_type_slug
+        const wp = String(meta?.wizard_package ?? '').toLowerCase()
+        setIsGewerbeWohnbauFlow(wp === 'gewerbe_wohnbau' || String(slug ?? '').toLowerCase() === 'gewerbe_wohnbau')
         offerFlowResolved = inferOfferFlow({ ...meta, offer_type_slug: slug })
         setIsMeasurementsOnlyOffer(meta?.measurements_only_offer === true)
       } catch (_) {}
@@ -2108,7 +2118,9 @@ export default function LiveFeed() {
                 }`}
               >
                 {isMeasurementsOnlyOffer
-                  ? offerFlow === 'dachstuhl'
+                  ? isGewerbeWohnbauFlow
+                    ? 'Gewerbe- und Wohnbau Mengenermittlung'
+                    : offerFlow === 'dachstuhl'
                     ? 'Dachstuhl Mengenermittlung'
                     : offerFlow === 'aufstockung'
                       ? 'Aufstockung Mengenermittlung'
@@ -2117,7 +2129,9 @@ export default function LiveFeed() {
                         : offerFlow === 'zubau_aufstockung'
                           ? 'Zubau / Aufstockung Mengenermittlung'
                           : 'Einfamilienhaus Mengenermittlung'
-                  : offerFlow === 'dachstuhl'
+                  : isGewerbeWohnbauFlow
+                    ? 'Gewerbe- und Wohnbau Angebot'
+                    : offerFlow === 'dachstuhl'
                     ? 'Dachstuhl Angebot'
                     : offerFlow === 'aufstockung'
                       ? 'Aufstockung Angebot'

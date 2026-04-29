@@ -165,6 +165,39 @@
           "tag": "pilings_required"
         },
         {
+          "type": "select",
+          "name": "pilonType",
+          "label": "Pilonen-Typ",
+          "options": [
+            "Stahlbeton",
+            "Stahl",
+            "Holz",
+            "Verbund"
+          ],
+          "tag": "pillar_type",
+          "optional": true
+        },
+        {
+          "type": "bool",
+          "name": "aufzugVorhanden",
+          "label": "Aufzug vorhanden",
+          "tag": "lift_present",
+          "optional": true
+        },
+        {
+          "type": "select",
+          "name": "aufzugTyp",
+          "label": "Aufzugtyp",
+          "options": [
+            "Hydraulikaufzug",
+            "Seilaufzug",
+            "Panoramaaufzug",
+            "Lastenaufzug"
+          ],
+          "tag": "lift_type",
+          "optional": true
+        },
+        {
           "type": "number",
           "name": "raumhoeheCm",
           "label": "Durchschnittliche Raumhöhe im Haus",
@@ -284,6 +317,61 @@
               "label": "Treppentyp Sonder (€/Stück)",
               "unit": "€/Stück",
               "value": 6500
+            },
+            {
+              "key": "pillar_type_stahlbeton_m3_price",
+              "label": "Pilonen Stahlbeton (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_stahl_m3_price",
+              "label": "Pilonen Stahl (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_holz_m3_price",
+              "label": "Pilonen Holz (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_verbund_m3_price",
+              "label": "Pilonen Verbund (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "title": "Aufzug",
+          "subtitle": "Preis pro Stück",
+          "fieldTag": "lift_type",
+          "variables": [
+            {
+              "key": "lift_type_hydraulikaufzug_piece_price",
+              "label": "Hydraulikaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_seilaufzug_piece_price",
+              "label": "Seilaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_panoramaaufzug_piece_price",
+              "label": "Panoramaaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_lastenaufzug_piece_price",
+              "label": "Lastenaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
             }
           ]
         },
@@ -1586,6 +1674,37 @@
             ]
           },
           {
+            "title": "Aufzug",
+            "subtitle": "Preis pro Stück",
+            "fieldTag": "lift_type",
+            "variables": [
+              {
+                "key": "lift_type_hydraulikaufzug_piece_price",
+                "label": "Hydraulikaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_seilaufzug_piece_price",
+                "label": "Seilaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_panoramaaufzug_piece_price",
+                "label": "Panoramaaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_lastenaufzug_piece_price",
+                "label": "Lastenaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              }
+            ]
+          },
+          {
             "title": "Bodenaufbau",
             "subtitle": "Geschossdecke / tragende Ebene (€/m²)",
             "fieldTag": "bodenaufbau",
@@ -1601,6 +1720,37 @@
                 "label": "Boden 2 (€/m²)",
                 "unit": "€/m²",
                 "value": 150
+              }
+            ]
+          },
+          {
+            "title": "Piloni",
+            "subtitle": "Preis pro Volumen (€/m³)",
+            "fieldTag": "pillar_type",
+            "variables": [
+              {
+                "key": "pillar_type_stahlbeton_m3_price",
+                "label": "Pilonen Stahlbeton (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_stahl_m3_price",
+                "label": "Pilonen Stahl (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_holz_m3_price",
+                "label": "Pilonen Holz (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_verbund_m3_price",
+                "label": "Pilonen Verbund (€/m³)",
+                "unit": "€/m³",
+                "value": 0
               }
             ]
           },

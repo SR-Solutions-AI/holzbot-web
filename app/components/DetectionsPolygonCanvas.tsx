@@ -63,7 +63,7 @@ type PolygonCanvasProps = {
   tool: 'select' | 'add' | 'remove' | 'edit' | 'bulk_select'
   selectedIndex: number | null
   newPoints: Point[] | null
-  newDoorType?: 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs'
+  newDoorType?: 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs' | 'lift'
   onSelect: (index: number | null) => void
   onAddPoint: (x: number, y: number) => void
   onCloseNewPolygon: () => void
@@ -176,6 +176,8 @@ const DOOR_HIT_PADDING = 16
 const CLOSE_POLYGON_HIT_PX = 22
 /** Mișcare maximă în px ecran pentru a considera tap (vs. drag) pe uși în Select. */
 const DOOR_TAP_MAX_MOVE_PX = 8
+/** Hit radius for bulk resize corner handles (image-space adjusted by zoom). */
+const BULK_RESIZE_HIT_R = 20
 /**
  * Zoom la wheel: trackpad-ul trimite multe evenimente cu deltaY mic — evităm factori fixi 0.9/1.1 per eveniment.
  * deltaMode LINE/PAGE e scalat la „pixeli efectivi”; exp(-dy·k) + clamp limitează salturile la rotița mouse.
@@ -306,6 +308,13 @@ export function DetectionsPolygonCanvas({
         startImage: Point
         currentImage: Point
       }
+    | {
+        kind: 'bulk_scale'
+        roomInits: Record<number, Point[]>
+        doorInits: Record<number, [number, number, number, number]>
+        anchor: Point
+        handleStart: Point
+      }
   const [dragging, setDragging] = useState<DragState | null>(null)
   const [imageLoaded, setImageLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -321,6 +330,7 @@ export function DetectionsPolygonCanvas({
   const zubauWallsRef = useRef(zubauWallLines)
   const stairRectsRef = useRef(stairOpeningRects)
   const [wallLineDraft, setWallLineDraft] = useState<Point[] | null>(null)
+  const [bulkResizeHoverCorner, setBulkResizeHoverCorner] = useState<number | null>(null)
   doorsRef.current = doors
   roomsRef.current = rooms
   demolitionRef.current = demolitionPolys
@@ -331,6 +341,40 @@ export function DetectionsPolygonCanvas({
   useEffect(() => {
     if (tab !== 'zubau_walls') setWallLineDraft(null)
   }, [tab])
+
+  const getBulkSelectionBounds = useCallback((): { minX: number; minY: number; maxX: number; maxY: number } | null => {
+    if (bulkSelectedKeys.length === 0) return null
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    let hasAny = false
+    for (const key of bulkSelectedKeys) {
+      if (key.startsWith('r:')) {
+        const idx = Number(key.slice(2))
+        const pts = roomsRef.current[idx]?.points
+        if (!pts || pts.length === 0) continue
+        pts.forEach(([x, y]) => {
+          minX = Math.min(minX, x)
+          minY = Math.min(minY, y)
+          maxX = Math.max(maxX, x)
+          maxY = Math.max(maxY, y)
+        })
+        hasAny = true
+      } else if (key.startsWith('d:')) {
+        const idx = Number(key.slice(2))
+        const bb = doorsRef.current[idx]?.bbox
+        if (!bb) continue
+        minX = Math.min(minX, bb[0], bb[2])
+        minY = Math.min(minY, bb[1], bb[3])
+        maxX = Math.max(maxX, bb[0], bb[2])
+        maxY = Math.max(maxY, bb[1], bb[3])
+        hasAny = true
+      }
+    }
+    if (!hasAny || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null
+    return { minX, minY, maxX, maxY }
+  }, [bulkSelectedKeys])
 
   const zoomModel = stackedView != null ? stackedView.zoom : userZoom
   const panModel = stackedView != null ? stackedView.pan : userPan
@@ -487,14 +531,15 @@ export function DetectionsPolygonCanvas({
     const roomColors = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
     // Clasificare identică cu LiveFeed (detections_review_doors.png): doors_types.json (Gemini) + euristică aspect în backend.
     // Culori: ușă = verde, geam = albastru, schiebetür = turcoaz, garaj = mov, scări = portocaliu.
-    const doorColors: Record<string, string> = { door: '#22c55e', window: '#3b82f6', sliding_door: '#14b8a6', garage_door: '#9333ea', stairs: '#ea580c' }
-    const doorStrokeColors: Record<string, string> = { door: '#16a34a', window: '#2563eb', sliding_door: '#0f766e', garage_door: '#7e22ce', stairs: '#c2410c' }
+    const doorColors: Record<string, string> = { door: '#22c55e', window: '#3b82f6', sliding_door: '#14b8a6', garage_door: '#9333ea', stairs: '#ea580c', lift: '#c026d3' }
+    const doorStrokeColors: Record<string, string> = { door: '#16a34a', window: '#2563eb', sliding_door: '#0f766e', garage_door: '#7e22ce', stairs: '#c2410c', lift: '#a21caf' }
     const getDoorStyle = (type: string | undefined) => {
       const t = (type || 'door').toLowerCase().trim()
       if (t === 'window' || t === 'fenster' || t === 'geam') return { fill: doorColors.window, stroke: doorStrokeColors.window }
       if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return { fill: doorColors.sliding_door, stroke: doorStrokeColors.sliding_door }
       if (t === 'garage_door' || t === 'garagentor') return { fill: doorColors.garage_door, stroke: doorStrokeColors.garage_door }
       if (t === 'stairs' || t === 'treppe') return { fill: doorColors.stairs, stroke: doorStrokeColors.stairs }
+      if (t === 'lift' || t === 'aufzug' || t === 'elevator') return { fill: doorColors.lift, stroke: doorStrokeColors.lift }
       return { fill: doorColors.door, stroke: doorStrokeColors.door }
     }
 
@@ -990,7 +1035,7 @@ export function DetectionsPolygonCanvas({
         rooms.forEach((room, i) => {
           const pts = room.points
           if (pts.length < 2) return
-          const bulkPick = bulkSelectedKeys.includes(`r:${i}`)
+          const bulkPick = tool === 'bulk_select' && bulkSelectedKeys.includes(`r:${i}`)
           ctx.fillStyle = interactiveRoomPolygonsInDoorsTab ? roomColors[i % roomColors.length] : underlayColors[i % underlayColors.length]
           ctx.globalAlpha = highlightRoofSurfaceUnderlay ? 0.28 : interactiveRoomPolygonsInDoorsTab ? 0.2 : 0.14
           ctx.beginPath()
@@ -1041,7 +1086,7 @@ export function DetectionsPolygonCanvas({
       }
       rectsForDoorTab.forEach((door, i) => {
         const [x1, y1, x2, y2] = door.bbox
-        const selected = selectedIndex === i || (tab === 'doors' && bulkSelectedKeys.includes(`d:${i}`))
+        const selected = selectedIndex === i || (tool === 'bulk_select' && tab === 'doors' && bulkSelectedKeys.includes(`d:${i}`))
         const style = tab === 'stair_opening' ? stairPreviewStyle : getDoorStyle(door.type)
         ctx.fillStyle = style.fill
         ctx.globalAlpha = selected ? 0.5 : 0.35
@@ -1063,6 +1108,46 @@ export function DetectionsPolygonCanvas({
           })
         }
       })
+      if (tool === 'bulk_select' && tab === 'doors' && bulkSelectedKeys.length > 0) {
+        const bounds = getBulkSelectionBounds()
+        if (bounds) {
+          const { minX, minY, maxX, maxY } = bounds
+          const pad = 6 / s
+          const bx = ox + (minX - pad) * s
+          const by = oy + (minY - pad) * s
+          const bw = (maxX - minX + pad * 2) * s
+          const bh = (maxY - minY + pad * 2) * s
+          ctx.save()
+          ctx.setLineDash([5, 4])
+          ctx.lineWidth = 1.8
+          ctx.strokeStyle = 'rgba(255,159,15,0.98)'
+          ctx.fillStyle = 'rgba(255,159,15,0.08)'
+          ctx.fillRect(bx, by, bw, bh)
+          ctx.strokeRect(bx, by, bw, bh)
+          ctx.setLineDash([])
+          if (tool === 'bulk_select') {
+            const corners: Point[] = [
+              [minX - pad, minY - pad],
+              [maxX + pad, minY - pad],
+              [maxX + pad, maxY + pad],
+              [minX - pad, maxY + pad],
+            ]
+            corners.forEach((c, idx) => {
+              const hx = ox + c[0] * s
+              const hy = oy + c[1] * s
+              const active = bulkResizeHoverCorner === idx || dragging?.kind === 'bulk_scale'
+              ctx.fillStyle = active ? '#FFD28A' : '#FF9F0F'
+              ctx.beginPath()
+              ctx.rect(hx - 5, hy - 5, 10, 10)
+              ctx.fill()
+              ctx.strokeStyle = 'rgba(0,0,0,0.85)'
+              ctx.lineWidth = 1
+              ctx.strokeRect(hx - 5, hy - 5, 10, 10)
+            })
+          }
+          ctx.restore()
+        }
+      }
       if (dragging?.kind === 'bulk_marquee') {
         const x = Math.min(dragging.startCanvas.x, dragging.currentCanvas.x)
         const y = Math.min(dragging.startCanvas.y, dragging.currentCanvas.y)
@@ -1127,12 +1212,15 @@ export function DetectionsPolygonCanvas({
     highlightRoofSurfaceUnderlay,
     interactiveRoomPolygonsInDoorsTab,
     bulkSelectedKeys,
+    bulkResizeHoverCorner,
     blendAufstockungPhase1Overlays,
     blendZubauSiblingOverlays,
     useAufstockungsBasisDemolitionLabels,
     hideBasemap,
     roofOverlayRooms,
     stackedView,
+    dragging,
+    getBulkSelectionBounds,
   ])
 
   useEffect(() => { draw() }, [draw])
@@ -1299,23 +1387,28 @@ export function DetectionsPolygonCanvas({
       return
     }
 
-    if (tool === 'bulk_select') {
-      if (!onBulkPick) return
+    if (tool === 'bulk_select' && tab === 'doors' && onBulkPick) {
       if (hit?.kind === 'poly') {
         const inferredLayer: 'room' | 'door' | null =
           hit.layer === 'room' || hit.layer === 'door'
             ? hit.layer
-            : tab === 'rooms'
-              ? 'room'
-              : tab === 'doors'
-                ? 'door'
-                : null
+            : 'door'
         if (inferredLayer) {
-          onBulkPick({ layer: inferredLayer, index: hit.index }, e.shiftKey)
-        } else if (!e.shiftKey) {
-          onBulkPick(null, false)
+          if (e.shiftKey) {
+            onBulkPick({ layer: inferredLayer, index: hit.index }, true)
+            return
+          }
+          const key = inferredLayer === 'room' ? `r:${hit.index}` : `d:${hit.index}`
+          if (!bulkSelectedKeys.includes(key)) {
+            onBulkPick({ layer: inferredLayer, index: hit.index }, false)
+            return
+          }
         }
+        if (e.shiftKey) return
       } else if (pt) {
+        if (bulkSelectedKeys.length > 0 && !e.shiftKey) {
+          // Existing multi-selection: allow move/resize logic below to run first.
+        } else {
         ;(e.target as Element).setPointerCapture(e.pointerId)
         setDragging({
           kind: 'bulk_marquee',
@@ -1324,10 +1417,9 @@ export function DetectionsPolygonCanvas({
           startImage: [pt[0], pt[1]],
           currentImage: [pt[0], pt[1]],
         })
-      } else if (!e.shiftKey) {
-        onBulkPick(null, false)
+        return
+        }
       }
-      return
     }
 
     if (hit?.kind === 'vertex' && hit.vertexIndex !== undefined) {
@@ -1387,6 +1479,77 @@ export function DetectionsPolygonCanvas({
       return
     }
 
+    if (
+      tool === 'bulk_select' &&
+      tab === 'doors' &&
+      pt &&
+      bulkSelectedKeys.length > 0 &&
+      !hit
+    ) {
+      const bounds = getBulkSelectionBounds()
+      if (bounds) {
+        const { minX, minY, maxX, maxY } = bounds
+        const pad = 6 / effective.scale
+        const corners: Point[] = [
+          [minX - pad, minY - pad],
+          [maxX + pad, minY - pad],
+          [maxX + pad, maxY + pad],
+          [minX - pad, maxY + pad],
+        ]
+        const hitCorner = corners.findIndex((c) => dist(c, pt) <= BULK_RESIZE_HIT_R / effective.scale)
+        if (hitCorner >= 0) {
+          onEditStart?.()
+          ;(e.target as Element).setPointerCapture(e.pointerId)
+          const roomInits: Record<number, Point[]> = {}
+          const doorInits: Record<number, [number, number, number, number]> = {}
+          for (const k of bulkSelectedKeys) {
+            if (k.startsWith('r:')) {
+              const idx = Number(k.slice(2))
+              const rtp = roomsRef.current[idx]?.points
+              if (rtp) roomInits[idx] = rtp.map((p) => [...p] as Point)
+            } else if (k.startsWith('d:')) {
+              const idx = Number(k.slice(2))
+              const bb = doorsRef.current[idx]?.bbox
+              if (bb) doorInits[idx] = [...bb] as [number, number, number, number]
+            }
+          }
+          const anchor = corners[(hitCorner + 2) % 4]
+          const handleStart = corners[hitCorner]
+          setDragging({ kind: 'bulk_scale', roomInits, doorInits, anchor: [anchor[0], anchor[1]], handleStart: [handleStart[0], handleStart[1]] })
+          return
+        }
+        const inBounds =
+          pt[0] >= minX - pad &&
+          pt[0] <= maxX + pad &&
+          pt[1] >= minY - pad &&
+          pt[1] <= maxY + pad
+        if (inBounds) {
+          onEditStart?.()
+          ;(e.target as Element).setPointerCapture(e.pointerId)
+          const roomInits: Record<number, Point[]> = {}
+          const doorInits: Record<number, [number, number, number, number]> = {}
+          for (const k of bulkSelectedKeys) {
+            if (k.startsWith('r:')) {
+              const idx = Number(k.slice(2))
+              const rtp = roomsRef.current[idx]?.points
+              if (rtp) roomInits[idx] = rtp.map((p) => [...p] as Point)
+            } else if (k.startsWith('d:')) {
+              const idx = Number(k.slice(2))
+              const bb = doorsRef.current[idx]?.bbox
+              if (bb) doorInits[idx] = [...bb] as [number, number, number, number]
+            }
+          }
+          setDragging({ kind: 'bulk', startImage: [pt[0], pt[1]], roomInits, doorInits })
+          return
+        }
+        if (!e.shiftKey) {
+          onBulkPick(null, false)
+          onSelect(null)
+          return
+        }
+      }
+    }
+
     if (hit?.kind === 'poly') {
       if (tab === 'doors' && hit.layer === 'room' && tool === 'remove') {
         onEditStart?.()
@@ -1394,7 +1557,7 @@ export function DetectionsPolygonCanvas({
         return
       }
       if (
-        tool === 'select' &&
+        tool === 'bulk_select' &&
         bulkSelectedKeys.length > 0 &&
         pt &&
         tab === 'doors' &&
@@ -1420,6 +1583,7 @@ export function DetectionsPolygonCanvas({
           setDragging({ kind: 'bulk', startImage: [pt[0], pt[1]], roomInits, doorInits })
           return
         }
+        if (!e.shiftKey) return
       }
       if ((tab === 'doors' || tab === 'stair_opening') && tool === 'remove') {
         onRemoveSelected(hit.index)
@@ -1548,6 +1712,24 @@ export function DetectionsPolygonCanvas({
       onDoorHover?.({ index: hoverHit.index, x: cx, y: cy })
     } else {
       onDoorHover?.(null)
+    }
+    if (tool === 'bulk_select' && tab === 'doors' && bulkSelectedKeys.length > 0 && pt && !dragging) {
+      const bounds = getBulkSelectionBounds()
+      if (bounds) {
+        const pad = 6 / effective.scale
+        const corners: Point[] = [
+          [bounds.minX - pad, bounds.minY - pad],
+          [bounds.maxX + pad, bounds.minY - pad],
+          [bounds.maxX + pad, bounds.maxY + pad],
+          [bounds.minX - pad, bounds.maxY + pad],
+        ]
+        const idx = corners.findIndex((c) => dist(c, pt) <= BULK_RESIZE_HIT_R / effective.scale)
+        setBulkResizeHoverCorner(idx >= 0 ? idx : null)
+      } else {
+        setBulkResizeHoverCorner(null)
+      }
+    } else if (bulkResizeHoverCorner !== null) {
+      setBulkResizeHoverCorner(null)
     }
 
     if (panning && panStart) {
@@ -1755,6 +1937,45 @@ export function DetectionsPolygonCanvas({
         })
         onRoomsChange(nextRooms)
         onDoorsChange(nextDoors)
+      } else if (dragging.kind === 'bulk_scale' && pt) {
+        const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
+        const minScale = 0.05
+        const dx0 = dragging.handleStart[0] - dragging.anchor[0]
+        const dy0 = dragging.handleStart[1] - dragging.anchor[1]
+        const dx1 = pt[0] - dragging.anchor[0]
+        const dy1 = pt[1] - dragging.anchor[1]
+        const sxRaw = Math.abs(dx0) < 1e-6 ? 1 : dx1 / dx0
+        const syRaw = Math.abs(dy0) < 1e-6 ? 1 : dy1 / dy0
+        const sx = Math.sign(sxRaw || 1) * Math.max(minScale, Math.abs(sxRaw))
+        const sy = Math.sign(syRaw || 1) * Math.max(minScale, Math.abs(syRaw))
+        const [ax, ay] = dragging.anchor
+        const nextRooms = roomsRef.current.map((r, i) => {
+          const init = dragging.roomInits[i]
+          if (!init) return r
+          return {
+            ...r,
+            points: init.map((p) => [clamp(ax + (p[0] - ax) * sx, 0, imageWidth), clamp(ay + (p[1] - ay) * sy, 0, imageHeight)] as Point),
+          }
+        })
+        const nextDoors = doorsRef.current.map((d, i) => {
+          const init = dragging.doorInits[i]
+          if (!init) return d
+          const [a, b, c, d0] = init
+          const sx1 = clamp(ax + (a - ax) * sx, 0, imageWidth)
+          const sy1 = clamp(ay + (b - ay) * sy, 0, imageHeight)
+          const sx2 = clamp(ax + (c - ax) * sx, 0, imageWidth)
+          const sy2 = clamp(ay + (d0 - ay) * sy, 0, imageHeight)
+          let x1 = Math.min(sx1, sx2)
+          let x2 = Math.max(sx1, sx2)
+          let y1 = Math.min(sy1, sy2)
+          let y2 = Math.max(sy1, sy2)
+          const minPx = 1
+          if (x2 - x1 < minPx) x2 = Math.min(imageWidth, x1 + minPx)
+          if (y2 - y1 < minPx) y2 = Math.min(imageHeight, y1 + minPx)
+          return { ...d, bbox: [x1, y1, x2, y2] as [number, number, number, number] }
+        })
+        onRoomsChange(nextRooms)
+        onDoorsChange(nextDoors)
       } else if (dragging.kind === 'bulk_marquee' && pt) {
         setDragging({
           ...dragging,
@@ -1763,7 +1984,7 @@ export function DetectionsPolygonCanvas({
         })
       }
     }
-  }, [panning, panStart, dragging, effective, tool, tab, newPoints, wallLineDraft, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onZubauBestandPolysChange, onZubauWallLinesChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange])
+  }, [panning, panStart, dragging, effective, tool, tab, newPoints, wallLineDraft, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onZubauBestandPolysChange, onZubauWallLinesChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange, bulkSelectedKeys.length, getBulkSelectionBounds, bulkResizeHoverCorner])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     const pendingTap = doorTapPendingRef.current
@@ -1792,6 +2013,7 @@ export function DetectionsPolygonCanvas({
     setDragging(null)
     setPanning(false)
     setPanStart(null)
+    setBulkResizeHoverCorner(null)
     if (edgeDragTimeoutRef.current) {
       clearTimeout(edgeDragTimeoutRef.current)
       edgeDragTimeoutRef.current = null
@@ -1803,6 +2025,7 @@ export function DetectionsPolygonCanvas({
     setDragging(null)
     setPanning(false)
     setPanStart(null)
+    setBulkResizeHoverCorner(null)
     setPreviewEndPoint(null)
     if (edgeDragTimeoutRef.current) {
       clearTimeout(edgeDragTimeoutRef.current)
@@ -1846,8 +2069,10 @@ export function DetectionsPolygonCanvas({
 
   const canvasCursor = (() => {
     if (panning) return 'grabbing'
+    if (dragging?.kind === 'bulk_scale') return 'nwse-resize'
     if (dragging?.kind === 'vertex' || dragging?.kind === 'edge' || dragging?.kind === 'poly' || dragging?.kind === 'bulk')
       return 'move'
+    if (bulkResizeHoverCorner != null && tool === 'bulk_select' && tab === 'doors') return 'nwse-resize'
     if (tool === 'bulk_select') return 'crosshair'
     if (tool === 'add') return 'crosshair'
     if (tool === 'remove') return 'default'
