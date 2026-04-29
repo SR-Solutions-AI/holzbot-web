@@ -469,6 +469,15 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
       return wp !== 'gewerbe_wohnbau' || !asBool(form.aufzugVorhanden)
     }
     if (stepKey === 'daemmungDachdeckung' && fieldName === 'dachfensterTyp' && !asBool(form.dachfensterImDach)) return true
+    if (stepKey === 'daemmungDachdeckung') {
+      const projektumfang = String(form.projektumfang ?? '').trim()
+      const includeDachstuhl =
+        projektumfang === '' || projektumfang === 'Dachstuhl' || projektumfang === 'Dachstuhl + Dachdeckung'
+      const includeDachdeckung =
+        projektumfang === '' || projektumfang === 'Dachdeckung' || projektumfang === 'Dachstuhl + Dachdeckung'
+      if (fieldName === 'dachstuhlTyp' && !includeDachstuhl) return true
+      if (fieldName === 'dachdeckung' && !includeDachdeckung) return true
+    }
     if (stepKey === 'ferestreUsi' && fieldName === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) return true
     if (fieldName === 'tipSemineu') return true
     if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'materialeFinisaj') && fieldName === 'tipAcoperis') return true
