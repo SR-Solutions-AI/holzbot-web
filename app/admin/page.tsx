@@ -4310,7 +4310,7 @@ export default function AdminPage() {
                                           {(roomImgMap.get('__other__') ?? []).length > 0 && (
                                             <div className="hide-scroll flex gap-2 overflow-x-auto">
                                               {roomImgMap.get('__other__')!.map((img) => (
-                                                <a key={img.id} href={img.url} target="_blank" rel="noreferrer"
+                                                <a key={`${img.filename}|${img.url}`} href={img.url} target="_blank" rel="noreferrer"
                                                   className="relative h-20 w-28 shrink-0 overflow-hidden rounded border border-[#FF9F0F]/20 bg-black/40 shadow-sm transition hover:border-[#FF9F0F]/40">
                                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                                   <img src={img.url} alt={img.filename} className="h-full w-full object-cover" />
