@@ -16,6 +16,7 @@ export function adaptCurrencyCopy(text: string, code: DisplayCurrency): string {
   if (code === 'EUR') return text
   return text
     .replace(/€\/m²/g, 'CHF/m²')
+    .replace(/€\/m³/g, 'CHF/m³')
     .replace(/€\/m\b/g, 'CHF/m')
     .replace(/€/g, 'CHF')
 }

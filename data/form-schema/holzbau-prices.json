@@ -89,8 +89,8 @@
       "variables": [
         { "key": "floor_coeff_per_m2", "label": "Boden (€/m²)", "unit": "€/m²", "value": 0 },
         { "key": "ceiling_coeff_per_m2", "label": "Decke (€/m²)", "unit": "€/m²", "value": 0 },
-        { "key": "price_per_stair_unit", "label": "Treppe pro Stufe (€)", "unit": "€", "value": 0 },
-        { "key": "railing_price_per_stair", "label": "Geländer pro Stufe (€)", "unit": "€", "value": 0 }
+        { "key": "price_per_stair_unit", "label": "Treppe (€/Stück)", "unit": "€/Stück", "value": 0 },
+        { "key": "railing_price_per_stair", "label": "Geländer (€/Stück)", "unit": "€/Stück", "value": 0 }
       ]
     },
     {

@@ -117,11 +117,11 @@ function matchRoofRowToSeedIndex(
   return best
 }
 
-/** Tip canonic pentru uși/ferestre: door | window | sliding_door | garage_door | stairs | lift. */
+/** Tip canonic pentru uși/ferestre: door | window | garage_door | stairs | lift. Legacy Schiebetür → window. */
 function normalizeDoorType(type: string | undefined): string {
   const t = (type || 'door').toLowerCase().trim()
   if (t === 'window' || t === 'fenster' || t === 'geam') return 'window'
-  if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return 'sliding_door'
+  if (t === 'sliding_door' || t === 'schiebetur' || t === 'schiebetür') return 'window'
   if (t === 'garage_door' || t === 'garagentor') return 'garage_door'
   if (t === 'stairs' || t === 'treppe') return 'stairs'
   if (t === 'lift' || t === 'aufzug' || t === 'elevator') return 'lift'
@@ -216,11 +216,10 @@ type PlanData = {
   statikChoice?: StatikChoice
 }
 
-type DoorType = 'door' | 'window' | 'sliding_door' | 'garage_door' | 'stairs' | 'lift'
+type DoorType = 'door' | 'window' | 'garage_door' | 'stairs' | 'lift'
 const DOOR_TYPE_LABELS_DE: Record<DoorType, string> = {
   door: 'Tür',
   window: 'Fenster',
-  sliding_door: 'Schiebetür',
   garage_door: 'Garagentor',
   stairs: 'Treppe',
   lift: 'Aufzug',
@@ -228,12 +227,11 @@ const DOOR_TYPE_LABELS_DE: Record<DoorType, string> = {
 const DOOR_TOOLBAR_ACTIVE: Record<DoorType, string> = {
   door: 'bg-[#22c55e]/30 text-green-300 border border-green-400/50',
   window: 'bg-blue-500/30 text-blue-200 border border-blue-400/50',
-  sliding_door: 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/50',
   garage_door: 'bg-purple-500/30 text-purple-200 border border-purple-400/50',
   stairs: 'bg-orange-600/30 text-orange-200 border border-orange-500/50',
   lift: 'bg-fuchsia-600/30 text-fuchsia-200 border border-fuchsia-500/50',
 }
-const ALL_DOOR_TYPES: DoorType[] = ['door', 'window', 'sliding_door', 'garage_door', 'stairs', 'lift']
+const ALL_DOOR_TYPES: DoorType[] = ['door', 'window', 'garage_door', 'stairs', 'lift']
 
 function sanitizeRoomsAndDoorsAgainstConstraints(
   rooms: RoomPolygon[],
@@ -391,9 +389,7 @@ function computeOpeningWidthMeters(door: DoorRect, metersPerPixel: number | null
   const heightPx = Math.abs(y2 - y1)
   const normalizedType = normalizeDoorType(door.type) as DoorType
   const pxValue =
-    normalizedType === 'window' || normalizedType === 'sliding_door'
-      ? Math.max(widthPx, heightPx)
-      : Math.min(widthPx, heightPx)
+    normalizedType === 'window' ? Math.max(widthPx, heightPx) : Math.min(widthPx, heightPx)
   if (!metersPerPixel || metersPerPixel <= 0) return null
   return round2(pxValue * metersPerPixel)
 }
@@ -443,11 +439,7 @@ function computeWindowHeightMeters(widthMeters: number): number {
 function computeOpeningHeightMeters(door: DoorRect, widthMeters: number | null): number | null {
   if (widthMeters == null) return null
   const normalizedType = normalizeDoorType(door.type) as DoorType
-  return round2(
-    normalizedType === 'window' || normalizedType === 'sliding_door'
-      ? computeWindowHeightMeters(widthMeters)
-      : 2.0,
-  )
+  return round2(normalizedType === 'window' ? computeWindowHeightMeters(widthMeters) : 2.0)
 }
 
 /** Typische Geschoss-/Wandhöhe für Garagentor, wenn der Plan keinen eigenen Wert liefert. */
@@ -478,12 +470,12 @@ function computeAutoOpeningMetersFromBbox(
     return { width_m, height_m: DEFAULT_WALL_HEIGHT_M }
   }
 
-  if (type === 'sliding_door') {
+  if (type === 'window') {
     const width_m =
       metersPerPixel && metersPerPixel > 0
         ? Math.max(0.01, round2(maxPx * metersPerPixel))
         : 2.4
-    return { width_m, height_m: 2.0 }
+    return { width_m, height_m: computeWindowHeightMeters(width_m) }
   }
 
   if (!metersPerPixel || metersPerPixel <= 0) {
@@ -574,7 +566,6 @@ export function DetectionsReviewEditor({
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [pendingDemolitionPoints, setPendingDemolitionPoints] = useState<Point[] | null>(null)
   const [pendingNewDoorBbox, setPendingNewDoorBbox] = useState<[number, number, number, number] | null>(null)
-  const [pendingNewDoorType, setPendingNewDoorType] = useState<'window' | 'sliding_door' | null>(null)
   const [roomTypePopoverIndex, setRoomTypePopoverIndex] = useState<number | null>(null)
   const [newDoorDims, setNewDoorDims] = useState<{ width: string; height: string }>({ width: '', height: '' })
   const [isConfirming, setIsConfirming] = useState(false)
@@ -1357,7 +1348,7 @@ export function DetectionsReviewEditor({
       return (candidate || {}) as Record<string, unknown>
     }
 
-    const stepKeys = ['wandaufbau', 'bodenDeckeBelag', 'materialeFinisaj']
+    const stepKeys = ['wandaufbau', 'bodenDeckeBelag']
     const blobs: Record<string, Record<string, unknown>> = {}
     for (const stepKey of stepKeys) {
       try {
@@ -1366,6 +1357,14 @@ export function DetectionsReviewEditor({
         blobs[stepKey] = {}
       }
     }
+    let legacyMaterialeFinisaj: Record<string, unknown> = {}
+    try {
+      legacyMaterialeFinisaj = await readStepBlob('materialeFinisaj')
+    } catch {
+      legacyMaterialeFinisaj = {}
+    }
+    const valueForWandKey = (k: string) =>
+      blobs.wandaufbau?.[k] ?? legacyMaterialeFinisaj[k]
 
     const reqDef = (floorKey: string) => {
       const floorLabel = floorDisplayLabelDe(floorKey)
@@ -1375,9 +1374,9 @@ export function DetectionsReviewEditor({
         { stepKey: 'bodenDeckeBelag', key: `bodenaufbau_${floorKey}`, label: `Bodenaufbau (${floorLabel})` },
         { stepKey: 'bodenDeckeBelag', key: `deckenaufbau_${floorKey}`, label: `Deckenaufbau (${floorLabel})` },
         { stepKey: 'bodenDeckeBelag', key: `bodenbelag_${floorKey}`, label: `Bodenbelag (${floorLabel})` },
-        { stepKey: 'materialeFinisaj', key: `finisajInteriorInnen_${floorKey}`, label: `Innenausbau Innenwände (${floorLabel})` },
-        { stepKey: 'materialeFinisaj', key: `finisajInteriorAussen_${floorKey}`, label: `Innenausbau Außenwände (${floorLabel})` },
-        { stepKey: 'materialeFinisaj', key: `fatada_${floorKey}`, label: `Fassade (${floorLabel})` },
+        { stepKey: 'wandaufbau', key: `finisajInteriorInnen_${floorKey}`, label: `Innenausbau Innenwände (${floorLabel})` },
+        { stepKey: 'wandaufbau', key: `finisajInteriorAussen_${floorKey}`, label: `Innenausbau Außenwände (${floorLabel})` },
+        { stepKey: 'wandaufbau', key: `fatada_${floorKey}`, label: `Fassade (${floorLabel})` },
       ]
     }
 
@@ -1386,12 +1385,14 @@ export function DetectionsReviewEditor({
       .map((idx) => computeFloorFormKeyFromPlanIndex(idx, floorLabels, nextKinds))
       .filter((k): k is string => !!k)
       .flatMap((k) => reqDef(k))
-      .filter((it) => isEmpty(blobs[it.stepKey]?.[it.key]))
+      .filter((it) =>
+        it.stepKey === 'wandaufbau' ? isEmpty(valueForWandKey(it.key)) : isEmpty(blobs[it.stepKey]?.[it.key]),
+      )
 
     if (pending.length === 0) return true
     const initialValues: Record<string, string> = {}
     for (const it of pending) {
-      const v = blobs[it.stepKey]?.[it.key]
+      const v = it.stepKey === 'wandaufbau' ? valueForWandKey(it.key) : blobs[it.stepKey]?.[it.key]
       initialValues[`${it.stepKey}:${it.key}`] = v == null ? '' : String(v)
     }
     return await new Promise<boolean>((resolve) => {
@@ -1920,8 +1921,8 @@ export function DetectionsReviewEditor({
     const next = plan.doors.map((d, i) => {
       if (i !== idx) return d
       let out: DoorRect = { ...d, type: doorType }
-      if ((doorType === 'window' || doorType === 'sliding_door') && prevType !== doorType) {
-        out = { ...out, height_m: doorType === 'sliding_door' ? 2.0 : 1, dimensionsEdited: true }
+      if (doorType === 'window' && prevType !== doorType) {
+        out = { ...out, height_m: 1, dimensionsEdited: true }
       }
       return out
     })
@@ -2003,7 +2004,6 @@ export function DetectionsReviewEditor({
 
     if (newDoorType === 'window') {
       setPendingNewDoorBbox(bbox)
-      setPendingNewDoorType(newDoorType)
       setNewDoorDims({ width: '', height: '' })
       return
     }
@@ -2231,16 +2231,15 @@ export function DetectionsReviewEditor({
       ...plan.doors,
       {
         bbox: pendingNewDoorBbox,
-        type: pendingNewDoorType ?? 'window',
+        type: 'window',
         width_m,
         height_m: height,
         dimensionsEdited: true,
       },
     ])
     setPendingNewDoorBbox(null)
-    setPendingNewDoorType(null)
     setNewDoorDims({ width: '', height: '' })
-  }, [pendingNewDoorBbox, pendingNewDoorType, planIndexClamped, plansData, newDoorDims, pushHistory, setDoors])
+  }, [pendingNewDoorBbox, planIndexClamped, plansData, newDoorDims, pushHistory, setDoors])
 
   /** Kurze Hinweise; bei Türen/Fenstern kein langer Edit-Text. */
   const toolHint =
@@ -3144,7 +3143,7 @@ export function DetectionsReviewEditor({
                             className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'pillars' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
                           >
                             <LayoutGrid size={14} strokeWidth={2} />
-                            <span>Piloni</span>
+                            <span>Säulen</span>
                           </button>
                         )}
                         <button
@@ -3247,7 +3246,7 @@ export function DetectionsReviewEditor({
                       className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors ${planTab === 'pillars' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/80 border border-white/10 hover:bg-white/5'}`}
                     >
                       <LayoutGrid size={14} strokeWidth={2} />
-                      <span>Piloni</span>
+                      <span>Säulen</span>
                     </button>
                     )}
                     {isAufstockungKind && (
@@ -3324,7 +3323,7 @@ export function DetectionsReviewEditor({
                         ) : pendingNewDoorBbox ? (
                           <>
                             <span className="text-white text-sm font-medium w-full text-center">
-                              {pendingNewDoorType === 'sliding_door' ? 'Neue Schiebetür – Höhe (cm)' : 'Neues Fenster – Höhe (cm)'}
+                              Neues Fenster – Höhe (cm)
                             </span>
                             <input
                               ref={newWindowHeightInputRef}
@@ -3561,7 +3560,7 @@ export function DetectionsReviewEditor({
                 {planTab === 'doors' && (
                   <div className="shrink-0 rounded-xl border border-[#FF9F0F]/40 bg-black/25 p-2">
                     <p className="text-sand/80 text-xs font-normal leading-snug text-center">
-                      Maße aus Planmaßstab. Fenster: Höhe beim Anlegen eingeben. Schiebetüren: Höhe fix 2,00 m, Breite aus der langen Seite.
+                      Maße aus Planmaßstab. Fenster: Höhe beim Anlegen eingeben; Breite aus der längeren Rechteckseite.
                     </p>
                   </div>
                 )}

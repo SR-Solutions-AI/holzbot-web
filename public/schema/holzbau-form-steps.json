@@ -165,6 +165,39 @@
           "tag": "pilings_required"
         },
         {
+          "type": "select",
+          "name": "pilonType",
+          "label": "Säulen-Typ",
+          "options": [
+            "Stahlbeton",
+            "Stahl",
+            "Holz",
+            "Verbund"
+          ],
+          "tag": "pillar_type",
+          "optional": true
+        },
+        {
+          "type": "bool",
+          "name": "aufzugVorhanden",
+          "label": "Aufzug vorhanden",
+          "tag": "lift_present",
+          "optional": true
+        },
+        {
+          "type": "select",
+          "name": "aufzugTyp",
+          "label": "Aufzugtyp",
+          "options": [
+            "Hydraulikaufzug",
+            "Seilaufzug",
+            "Panoramaaufzug",
+            "Lastenaufzug"
+          ],
+          "tag": "lift_type",
+          "optional": true
+        },
+        {
           "type": "number",
           "name": "raumhoeheCm",
           "label": "Durchschnittliche Raumhöhe im Haus",
@@ -245,14 +278,14 @@
             },
             {
               "key": "price_per_stair_unit",
-              "label": "Treppe pro Stück (€)",
-              "unit": "€",
+              "label": "Treppe (€/Stück)",
+              "unit": "€/Stück",
               "value": 4500
             },
             {
               "key": "railing_price_per_stair",
-              "label": "Geländer pro Stück (€)",
-              "unit": "€",
+              "label": "Geländer (€/Stück)",
+              "unit": "€/Stück",
               "value": 800
             },
             {
@@ -284,6 +317,61 @@
               "label": "Treppentyp Sonder (€/Stück)",
               "unit": "€/Stück",
               "value": 6500
+            },
+            {
+              "key": "pillar_type_stahlbeton_m3_price",
+              "label": "Stahlbeton-Säulen (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_stahl_m3_price",
+              "label": "Stahl-Säulen (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_holz_m3_price",
+              "label": "Holz-Säulen (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            },
+            {
+              "key": "pillar_type_verbund_m3_price",
+              "label": "Verbund-Säulen (€/m³)",
+              "unit": "€/m³",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "title": "Aufzug",
+          "subtitle": "Preis pro Stück",
+          "fieldTag": "lift_type",
+          "variables": [
+            {
+              "key": "lift_type_hydraulikaufzug_piece_price",
+              "label": "Hydraulikaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_seilaufzug_piece_price",
+              "label": "Seilaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_panoramaaufzug_piece_price",
+              "label": "Panoramaaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
+            },
+            {
+              "key": "lift_type_lastenaufzug_piece_price",
+              "label": "Lastenaufzug (€/Stück)",
+              "unit": "€/Stück",
+              "value": 0
             }
           ]
         },
@@ -466,7 +554,7 @@
         {
           "fieldTag": "window_quality",
           "title": "Glasflächen",
-          "subtitle": "Preis pro m² (Fenster und Schiebetüren gleicher Satz)",
+          "subtitle": "Preis pro m² (Fenster)",
           "variables": [
             {
               "key": "window_2_fach_price",
@@ -715,14 +803,7 @@
               "value": 160
             }
           ]
-        }
-      ]
-    },
-    {
-      "key": "materialeFinisaj",
-      "label": "Materialien & Ausbaustufe",
-      "fields": [],
-      "priceSections": [
+        },
         {
           "title": "Innenausbau Innenwände",
           "subtitle": "Innenwände pro m²",
@@ -1143,7 +1224,7 @@
         "subsections": [
           {
             "title": "Glasflächen",
-            "subtitle": "Preis pro m² (Fenster und Schiebetüren gleicher Satz)",
+            "subtitle": "Preis pro m² (Fenster)",
             "fieldTag": "window_quality",
             "variables": [
               {
@@ -1392,13 +1473,7 @@
                 "value": 160
               }
             ]
-          }
-        ]
-      },
-      {
-        "stepKey": "materialeFinisaj",
-        "title": "Materialien & Ausbaustufe",
-        "subsections": [
+          },
           {
             "title": "Innenausbau Innenwände",
             "subtitle": "Innenwände pro m²",
@@ -1543,14 +1618,14 @@
               },
               {
                 "key": "price_per_stair_unit",
-                "label": "Treppe pro Stück (€)",
-                "unit": "€",
+                "label": "Treppe (€/Stück)",
+                "unit": "€/Stück",
                 "value": 4500
               },
               {
                 "key": "railing_price_per_stair",
-                "label": "Geländer pro Stück (€)",
-                "unit": "€",
+                "label": "Geländer (€/Stück)",
+                "unit": "€/Stück",
                 "value": 800
               },
               {
@@ -1586,6 +1661,37 @@
             ]
           },
           {
+            "title": "Aufzug",
+            "subtitle": "Preis pro Stück",
+            "fieldTag": "lift_type",
+            "variables": [
+              {
+                "key": "lift_type_hydraulikaufzug_piece_price",
+                "label": "Hydraulikaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_seilaufzug_piece_price",
+                "label": "Seilaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_panoramaaufzug_piece_price",
+                "label": "Panoramaaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              },
+              {
+                "key": "lift_type_lastenaufzug_piece_price",
+                "label": "Lastenaufzug (€/Stück)",
+                "unit": "€/Stück",
+                "value": 0
+              }
+            ]
+          },
+          {
             "title": "Bodenaufbau",
             "subtitle": "Geschossdecke / tragende Ebene (€/m²)",
             "fieldTag": "bodenaufbau",
@@ -1601,6 +1707,37 @@
                 "label": "Boden 2 (€/m²)",
                 "unit": "€/m²",
                 "value": 150
+              }
+            ]
+          },
+          {
+            "title": "Säulen",
+            "subtitle": "Preis je Kubikmeter Säulenvolumen (€/m³)",
+            "fieldTag": "pillar_type",
+            "variables": [
+              {
+                "key": "pillar_type_stahlbeton_m3_price",
+                "label": "Stahlbeton-Säulen (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_stahl_m3_price",
+                "label": "Stahl-Säulen (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_holz_m3_price",
+                "label": "Holz-Säulen (€/m³)",
+                "unit": "€/m³",
+                "value": 0
+              },
+              {
+                "key": "pillar_type_verbund_m3_price",
+                "label": "Verbund-Säulen (€/m³)",
+                "unit": "€/m³",
+                "value": 0
               }
             ]
           },

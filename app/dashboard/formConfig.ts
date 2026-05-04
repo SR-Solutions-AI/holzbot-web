@@ -73,7 +73,7 @@ export const formSteps: Step[] = [
     fields: [
       { type: 'select', name: 'tipFundatieBeci', label: 'Untergeschoss / Fundament', options: ['Kein Keller (nur Bodenplatte)', 'Keller (ohne Ausbau)', 'Keller (mit Ausbau)'] },
       { type: 'bool', name: 'pilons', label: 'Pfahlgründung erforderlich' },
-      { type: 'select', name: 'pilonType', label: 'Pilonen-Typ', options: ['Stahlbeton', 'Stahl', 'Holz', 'Verbund'], tag: 'pillar_type' },
+      { type: 'select', name: 'pilonType', label: 'Säulen-Typ', options: ['Stahlbeton', 'Stahl', 'Holz', 'Verbund'], tag: 'pillar_type' },
       { type: 'bool', name: 'aufzugVorhanden', label: 'Aufzug vorhanden' },
       { type: 'select', name: 'aufzugTyp', label: 'Aufzugtyp', options: ['Hydraulikaufzug', 'Seilaufzug', 'Panoramaaufzug', 'Lastenaufzug'], tag: 'lift_type' },
       { type: 'number', name: 'raumhoeheCm', label: 'Durchschnittliche Raumhöhe im Haus', min: 200, max: 400 },
@@ -120,22 +120,12 @@ export const formSteps: Step[] = [
     ],
   },
 
-  // 3.9) Wandaufbau (per-floor Außenwände / Innenwände, before Materialien)
+  // 3.9) Wandaufbau (per-floor Außen/ Innenwände + Innenausbau/Fassade; fost „Materialien & Ausbaustufe”)
   {
     key: 'wandaufbau',
     label: 'Wandaufbau',
     fields: [
-      // Câmpurile dinamice per etaj sunt generate în WandaufbauStep (außenwande_ground, innenwande_ground, etc.)
-    ],
-  },
-
-  // 4) Materialien & Ausbaustufe
-  {
-    key: 'materialeFinisaj',
-    label: 'Materialien & Ausbaustufe',
-    fields: [
-      // Câmpurile dinamice vor fi generate în componenta specială MaterialeFinisajStep
-      // Dachmaterial a fost mutat în Dämmung & Dachdeckung (dachdeckung)
+      // Câmpurile dinamice per etaj: WandaufbauStep (außenwande_*, innenwande_*, finisaj*, fatada_*)
     ],
   },
 
@@ -655,10 +645,10 @@ export const PRICING_VARIABLES_SECTIONS: PricingVariablesSectionDef[] = [
         variables: [
           { key: 'floor_coeff_per_m2', label: 'Boden (€/m²)', unit: '€/m²', default: 0 },
           { key: 'ceiling_coeff_per_m2', label: 'Decke (€/m²)', unit: '€/m²', default: 0 },
-          { key: 'pillar_type_stahlbeton_m3_price', label: 'Pilonen Stahlbeton (€/m³)', unit: '€/m³', default: 0 },
-          { key: 'pillar_type_stahl_m3_price', label: 'Pilonen Stahl (€/m³)', unit: '€/m³', default: 0 },
-          { key: 'pillar_type_holz_m3_price', label: 'Pilonen Holz (€/m³)', unit: '€/m³', default: 0 },
-          { key: 'pillar_type_verbund_m3_price', label: 'Pilonen Verbund (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_stahlbeton_m3_price', label: 'Stahlbeton-Säulen (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_stahl_m3_price', label: 'Stahl-Säulen (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_holz_m3_price', label: 'Holz-Säulen (€/m³)', unit: '€/m³', default: 0 },
+          { key: 'pillar_type_verbund_m3_price', label: 'Verbund-Säulen (€/m³)', unit: '€/m³', default: 0 },
         ],
       },
     ],
@@ -670,8 +660,8 @@ export const PRICING_VARIABLES_SECTIONS: PricingVariablesSectionDef[] = [
       {
         title: 'Treppe',
         variables: [
-          { key: 'price_per_stair_unit', label: 'Pro Stück (€)', unit: '€', default: 0 },
-          { key: 'railing_price_per_stair', label: 'Geländer pro Stück (€)', unit: '€', default: 0 },
+          { key: 'price_per_stair_unit', label: 'Treppe (€/Stück)', unit: '€/Stück', default: 0 },
+          { key: 'railing_price_per_stair', label: 'Geländer (€/Stück)', unit: '€/Stück', default: 0 },
           { key: 'stairs_type_standard_piece_price', label: 'Treppentyp Standard (€/Stück)', unit: '€/Stück', default: 0 },
           { key: 'stairs_type_holz_piece_price', label: 'Treppentyp Holz (€/Stück)', unit: '€/Stück', default: 0 },
           { key: 'stairs_type_beton_piece_price', label: 'Treppentyp Beton (€/Stück)', unit: '€/Stück', default: 0 },

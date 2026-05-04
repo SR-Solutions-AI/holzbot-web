@@ -45,7 +45,6 @@ describe('Preisdatenbank – acoperire completă', () => {
       'Allgemeine Projektinformationen',
       'Fenster & Türen',
       'Wandaufbau',
-      'Materialien & Ausbaustufe',
       'Geschossdecken und Bodenaufbauten',
       'Energieeffizienz & Heizung',
       'Dachstuhl, Dämmung und Dachdeckung',
@@ -187,7 +186,7 @@ describe('Preisdatenbank – acoperire completă', () => {
 
   describe('Innenausbau split', () => {
     it('Preisdatenbank conține cardurile pentru Innenwände și Außenwände', () => {
-      const section = priceSections.find((s) => s.title === 'Materialien & Ausbaustufe')
+      const section = priceSections.find((s) => s.title === 'Wandaufbau')
       const innerCard = section?.subsections.find((sub) => sub.title === 'Innenausbau Innenwände')
       const outerCard = section?.subsections.find((sub) => sub.title === 'Innenausbau Außenwände')
 

@@ -7,6 +7,8 @@ import {
   useMemo,
   useRef,
   useState,
+  useCallback,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -19,6 +21,7 @@ import {
   Check,
   ChevronLeft,
   Clock3,
+  Cpu,
   Download,
   FileText,
   Filter,
@@ -32,6 +35,7 @@ import {
   Send,
   Sparkles,
   TrendingUp,
+  Trash2,
   Users2,
   Phone,
   Mail,
@@ -50,9 +54,11 @@ import {
   fetchAdminTenants,
   fetchAdminTenantOffers,
   fetchAdminTenantWorkspace,
+  adminPermanentlyDeleteOffer,
   fetchAdminStatisticsSummary,
   resolveAdminIncident,
   closeAdminRun,
+  fetchAdminOfferPipelineDetails,
   updateAdminTenantWorkspace,
   type AdminStatisticsIncident,
   type AdminTenant,
@@ -64,7 +70,7 @@ import {
 /** Dashboard center logo; used as client header fallback when no `logoSrc`. */
 const HOLZBOT_LOGO_PLACEHOLDER = '/logo.png'
 
-type DummyOrg = { id: string; name: string }
+type DummyOrg = { id: string; name: string; app_platform?: 'holzbot' | 'betonbot' | 'mixed' }
 type OrgMeta = {
   companyName: string
   phone: string
@@ -200,11 +206,19 @@ const KPI_SPARK_PROC_SECONDS = [432, 418, 401, 388, 382, 368, 359, 402] as const
 const KPI_SPARK_CLIENTS_NET = [5, 7, 4, 9, 8, 10, 11, 12] as const
 const KPI_SPARK_INCIDENTS = [34, 31, 28, 30, 29, 27, 25, 27] as const
 const DATA_MOAT_ITEMS = [
-  { title: 'Plan segmentation', markedPlans: 14382 },
-  { title: 'Wall detection', markedPlans: 9744 },
-  { title: 'Rooms detection', markedPlans: 7219 },
-  { title: 'Doors', markedPlans: 18108 },
-  { title: 'Windows', markedPlans: 22991 },
+  { key: 'plan_segmentation',  title: 'Plan segmentation',  markedPlans: 14382 },
+  { key: 'wall_detection',     title: 'Wall detection',     markedPlans: 9744  },
+  { key: 'rooms_detection',    title: 'Rooms',              markedPlans: 7219  },
+  { key: 'doors',              title: 'Doors',              markedPlans: 18108 },
+  { key: 'windows',            title: 'Windows',            markedPlans: 22991 },
+  { key: 'garage_door',        title: 'Garage doors',       markedPlans: 2100  },
+  { key: 'door_stairs',        title: 'Stair openings',     markedPlans: 1500  },
+  { key: 'demolitions',        title: 'Demolitions',        markedPlans: 800   },
+  { key: 'stairs',             title: 'Stairs',             markedPlans: 650   },
+  { key: 'pillars',            title: 'Pillars',            markedPlans: 400   },
+  { key: 'bestand',            title: 'Bestand',            markedPlans: 300   },
+  { key: 'wall_demolition',    title: 'Wall demolition',    markedPlans: 250   },
+  { key: 'roof',               title: 'Roof',               markedPlans: 3000  },
 ] as const
 const PIPELINE_STAGES = [
   { label: 'Plan segmentation', value: 93, processed: '14,382', failed: '74', avg: '1.8s', trend: '+2.1%' },
@@ -223,6 +237,8 @@ type OrgUserEditable = {
   /** When set, row comes from Supabase; the edit modal does not persist changes. */
   sourceProfileId?: string
 }
+
+const NEST_API_BASE = (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_URL) || 'http://localhost:4000'
 
 function parseTokenBalanceString(s: string): number {
   const n = parseInt(s.replace(/,/g, ''), 10)
@@ -367,9 +383,59 @@ function formatMeanWallSeconds(sec: number | null): string {
   return `${m}m ${String(r).padStart(2, '0')}s`
 }
 
-function formatCostCents(cents: number | null | undefined): string {
-  if (cents == null || !Number.isFinite(cents)) return '—'
-  return `${(Math.round(cents) / 100).toFixed(2)}€`
+// cost_cents is stored as USD¢ (hundredths of USD). Display as $.
+function formatCostCents(cents: number | string | null | undefined): string {
+  const n = Number(cents)
+  if (cents == null || !Number.isFinite(n)) return '—'
+  const usd = n / 100
+  if (usd < 0.0001) return `$${usd.toFixed(7)}`
+  if (usd < 0.01) return `$${usd.toFixed(6)}`
+  if (usd < 0.10) return `$${usd.toFixed(5)}`
+  return `$${usd.toFixed(4)}`
+}
+
+/**
+ * Fetches an image from a URL that requires Authorization header and renders it.
+ * Falls back gracefully if the URL is a normal Supabase public URL (no auth needed).
+ */
+/**
+ * Fetches an image that may require Authorization header and renders it.
+ * If `clickable` is true, clicking the image opens it in a new tab using the blob URL (bypassing auth on direct navigation).
+ */
+function AuthImage({ src, alt, className, style, clickable }: { src: string; alt: string; className?: string; style?: CSSProperties; clickable?: boolean }) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const fetchImage = useCallback(async () => {
+    if (!src) return
+    // For Supabase storage URLs — no auth needed, use directly
+    const needsAuth = src.includes('/room-crop-image') || src.includes('/wall-mask-image') || src.includes('/segmentation-image')
+    if (!needsAuth) {
+      setObjectUrl(src)
+      return
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const fullUrl = src.startsWith('http') ? src : `${NEST_API_BASE}${src}`
+      const res = await fetch(fullUrl, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      })
+      if (!res.ok) { setFailed(true); return }
+      const blob = await res.blob()
+      setObjectUrl(URL.createObjectURL(blob))
+    } catch {
+      setFailed(true)
+    }
+  }, [src])
+  useEffect(() => {
+    fetchImage()
+    return () => { if (objectUrl?.startsWith('blob:')) URL.revokeObjectURL(objectUrl) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src])
+  if (failed) return <div className={`flex items-center justify-center text-[9px] text-white/30 ${className ?? ''}`} style={style}>err</div>
+  if (!objectUrl) return <div className={`animate-pulse bg-white/5 ${className ?? ''}`} style={style} />
+  const handleClick = clickable && objectUrl ? () => window.open(objectUrl, '_blank') : undefined
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={objectUrl} alt={alt} className={`${className ?? ''}${clickable ? ' cursor-pointer' : ''}`} style={style} onClick={handleClick} />
 }
 
 function bumpDayCount(map: Map<string, number>, iso: string) {
@@ -395,23 +461,85 @@ type AdminEditorSnapshotItem = {
   floor_idx?: number
 }
 
-type AdminEditorLayerKey = 'base' | 'rooms' | 'doors' | 'demolitions' | 'stairs' | 'roof'
+type AdminEditorLayerKey =
+  | 'base'
+  | 'rooms'
+  | 'door'
+  | 'window'
+  | 'garage_door'
+  | 'door_stairs'
+  | 'door_lift'
+  | 'demolitions'
+  | 'stairs'
+  | 'roof'
+  | 'pillars'
+  | 'bestand'
+  | 'wall_demolition'
 
 type AdminEditorOverlayKey = Exclude<AdminEditorLayerKey, 'base'>
 
 /** Full stack order (base always first when present). */
-const ADMIN_BLUEPRINT_STACK_ORDER: AdminEditorLayerKey[] = ['base', 'rooms', 'doors', 'demolitions', 'stairs', 'roof']
+const ADMIN_BLUEPRINT_STACK_ORDER: AdminEditorLayerKey[] = [
+  'base',
+  'rooms',
+  'door',
+  'window',
+  'garage_door',
+  'door_stairs',
+  'door_lift',
+  'demolitions',
+  'stairs',
+  'pillars',
+  'bestand',
+  'wall_demolition',
+  'roof',
+]
 
 /** Togglable overlays only — base is always shown when available. */
-const ADMIN_OVERLAY_LAYER_ORDER: AdminEditorOverlayKey[] = ['rooms', 'doors', 'demolitions', 'stairs', 'roof']
+const ADMIN_OVERLAY_LAYER_ORDER: AdminEditorOverlayKey[] = [
+  'rooms',
+  'door',
+  'window',
+  'garage_door',
+  'door_stairs',
+  'door_lift',
+  'demolitions',
+  'stairs',
+  'pillars',
+  'bestand',
+  'wall_demolition',
+  'roof',
+]
 
 const ADMIN_BLUEPRINT_LAYER_LABEL: Record<AdminEditorLayerKey, string> = {
   base: 'Base',
   rooms: 'Rooms',
-  doors: 'Doors / windows',
+  door: 'Door',
+  window: 'Window',
+  garage_door: 'Garage Door',
+  door_stairs: 'Stairs (opening)',
+  door_lift: 'Lift',
   demolitions: 'Roof demolitions',
   stairs: 'Stair openings',
+  pillars: 'Pillars',
+  bestand: 'Bestand',
+  wall_demolition: 'Wall demolition',
   roof: 'Roof polygons',
+}
+
+const ADMIN_LAYER_COLOR: Partial<Record<AdminEditorLayerKey, string>> = {
+  rooms: '#3b82f6',
+  door: '#22c55e',
+  window: '#60a5fa',
+  garage_door: '#a855f7',
+  door_stairs: '#ec4899',
+  door_lift: '#06b6d4',
+  demolitions: '#ef4444',
+  stairs: '#ec4899',
+  pillars: '#0ea5e9',
+  bestand: '#f59e0b',
+  wall_demolition: '#f87171',
+  roof: '#fb923c',
 }
 
 type AdminEditorLayerEntry = {
@@ -458,6 +586,135 @@ type AdminVectorPlan = {
   doors?: Array<{ bbox: [number, number, number, number]; type?: string }>
   roofDemolitions?: Array<{ points: Array<[number, number]> }>
   stairOpenings?: Array<{ bbox: [number, number, number, number] }>
+  pillars?: Array<{ points: Array<[number, number]> }>
+  zubauBestandPolygons?: Array<{ points: Array<[number, number]> }>
+  zubauWallDemolitionLines?: Array<{ a: [number, number]; b: [number, number] }>
+}
+
+/** AdminVectorPlan augmented with plan identifier for Data Moat display. */
+type MoatVectorPlan = AdminVectorPlan & { planIndex: number; planId?: string; offerId: string }
+
+/**
+ * Which overlay layers to render for each Data Moat section key.
+ * 'wall_detection' is handled specially (show wall skeleton image).
+ */
+const MOAT_SECTION_OVERLAY_LAYERS: Record<string, AdminEditorOverlayKey[]> = {
+  plan_segmentation: ['rooms', 'door', 'window', 'garage_door', 'door_stairs', 'door_lift'],
+  wall_detection:    [],
+  rooms_detection:   ['rooms'],
+  doors:             ['door'],
+  windows:           ['window'],
+  garage_door:       ['garage_door'],
+  door_stairs:       ['door_stairs'],
+  demolitions:       ['demolitions'],
+  stairs:            ['stairs'],
+  pillars:           ['pillars'],
+  bestand:           ['bestand'],
+  wall_demolition:   ['wall_demolition'],
+  roof:              ['roof'],
+}
+
+function extractMoatSectionJson(plan: MoatVectorPlan, sectionKey: string): object {
+  const base = {
+    offer_id: plan.offerId,
+    plan_index: plan.planIndex,
+    plan_id: plan.planId ?? null,
+    image_width: plan.imageWidth,
+    image_height: plan.imageHeight,
+  }
+  const filterDoors = (type: string | string[]) => {
+    const types = Array.isArray(type) ? type : [type]
+    return (plan.doors ?? []).filter((d) => types.includes(String(d.type ?? '').toLowerCase().replace(/-/g, '_')))
+  }
+  switch (sectionKey) {
+    case 'plan_segmentation':
+      return { ...base, rooms: plan.rooms ?? [], openings: plan.doors ?? [] }
+    case 'wall_detection':
+      return { ...base, openings: plan.doors ?? [], stair_openings: plan.stairOpenings ?? [] }
+    case 'rooms_detection':
+      return { ...base, rooms: plan.rooms ?? [] }
+    case 'doors':
+      return { ...base, doors: filterDoors('door') }
+    case 'windows':
+      return { ...base, windows: filterDoors('window') }
+    case 'garage_door':
+      return { ...base, garage_doors: filterDoors(['garage_door', 'garagentor']) }
+    case 'door_stairs':
+      return { ...base, stair_openings: filterDoors('stairs') }
+    case 'demolitions':
+      return { ...base, demolitions: plan.roofDemolitions ?? [] }
+    case 'stairs':
+      return { ...base, stair_openings: plan.stairOpenings ?? [] }
+    case 'pillars':
+      return { ...base, pillars: plan.pillars ?? [] }
+    case 'bestand':
+      return { ...base, bestand: plan.zubauBestandPolygons ?? [] }
+    case 'wall_demolition':
+      return { ...base, wall_demolition_lines: plan.zubauWallDemolitionLines ?? [] }
+    case 'roof':
+      return { ...base, roof_polygons: plan.rooms ?? [] }
+    default:
+      return { ...base, rooms: plan.rooms ?? [], openings: plan.doors ?? [] }
+  }
+}
+
+function getMoatFeatureCount(plan: MoatVectorPlan, sectionKey: string): number {
+  const filterDoors = (type: string | string[]) => {
+    const types = Array.isArray(type) ? type : [type]
+    return (plan.doors ?? []).filter((d) => types.includes(String(d.type ?? '').toLowerCase().replace(/-/g, '_'))).length
+  }
+  switch (sectionKey) {
+    case 'plan_segmentation':  return (plan.rooms?.length ?? 0) + (plan.doors?.length ?? 0)
+    case 'wall_detection':     return (plan.doors?.length ?? 0) + (plan.stairOpenings?.length ?? 0)
+    case 'rooms_detection':    return plan.rooms?.length ?? 0
+    case 'doors':              return filterDoors('door')
+    case 'windows':            return filterDoors('window')
+    case 'garage_door':        return filterDoors(['garage_door', 'garagentor'])
+    case 'door_stairs':        return filterDoors('stairs')
+    case 'demolitions':        return plan.roofDemolitions?.length ?? 0
+    case 'stairs':             return plan.stairOpenings?.length ?? 0
+    case 'pillars':            return plan.pillars?.length ?? 0
+    case 'bestand':            return plan.zubauBestandPolygons?.length ?? 0
+    case 'wall_demolition':    return plan.zubauWallDemolitionLines?.length ?? 0
+    case 'roof':               return plan.rooms?.length ?? 0
+    default:                   return 0
+  }
+}
+
+/**
+ * Draws room polygon outlines (thick strokes, no fill) to approximate wall positions.
+ * Used as fallback for wall_detection when no wall skeleton image is available.
+ */
+function buildWallProxyOverlay(plan: MoatVectorPlan): string | null {
+  if (plan.imageWidth <= 0 || plan.imageHeight <= 0) return null
+  const nodes: string[] = []
+  const rooms = Array.isArray(plan.rooms) ? plan.rooms : []
+  rooms.forEach((r) => {
+    if (!Array.isArray(r.points) || r.points.length < 2) return
+    const pts = r.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+    nodes.push(`<polygon points="${pts}" fill="none" stroke="#FF9F0F" stroke-width="5" stroke-linejoin="round" opacity="0.85"/>`)
+  })
+  const doors = Array.isArray(plan.doors) ? plan.doors : []
+  doors.forEach((d) => {
+    const b = d.bbox
+    if (!Array.isArray(b) || b.length < 4) return
+    const [x1, y1, x2, y2] = b
+    const color = d.type === 'window' ? '#60a5fa' : '#22c55e'
+    nodes.push(`<rect x="${Math.min(x1, x2)}" y="${Math.min(y1, y2)}" width="${Math.abs(x2 - x1)}" height="${Math.abs(y2 - y1)}" fill="${color}" fill-opacity="0.35" stroke="${color}" stroke-width="2.5"/>`)
+  })
+  if (!nodes.length) return null
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${plan.imageWidth} ${plan.imageHeight}" width="${plan.imageWidth}" height="${plan.imageHeight}">${nodes.join('')}</svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
+function downloadJsonFile(data: object, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 const adminRoomColors = ['#3b82f6', '#22c55e', '#eab308', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316']
@@ -486,20 +743,48 @@ function buildOverlayDataUrl(plan: AdminVectorPlan, layer: AdminEditorOverlayKey
       const cy = r.points.reduce((a, b) => a + b[1], 0) / r.points.length
       nodes.push(labelRectAndText(cx, cy, r.roomName || `R${i}`))
     })
-  } else if (layer === 'doors') {
-    const doors = Array.isArray(plan.doors) ? plan.doors : []
-    doors.forEach((d, i) => {
+  } else if (layer === 'door' || layer === 'window' || layer === 'garage_door' || layer === 'door_stairs' || layer === 'door_lift') {
+    // Map layer key → canonical type strings that match this layer.
+    const TYPE_MATCH: Record<string, string[]> = {
+      door: ['door'],
+      window: ['window', 'sliding_door', 'schiebetur', 'schiebetür'],
+      garage_door: ['garage_door', 'garagentor'],
+      door_stairs: ['stairs'],
+      door_lift: ['lift'],
+    }
+    const LAYER_COLORS: Record<string, string> = {
+      door: '#22c55e',
+      window: '#60a5fa',
+      garage_door: '#a855f7',
+      door_stairs: '#ec4899',
+      door_lift: '#06b6d4',
+    }
+    const LAYER_LABELS: Record<string, string> = {
+      door: 'Door',
+      window: 'Window',
+      garage_door: 'Garage',
+      door_stairs: 'Stairs',
+      door_lift: 'Lift',
+    }
+    const matchTypes = TYPE_MATCH[layer] ?? []
+    const color = LAYER_COLORS[layer] ?? '#888'
+    const labelBase = LAYER_LABELS[layer] ?? layer
+    const items = Array.isArray(plan.doors) ? plan.doors : []
+    let idx = 0
+    items.forEach((d) => {
       const b = d.bbox
       if (!Array.isArray(b) || b.length < 4) return
+      const rawType = String(d.type || '').toLowerCase().replace(/-/g, '_')
+      // Strict equality only — avoid 'sliding_door'.includes('door') false positives.
+      if (!matchTypes.includes(rawType)) return
+      idx++
       const [x1, y1, x2, y2] = b
       const minX = Math.min(x1, x2)
       const minY = Math.min(y1, y2)
       const w = Math.abs(x2 - x1)
       const h = Math.abs(y2 - y1)
-      const isWindow = String(d.type || '').toLowerCase().includes('window')
-      const color = isWindow ? '#3b82f6' : '#22c55e'
-      nodes.push(`<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="2"/>`)
-      nodes.push(labelRectAndText(minX + w / 2, minY + h / 2, isWindow ? `W${i}` : `D${i}`))
+      nodes.push(`<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="${color}" fill-opacity="0.22" stroke="${color}" stroke-width="2.5" rx="3"/>`)
+      nodes.push(labelRectAndText(minX + w / 2, minY + h / 2, `${labelBase} ${idx}`))
     })
   } else if (layer === 'demolitions') {
     const demos = Array.isArray(plan.roofDemolitions) ? plan.roofDemolitions : []
@@ -523,6 +808,35 @@ function buildOverlayDataUrl(plan: AdminVectorPlan, layer: AdminEditorOverlayKey
       const h = Math.abs(y2 - y1)
       nodes.push(`<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="#a855f7" fill-opacity="0.2" stroke="#a855f7" stroke-width="2"/>`)
       nodes.push(labelRectAndText(minX + w / 2, minY + h / 2, `ST${i + 1}`))
+    })
+  } else if (layer === 'pillars') {
+    const pillars = Array.isArray(plan.pillars) ? plan.pillars : []
+    pillars.forEach((p, i) => {
+      if (!Array.isArray(p.points) || p.points.length < 3) return
+      const pts = p.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+      nodes.push(`<polygon points="${pts}" fill="#0ea5e9" fill-opacity="0.16" stroke="#0ea5e9" stroke-width="2"/>`)
+      const cx = p.points.reduce((a, b) => a + b[0], 0) / p.points.length
+      const cy = p.points.reduce((a, b) => a + b[1], 0) / p.points.length
+      nodes.push(labelRectAndText(cx, cy, `P${i + 1}`))
+    })
+  } else if (layer === 'bestand') {
+    const bestand = Array.isArray(plan.zubauBestandPolygons) ? plan.zubauBestandPolygons : []
+    bestand.forEach((p, i) => {
+      if (!Array.isArray(p.points) || p.points.length < 3) return
+      const pts = p.points.map((pt) => `${pt[0]},${pt[1]}`).join(' ')
+      nodes.push(`<polygon points="${pts}" fill="#f59e0b" fill-opacity="0.16" stroke="#f59e0b" stroke-width="2"/>`)
+      const cx = p.points.reduce((a, b) => a + b[0], 0) / p.points.length
+      const cy = p.points.reduce((a, b) => a + b[1], 0) / p.points.length
+      nodes.push(labelRectAndText(cx, cy, `B${i + 1}`))
+    })
+  } else if (layer === 'wall_demolition') {
+    const lines = Array.isArray(plan.zubauWallDemolitionLines) ? plan.zubauWallDemolitionLines : []
+    lines.forEach((ln, i) => {
+      if (!Array.isArray(ln.a) || !Array.isArray(ln.b) || ln.a.length < 2 || ln.b.length < 2) return
+      nodes.push(
+        `<line x1="${ln.a[0]}" y1="${ln.a[1]}" x2="${ln.b[0]}" y2="${ln.b[1]}" stroke="#ef4444" stroke-width="4" stroke-linecap="round"/>`,
+      )
+      nodes.push(labelRectAndText((ln.a[0] + ln.b[0]) / 2, (ln.a[1] + ln.b[1]) / 2, `WD${i + 1}`))
     })
   } else if (layer === 'roof') {
     const rooms = Array.isArray(plan.rooms) ? plan.rooms : []
@@ -617,11 +931,15 @@ function AdminBlueprintLayerStack({
       <div className="pointer-events-none absolute left-2 top-2 z-30 flex flex-wrap gap-1">
         {ordered
           .filter((o) => o.key !== 'base')
-          .map((o) => (
-            <span key={`lbl-${o.key}`} className="rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-sand/90">
-              {ADMIN_BLUEPRINT_LAYER_LABEL[o.key]}
-            </span>
-          ))}
+          .map((o) => {
+            const dotColor = ADMIN_LAYER_COLOR[o.key]
+            return (
+              <span key={`lbl-${o.key}`} className="flex items-center gap-1 rounded-md bg-black/80 px-1.5 py-0.5 text-[9px] font-semibold text-sand/90 backdrop-blur-sm">
+                {dotColor && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />}
+                {ADMIN_BLUEPRINT_LAYER_LABEL[o.key]}
+              </span>
+            )
+          })}
       </div>
     </div>
   )
@@ -699,43 +1017,53 @@ function AdminBlueprintSnapshotPanel({
   const showOverlayToggles = availableOverlayKeys.length > 0
 
   return (
-    <div className="flex w-full max-w-full flex-col items-stretch gap-2">
+    <div className="flex w-full max-w-full flex-col items-stretch gap-3">
       {showOverlayToggles ? (
-        <div className="flex flex-wrap items-center justify-center gap-2 border-b border-white/10 pb-2">
-          <span className="text-[9px] uppercase tracking-wide text-sand/45">Straturi</span>
-          <button
-            type="button"
-            onClick={activateAllOverlays}
-            className="rounded-lg border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 px-2.5 py-1 text-[10px] font-semibold text-[#FFD29A] hover:bg-[#FF9F0F]/18"
-          >
-            Toate ON
-          </button>
-          <button
-            type="button"
-            onClick={deactivateOverlaysOnly}
-            className="rounded-lg border border-white/15 bg-black/35 px-2.5 py-1 text-[10px] font-semibold text-sand/80 hover:border-white/25"
-          >
-            Doar fundal (fără overlay)
-          </button>
-        </div>
-      ) : null}
-      {showOverlayToggles ? (
-        <div className="flex flex-wrap justify-center gap-1.5" role="group" aria-label="Blueprint overlay layers">
-          {availableOverlayKeys.map((k) => (
+        <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+          {/* Action row */}
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[9px] font-bold uppercase tracking-widest text-sand/35">Layers</span>
             <button
-              key={k}
               type="button"
-              aria-pressed={activeOverlays.has(k)}
-              onClick={() => toggleOverlay(k)}
-              className={`rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition ${
-                activeOverlays.has(k)
-                  ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]'
-                  : 'border-white/15 bg-black/35 text-sand/75 hover:border-white/25'
-              }`}
+              onClick={activateAllOverlays}
+              className="rounded-md border border-[#FF9F0F]/40 bg-[#FF9F0F]/12 px-2 py-0.5 text-[10px] font-semibold text-[#FFD29A] transition hover:bg-[#FF9F0F]/22"
             >
-              {ADMIN_BLUEPRINT_LAYER_LABEL[k]}
+              All ON
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={deactivateOverlaysOnly}
+              className="rounded-md border border-white/15 bg-black/30 px-2 py-0.5 text-[10px] font-semibold text-sand/65 transition hover:border-white/30 hover:text-sand/90"
+            >
+              Base only
+            </button>
+          </div>
+          {/* Layer toggle chips */}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Blueprint overlay layers">
+            {availableOverlayKeys.map((k) => {
+              const on = activeOverlays.has(k)
+              const dotColor = ADMIN_LAYER_COLOR[k] ?? '#888'
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleOverlay(k)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-semibold transition-all ${
+                    on
+                      ? 'border-white/20 bg-white/10 text-sand shadow-sm'
+                      : 'border-white/8 bg-black/20 text-sand/45 hover:border-white/18 hover:text-sand/70'
+                  }`}
+                >
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full transition-opacity"
+                    style={{ backgroundColor: dotColor, opacity: on ? 1 : 0.3 }}
+                  />
+                  {ADMIN_BLUEPRINT_LAYER_LABEL[k]}
+                </button>
+              )
+            })}
+          </div>
         </div>
       ) : null}
       <div className="flex w-full justify-center overflow-x-auto">
@@ -831,7 +1159,7 @@ function editorLabelEn(editor: AdminEditorSnapshotItem['editor']): string {
   return 'Roof editor'
 }
 
-type AdminOrgProjectStatus = 'Running' | 'Queued' | 'Completed' | 'Failed' | 'Cancelled'
+type AdminOrgProjectStatus = 'Running' | 'Queued' | 'Completed' | 'Failed' | 'Cancelled' | 'Deleted'
 
 type AdminOrgProjectRow = {
   id: string
@@ -856,8 +1184,13 @@ type AdminOrgProjectRow = {
   pipelineFinishedAtIso?: string | null
   durationWallSeconds?: number | null
   lastRunDurationSeconds?: number | null
+  latestRunCostCents?: number | null
+  latestRunCostMeta?: Record<string, unknown> | null
   /** True when row comes from `fetchAdminTenantOffers` (not demo seed data). */
   isLiveRow?: boolean
+  deletedAt?: string | null
+  /** Soft-deleted by tenant user; admin-only retention. */
+  isDeleted?: boolean
 }
 
 function formatDurationSeconds(sec: number): string {
@@ -966,7 +1299,11 @@ function pickProjectDurationLabel(o: AdminTenantOffer): string {
 function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
   const created = new Date(o.created_at)
   const headline = translateAdminOfferDisplay(o.display_title ?? o.title)
-  const hist = historyStatusPresentation(o.status)
+  const deletedAt = o.deleted_at ?? null
+  const isDeleted = Boolean(deletedAt)
+  const hist = isDeleted
+    ? { label: 'Deleted', className: 'border-zinc-500/45 bg-zinc-600/25 text-zinc-200' }
+    : historyStatusPresentation(o.status)
   return {
     id: o.id,
     ref: o.ref,
@@ -975,7 +1312,7 @@ function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
     title: headline,
     duration: pickProjectDurationLabel(o),
     durationTooltip: projectDurationTooltip(o) || undefined,
-    status: o.status_ui,
+    status: isDeleted ? 'Deleted' : o.status_ui,
     rawOfferStatus: o.status,
     historyStatusLabel: hist.label,
     historyStatusBadgeClass: hist.className,
@@ -987,7 +1324,11 @@ function mapAdminTenantOfferToRow(o: AdminTenantOffer): AdminOrgProjectRow {
     pipelineFinishedAtIso: o.pipeline_finished_at,
     durationWallSeconds: o.duration_wall_seconds,
     lastRunDurationSeconds: o.last_run_duration_seconds,
+    latestRunCostCents: o.latest_run_cost_cents != null ? Number(o.latest_run_cost_cents) : null,
+    latestRunCostMeta: (o.latest_run_cost_meta && typeof o.latest_run_cost_meta === 'object' ? o.latest_run_cost_meta as Record<string, unknown> : null) ?? null,
     isLiveRow: true,
+    deletedAt,
+    isDeleted,
   }
 }
 
@@ -1013,14 +1354,40 @@ function projectMatchesOfferTypeFilter(project: AdminOrgProjectRow, filterSlug: 
   return false
 }
 
-function mapProcessingFolderToMoatKey(folder: string): string {
+/**
+ * Maps processing image folder/kind + filename to a Data Moat section key.
+ * Visualization images are split by filename so each detection type lands in its own section.
+ */
+function mapProcessingFolderToMoatKey(folder: string, filename = ''): string {
   const f = folder.toLowerCase()
-  if (f.includes('plan_segmentation') || f.includes('segmentation')) return 'plan_segmentation'
+  const fn = filename.toLowerCase()
+
+  // Visualization images are detection overlays (rooms, doors, etc.) — split by filename
+  if (f === 'visualization' || f.startsWith('visualization')) {
+    if (fn.includes('_rooms') || fn.includes('_room')) return 'rooms_detection'
+    if (fn.includes('_door') && !fn.includes('garage') && !fn.includes('sliding')) return 'doors'
+    if (fn.includes('garage')) return 'garage_door'
+    if (fn.includes('sliding')) return 'windows'
+    if (fn.includes('_window')) return 'windows'
+    if (fn.includes('_demolit')) return 'demolitions'
+    if (fn.includes('_stair')) return 'stairs'
+    if (fn.includes('_roof')) return 'roof'
+    if (fn.includes('_pillar')) return 'pillars'
+    return 'other'
+  }
+  // Gemini segmentation crops → plan_segmentation
+  if (f === 'gemini_crop' || f === 'cluster_preview' || f.includes('plan_segmentation') || f.includes('segmentation')) return 'plan_segmentation'
+  // Gemini room crops → rooms_detection
+  if (f === 'gemini_room_crop') return 'rooms_detection'
   if (f.includes('wall')) return 'wall_detection'
-  if (f.includes('room')) return 'rooms_detection'
+  if (f.includes('garage')) return 'garage_door'
+  if (f.includes('stair')) return 'stairs'
   if (f.includes('door')) return 'doors'
   if (f.includes('window')) return 'windows'
+  if (f.includes('demolit')) return 'demolitions'
+  if (f.includes('pillar')) return 'pillars'
   if (f.includes('roof')) return 'roof'
+  if (f.includes('room')) return 'rooms_detection'
   return 'other'
 }
 
@@ -1044,7 +1411,7 @@ export default function AdminPage() {
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [scheduleTimezone, setScheduleTimezone] = useState('Europe/Berlin')
   const [tokensModalOpen, setTokensModalOpen] = useState(false)
-  const [tokensAddAmount, setTokensAddAmount] = useState('2500')
+  const [tokensAddAmount, setTokensAddAmount] = useState('1')
   const [tokenBalancesByOrg, setTokenBalancesByOrg] = useState<Record<string, number>>({})
   const [orgEditableUsers, setOrgEditableUsers] = useState<Record<string, OrgUserEditable[]>>({})
   const [editMemberModalOpen, setEditMemberModalOpen] = useState(false)
@@ -1076,6 +1443,36 @@ export default function AdminPage() {
     sourceOfferId: string | null
     message?: string
   }>({ status: 'idle', bySection: {}, sourceOfferId: null })
+
+  type MoatRunSection = Array<{ id: string; url: string; filename: string; plan_id?: string }>
+  type MoatRun = { run_id: string; offer_id: string; created_at: string; sections: Record<string, MoatRunSection> }
+  const [moatRuns, setMoatRuns] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    runs: MoatRun[]
+    tenantId: string | null
+    message?: string
+  }>({ status: 'idle', runs: [], tenantId: null })
+  const [moatSelectedRunId, setMoatSelectedRunId] = useState<string | null>(null)
+  const moatRunsLoadingRef = useRef<string | null>(null)
+  const [moatRunsRefreshToken, setMoatRunsRefreshToken] = useState(0)
+  const [moatDetectionsData, setMoatDetectionsData] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    plans: MoatVectorPlan[]
+    blueprintImages: Record<string, string>
+    /** planId → wall mask image URL (/admin/offers/:id/wall-mask-image?planId=...) */
+    wallMaskUrls: Record<string, string>
+    sourceOfferId: string | null
+  }>({ status: 'idle', plans: [], blueprintImages: {}, wallMaskUrls: {}, sourceOfferId: null })
+  // Refs to track which cacheKey we're currently fetching — avoids effect cancellation loops
+  const moatDetectionsLoadingRef = useRef<string | null>(null)
+  const moatFilesLoadingRef = useRef<string | null>(null)
+  type MoatSegCrop = { file: string; raw_label: string; box_2d?: number[]; box_px?: number[]; image_size?: number[]; position_from_bottom?: number; image_url?: string }
+  type MoatSegDoc = { doc_id: string; source_url: string; crops: MoatSegCrop[] }
+  const [moatSegData, setMoatSegData] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error'
+    offerId: string | null
+    docs: MoatSegDoc[]
+  }>({ status: 'idle', offerId: null, docs: [] })
   const [orgProfilePopupOpen, setOrgProfilePopupOpen] = useState(false)
   const [permissionsModalOpen, setPermissionsModalOpen] = useState(false)
   const [permissionDraftTier, setPermissionDraftTier] = useState(1)
@@ -1086,6 +1483,29 @@ export default function AdminPage() {
   const [offerTypeTargets, setOfferTypeTargets] = useState<string[]>(['Einfamilienhaus'])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  // Site banner state
+  const [bannerMessage, setBannerMessage] = useState('')
+  const [bannerVisible, setBannerVisible] = useState(false)
+  const [bannerColor, setBannerColor] = useState('#FF9F0F')
+  const [bannerSaving, setBannerSaving] = useState(false)
+  const [bannerSaved, setBannerSaved] = useState(false)
+
+  // Push update form state
+  const [pushTitle, setPushTitle] = useState('')
+  const [pushMessage, setPushMessage] = useState('')
+  const [pushSaving, setPushSaving] = useState(false)
+  const [pushSaved, setPushSaved] = useState(false)
+  const [pushError, setPushError] = useState<string | null>(null)
+  const [scheduleTime, setScheduleTime] = useState('09:00')
+  const [scheduleRepeat, setScheduleRepeat] = useState<'once' | 'daily' | 'weekly' | 'monthly'>('once')
+  const [pushTargetTenantIds, setPushTargetTenantIds] = useState<string[]>([])
+  const [pushImageUrl, setPushImageUrl] = useState<string | null>(null)
+  const [pushImageUploading, setPushImageUploading] = useState(false)
+  const pushImageInputRef = useRef<HTMLInputElement>(null)
+  const [adminAnnouncements, setAdminAnnouncements] = useState<Array<{
+    id: string; title: string; message: string; audience_mode: string;
+    scheduled_at: string | null; created_at: string;
+  }>>([])
   const statsScrollRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef({ dragging: false, startY: 0, startTop: 0 })
   const [statsThumb, setStatsThumb] = useState({ height: 40, top: 0 })
@@ -1099,6 +1519,7 @@ export default function AdminPage() {
   const [pipelineThumb, setPipelineThumb] = useState({ height: 40, top: 0 })
   const [pipelineScrollVisible, setPipelineScrollVisible] = useState(false)
   const [selectedProjectRef, setSelectedProjectRef] = useState<string | null>(null)
+  const [permanentDeletingId, setPermanentDeletingId] = useState<string | null>(null)
   const [adminTenants, setAdminTenants] = useState<AdminTenant[]>([])
   const [adminTenantsStatus, setAdminTenantsStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [adminTenantsError, setAdminTenantsError] = useState<string | null>(null)
@@ -1133,9 +1554,27 @@ export default function AdminPage() {
   const [projectUploadedFiles, setProjectUploadedFiles] = useState<AdminProjectUploadedFilesState>({ status: 'idle' })
   const [projectProcessingImages, setProjectProcessingImages] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error'
-    items: Record<string, Array<{ id: string; url: string; filename: string; plan_id?: string }>>
+    items: Record<string, Array<{ id: string; url: string; filename: string; plan_id?: string; storage_path?: string }>>
     message?: string
   }>({ status: 'idle', items: {} })
+  const [pipelineDetailsModal, setPipelineDetailsModal] = useState<null | 'measurements' | 'pricing'>(null)
+  const [projectPipelineDetails, setProjectPipelineDetails] = useState<{
+    loading: boolean
+    measurements: Array<{ key: string; value: string }>
+    pricing: Array<{ key: string; value: string; source: string }>
+    measurements_raw: Record<string, unknown> | null
+    pricing_raw_per_plan: Array<{ plan_id: string; data: Record<string, unknown> }>
+    room_scales_per_plan: Array<{ plan_id: string; data: Record<string, unknown>; local_crop_filenames?: string[] }>
+    plan_metadata: Array<{ plan_id: string; data: Record<string, unknown> }>
+  }>({ loading: false, measurements: [], pricing: [], measurements_raw: null, pricing_raw_per_plan: [], room_scales_per_plan: [], plan_metadata: [] })
+  const [costPopupOpen, setCostPopupOpen] = useState(false)
+  const [jsonPreviewModal, setJsonPreviewModal] = useState<{
+    open: boolean
+    filename: string
+    content: string
+    loading: boolean
+    error: string | null
+  }>({ open: false, filename: '', content: '', loading: false, error: null })
   const [projectEditorModalOpen, setProjectEditorModalOpen] = useState(false)
 
   const heatmapTipHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1197,6 +1636,150 @@ export default function AdminPage() {
     }
   }, [])
 
+  const handleImageUpload = async (file: File) => {
+    if (!file) return
+    setPushImageUploading(true)
+    try {
+      const ext = file.name.split('.').pop() || 'jpg'
+      const filename = `announcement_${Date.now()}.${ext}`
+      const { data, error } = await supabase.storage.from('announcements').upload(filename, file, { upsert: true })
+      if (error) throw error
+      const { data: urlData } = supabase.storage.from('announcements').getPublicUrl(data.path)
+      setPushImageUrl(urlData.publicUrl)
+    } catch (e: any) {
+      setPushError(e?.message ?? 'Image upload failed')
+    } finally {
+      setPushImageUploading(false)
+    }
+  }
+
+  const fetchAdminAnnouncements = async () => {
+    try {
+      const res = await apiFetch('/admin/announcements')
+      setAdminAnnouncements(res?.announcements ?? [])
+    } catch { /* silent */ }
+  }
+
+  const fetchBanner = async () => {
+    try {
+      const res = await apiFetch('/admin/banner')
+      if (res?.banner) {
+        setBannerMessage(res.banner.message ?? '')
+        setBannerVisible(res.banner.is_visible ?? false)
+        setBannerColor(res.banner.bg_color ?? '#FF9F0F')
+      }
+    } catch { /* silent */ }
+  }
+
+  const handleSaveBanner = async (overrides?: { is_visible?: boolean }) => {
+    setBannerSaving(true)
+    setBannerSaved(false)
+    try {
+      await apiFetch('/admin/banner', {
+        method: 'POST',
+        body: JSON.stringify({
+          message: bannerMessage,
+          is_visible: overrides?.is_visible !== undefined ? overrides.is_visible : bannerVisible,
+          bg_color: bannerColor,
+        }),
+      })
+      setBannerSaved(true)
+      setTimeout(() => setBannerSaved(false), 2000)
+    } catch { /* silent */ } finally {
+      setBannerSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    if (ready) {
+      void fetchAdminAnnouncements()
+      void fetchBanner()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
+
+  const handleInstantlyPush = async () => {
+    if (!pushTitle.trim() || !pushMessage.trim()) {
+      setPushError('Title and message are required')
+      return
+    }
+    setPushSaving(true)
+    setPushError(null)
+    try {
+      const tenantIds = audienceMode === 'custom' && pushTargetTenantIds.length > 0 ? pushTargetTenantIds : null
+      await apiFetch('/admin/announcements', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: pushTitle.trim(),
+          message: pushMessage.trim(),
+          audience_mode: audienceMode === 'custom' && pushTargetTenantIds.length > 0 ? 'specific' : 'all',
+          tenant_ids: tenantIds,
+          scheduled_at: null,
+          repeat_mode: 'once',
+          image_url: pushImageUrl || null,
+        }),
+      })
+      setPushSaved(true)
+      setPushTitle('')
+      setPushMessage('')
+      setPushImageUrl(null)
+      void fetchAdminAnnouncements()
+      setTimeout(() => setPushSaved(false), 3000)
+    } catch (e: any) {
+      setPushError(e?.message ?? 'Failed to push')
+    } finally {
+      setPushSaving(false)
+    }
+  }
+
+  const handleSchedulePush = async () => {
+    if (!pushTitle.trim() || !pushMessage.trim()) {
+      setPushError('Title and message are required')
+      return
+    }
+    if (!dateTo) {
+      setPushError('Please select a date')
+      return
+    }
+    setPushSaving(true)
+    setPushError(null)
+    try {
+      // Build scheduled_at from date + time + timezone (approximate via offset)
+      const scheduledAt = new Date(`${dateTo}T${scheduleTime}:00`).toISOString()
+      const tenantIds = audienceMode === 'custom' && pushTargetTenantIds.length > 0 ? pushTargetTenantIds : null
+      await apiFetch('/admin/announcements', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: pushTitle.trim(),
+          message: pushMessage.trim(),
+          audience_mode: audienceMode === 'custom' && pushTargetTenantIds.length > 0 ? 'specific' : 'all',
+          tenant_ids: tenantIds,
+          scheduled_at: scheduledAt,
+          repeat_mode: scheduleRepeat,
+          image_url: pushImageUrl || null,
+        }),
+      })
+      setPushSaved(true)
+      setPushTitle('')
+      setPushMessage('')
+      setPushImageUrl(null)
+      setScheduleOpen(false)
+      void fetchAdminAnnouncements()
+      setTimeout(() => setPushSaved(false), 3000)
+    } catch (e: any) {
+      setPushError(e?.message ?? 'Failed to schedule')
+    } finally {
+      setPushSaving(false)
+    }
+  }
+
+  const handleDeleteAnnouncement = async (id: string) => {
+    try {
+      await apiFetch(`/admin/announcements/${id}/delete`, { method: 'POST' })
+      setAdminAnnouncements((prev) => prev.filter((a) => a.id !== id))
+    } catch { /* silent */ }
+  }
+
   useEffect(() => {
     if (!ready) return
     let cancelled = false
@@ -1223,7 +1806,7 @@ export default function AdminPage() {
   const clientOrgs: DummyOrg[] = useMemo(() => {
     if (adminTenantsStatus === 'ok') {
       if (adminTenants.length === 0) return DUMMY_ORGS
-      return adminTenants.map((t) => ({ id: t.id, name: t.name }))
+      return adminTenants.map((t) => ({ id: t.id, name: t.name, app_platform: t.app_platform }))
     }
     return DUMMY_ORGS
   }, [adminTenants, adminTenantsStatus])
@@ -1418,7 +2001,7 @@ export default function AdminPage() {
         artifacts: row.artifacts,
       }))
     }
-    return DATA_MOAT_ITEMS.map((row) => ({ ...row, key: row.title.toLowerCase().replace(/\s+/g, '_'), artifacts: row.markedPlans }))
+    return DATA_MOAT_ITEMS.map((row) => ({ ...row, artifacts: row.markedPlans }))
   }, [statsStatus, statsSummary])
 
   const avgCostPerRunCents = useMemo(() => {
@@ -1785,6 +2368,15 @@ export default function AdminPage() {
     return tenantOffers[0]?.id ?? null
   }, [tenantOffersMatchSelection, tenantOffers])
 
+  /** All valid offer UUIDs for this tenant (most recent first, max 20). Used for Data Moat aggregation. */
+  const moatAllOfferIds = useMemo(() => {
+    if (!tenantOffersMatchSelection) return []
+    return tenantOffers
+      .map((o) => o.id as string)
+      .filter((id) => isOfferUuid(id))
+      .slice(0, 20)
+  }, [tenantOffersMatchSelection, tenantOffers])
+
   const selectedOrgProject = useMemo(() => {
     if (!selectedProjectRef) return null
     return orgProjectsBase.find((p) => p.id === selectedProjectRef) ?? null
@@ -1807,6 +2399,7 @@ export default function AdminPage() {
         roofMeasurementsPdfUrl: null,
         measurementsOnlyOffer: false,
       })
+      setProjectPipelineDetails({ loading: false, measurements: [], pricing: [], measurements_raw: null, pricing_raw_per_plan: [], room_scales_per_plan: [], plan_metadata: [] })
       setProjectEditorModalOpen(false)
       return
     }
@@ -1826,15 +2419,17 @@ export default function AdminPage() {
       roofMeasurementsPdfUrl: null,
       measurementsOnlyOffer: false,
     })
+    setProjectPipelineDetails({ loading: true, measurements: [], pricing: [], measurements_raw: null, pricing_raw_per_plan: [], room_scales_per_plan: [], plan_metadata: [] })
     ;(async () => {
       try {
-        const [snapRes, expRes, uploadedRes, procImgsRes, roofRes, detRes] = await Promise.all([
+        const [snapRes, expRes, uploadedRes, procImgsRes, roofRes, detRes, pipelineRes] = await Promise.all([
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/editor-snapshots`),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/export`),
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/uploaded-files`),
           apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/processing-images`),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/roof-review-data?ts=${Date.now()}`).catch(() => null),
           apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/detections-review-data?ts=${Date.now()}`).catch(() => null),
+          fetchAdminOfferPipelineDetails(offerId).catch(() => null),
         ])
         if (cancelled) return
         const items = (snapRes?.items ?? []) as AdminEditorSnapshotItem[]
@@ -1896,6 +2491,43 @@ export default function AdminPage() {
               return { bbox }
             })
             .filter(Boolean) as Array<{ bbox: [number, number, number, number] }>
+          const rawPillars = Array.isArray((x as { pillars?: unknown[] }).pillars)
+            ? (((x as { pillars?: unknown[] }).pillars ?? []) as unknown[])
+            : []
+          const pillars = rawPillars
+            .map((p) => {
+              const pp = (p ?? {}) as Record<string, unknown>
+              const pts = parsePoints(pp.points)
+              return pts.length >= 3 ? { points: pts } : null
+            })
+            .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+          const rawBestand = Array.isArray((x as { zubauBestandPolygons?: unknown[] }).zubauBestandPolygons)
+            ? (((x as { zubauBestandPolygons?: unknown[] }).zubauBestandPolygons ?? []) as unknown[])
+            : []
+          const zubauBestandPolygons = rawBestand
+            .map((p) => {
+              const pp = (p ?? {}) as Record<string, unknown>
+              const pts = parsePoints(pp.points)
+              return pts.length >= 3 ? { points: pts } : null
+            })
+            .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+          const rawWallLines = Array.isArray((x as { zubauWallDemolitionLines?: unknown[] }).zubauWallDemolitionLines)
+            ? (((x as { zubauWallDemolitionLines?: unknown[] }).zubauWallDemolitionLines ?? []) as unknown[])
+            : []
+          const zubauWallDemolitionLines = rawWallLines
+            .map((ln) => {
+              const l = (ln ?? {}) as Record<string, unknown>
+              const a = Array.isArray(l.a) ? l.a : []
+              const b = Array.isArray(l.b) ? l.b : []
+              if (a.length < 2 || b.length < 2) return null
+              const ax = Number(a[0])
+              const ay = Number(a[1])
+              const bx = Number(b[0])
+              const by = Number(b[1])
+              if (![ax, ay, bx, by].every((v) => Number.isFinite(v))) return null
+              return { a: [ax, ay] as [number, number], b: [bx, by] as [number, number] }
+            })
+            .filter(Boolean) as Array<{ a: [number, number]; b: [number, number] }>
           return {
             imageWidth: Number(x.imageWidth) || 0,
             imageHeight: Number(x.imageHeight) || 0,
@@ -1903,6 +2535,9 @@ export default function AdminPage() {
             doors,
             roofDemolitions,
             stairOpenings,
+            pillars,
+            zubauBestandPolygons,
+            zubauWallDemolitionLines,
           }
         })
         const roofPlansRaw = Array.isArray((roofRes as { plans?: unknown[] } | null)?.plans)
@@ -1939,13 +2574,41 @@ export default function AdminPage() {
           }
         })
         const roofVectorsFiltered = roofVectors.filter((p) => p.imageWidth > 0 && p.imageHeight > 0 && p.rectangles.length > 0)
+        const measurementRows: Array<{ key: string; value: string }> = []
+        detVectors.forEach((det, idx) => {
+          measurementRows.push({ key: `Plan ${idx + 1} rooms`, value: String(det.rooms?.length ?? 0) })
+          measurementRows.push({ key: `Plan ${idx + 1} doors/windows`, value: String(det.doors?.length ?? 0) })
+          measurementRows.push({ key: `Plan ${idx + 1} demolitions`, value: String(det.roofDemolitions?.length ?? 0) })
+          measurementRows.push({ key: `Plan ${idx + 1} stair openings`, value: String(det.stairOpenings?.length ?? 0) })
+          measurementRows.push({ key: `Plan ${idx + 1} pillars`, value: String(det.pillars?.length ?? 0) })
+          measurementRows.push({ key: `Plan ${idx + 1} bestand polygons`, value: String(det.zubauBestandPolygons?.length ?? 0) })
+          measurementRows.push({
+            key: `Plan ${idx + 1} demolished wall lines`,
+            value: String(det.zubauWallDemolitionLines?.length ?? 0),
+          })
+        })
+        roofVectorsFiltered.forEach((roof, idx) => {
+          measurementRows.push({ key: `Roof floor ${idx + 1} polygons`, value: String(roof.rectangles.length) })
+        })
         // Inject vector overlays + labels (editor style) for every selection type.
         blueprint_groups.forEach((g, idx) => {
           if (!g.layers.base) return
           const det = detVectors[idx]
           const roof = roofVectorsFiltered[idx]
           if (det) {
-            ;(['rooms', 'doors', 'demolitions', 'stairs'] as AdminEditorOverlayKey[]).forEach((k) => {
+            ;([
+              'rooms',
+              'door',
+              'window',
+              'garage_door',
+              'door_stairs',
+              'door_lift',
+              'demolitions',
+              'stairs',
+              'pillars',
+              'bestand',
+              'wall_demolition',
+            ] as AdminEditorOverlayKey[]).forEach((k) => {
               const url = buildOverlayDataUrl(det, k)
               if (!url) return
               g.layers[k] = {
@@ -1957,8 +2620,15 @@ export default function AdminPage() {
             })
           }
           if (roof) {
-            const targetW = Number(det?.imageWidth) || Number(roof.imageWidth) || 0
-            const targetH = Number(det?.imageHeight) || Number(roof.imageHeight) || 0
+            const detW = Number(det?.imageWidth) || 0
+            const detH = Number(det?.imageHeight) || 0
+            const roofW = Number(roof.imageWidth) || 0
+            const roofH = Number(roof.imageHeight) || 0
+            const detRatio = detW > 0 && detH > 0 ? detW / detH : 0
+            const roofRatio = roofW > 0 && roofH > 0 ? roofW / roofH : 0
+            const compatibleRatio = detRatio > 0 && roofRatio > 0 ? Math.abs(detRatio - roofRatio) < 0.04 : false
+            const targetW = compatibleRatio ? detW : roofW
+            const targetH = compatibleRatio ? detH : roofH
             const srcW = Number(roof.imageWidth) || 0
             const srcH = Number(roof.imageHeight) || 0
             const sx = srcW > 0 && targetW > 0 ? targetW / srcW : 1
@@ -1990,7 +2660,10 @@ export default function AdminPage() {
         setProjectUploadedFiles({ status: 'ok', items: uploadedItems })
         setProjectProcessingImages({
           status: 'ok',
-          items: ((procImgsRes ?? {}) as Record<string, Array<{ id: string; url: string; filename: string; plan_id?: string }>>),
+          items: ((procImgsRes ?? {}) as Record<
+            string,
+            Array<{ id: string; url: string; filename: string; plan_id?: string; storage_path?: string }>
+          >),
         })
         const plan = expRes?.files?.plan
         const offerMeta = (expRes?.offer?.meta ?? {}) as Record<string, unknown>
@@ -2005,6 +2678,68 @@ export default function AdminPage() {
           calculationMethodPdfUrl: expRes?.files?.calculationMethodPdf?.download_url ?? null,
           roofMeasurementsPdfUrl: expRes?.files?.roofMeasurementsPdf?.download_url ?? null,
           measurementsOnlyOffer,
+        })
+        const measurementValueRows = Array.isArray((pipelineRes as { measurement_values?: unknown[] } | null)?.measurement_values)
+          ? ((pipelineRes as { measurement_values: Array<{ key?: unknown; value?: unknown; source?: unknown }> }).measurement_values
+              .map((row) => ({
+                key: String(row?.key ?? ''),
+                value:
+                  row?.value == null
+                    ? '—'
+                    : typeof row.value === 'string'
+                      ? row.value
+                      : typeof row.value === 'number' || typeof row.value === 'boolean'
+                        ? String(row.value)
+                        : JSON.stringify(row.value),
+              }))
+              .filter((row) => row.key))
+          : []
+        const pricingRows = Array.isArray((pipelineRes as { pricing_variables?: unknown[] } | null)?.pricing_variables)
+          ? ((pipelineRes as { pricing_variables: Array<{ key?: unknown; value?: unknown; source?: unknown }> }).pricing_variables
+              .map((row) => ({
+                key: String(row?.key ?? ''),
+                value:
+                  row?.value == null
+                    ? '—'
+                    : typeof row.value === 'string'
+                      ? row.value
+                      : typeof row.value === 'number' || typeof row.value === 'boolean'
+                        ? String(row.value)
+                        : JSON.stringify(row.value),
+                source: String(row?.source ?? 'unknown'),
+              }))
+              .filter((row) => row.key))
+          : []
+        const appliedPricingRows = Array.isArray((pipelineRes as { applied_pricing_values?: unknown[] } | null)?.applied_pricing_values)
+          ? ((pipelineRes as { applied_pricing_values: Array<{ key?: unknown; value?: unknown; source?: unknown }> }).applied_pricing_values
+              .map((row) => ({
+                key: String(row?.key ?? ''),
+                value:
+                  row?.value == null
+                    ? '—'
+                    : typeof row.value === 'string'
+                      ? row.value
+                      : typeof row.value === 'number' || typeof row.value === 'boolean'
+                        ? String(row.value)
+                        : JSON.stringify(row.value),
+                source: String(row?.source ?? 'pricing_raw'),
+              }))
+              .filter((row) => row.key))
+          : []
+        setProjectPipelineDetails({
+          loading: false,
+          measurements: [...measurementRows, ...measurementValueRows],
+          pricing: [...pricingRows, ...appliedPricingRows],
+          measurements_raw: (pipelineRes as { measurements_raw?: Record<string, unknown> | null } | null)?.measurements_raw ?? null,
+          pricing_raw_per_plan: Array.isArray((pipelineRes as { pricing_raw_per_plan?: unknown[] } | null)?.pricing_raw_per_plan)
+            ? ((pipelineRes as { pricing_raw_per_plan: Array<{ plan_id: string; data: Record<string, unknown> }> }).pricing_raw_per_plan)
+            : [],
+          room_scales_per_plan: Array.isArray((pipelineRes as { room_scales_per_plan?: unknown[] } | null)?.room_scales_per_plan)
+            ? ((pipelineRes as { room_scales_per_plan: Array<{ plan_id: string; data: Record<string, unknown>; local_crop_filenames?: string[] }> }).room_scales_per_plan)
+            : [],
+          plan_metadata: Array.isArray((pipelineRes as { plan_metadata?: unknown[] } | null)?.plan_metadata)
+            ? ((pipelineRes as { plan_metadata: Array<{ plan_id: string; data: Record<string, unknown> }> }).plan_metadata)
+            : [],
         })
       } catch (e: unknown) {
         if (cancelled) return
@@ -2023,12 +2758,43 @@ export default function AdminPage() {
           roofMeasurementsPdfUrl: null,
           measurementsOnlyOffer: false,
         })
+        setProjectPipelineDetails({ loading: false, measurements: [], pricing: [], measurements_raw: null, pricing_raw_per_plan: [], room_scales_per_plan: [], plan_metadata: [] })
       }
     })()
     return () => {
       cancelled = true
     }
   }, [selectedOrgProject])
+
+  // Fetch data-moat runs (images grouped by run_id) from the new tenant endpoint.
+  // Runs whenever the moat popup opens for a different tenant, or when moatRunsRefreshToken is bumped (manual refresh).
+  useEffect(() => {
+    if (!moatPopup || !selectedOrgId) return
+    const cacheKey = selectedOrgId
+    if (moatRunsLoadingRef.current === cacheKey) return   // already in-flight or loaded for this tenant
+    moatRunsLoadingRef.current = cacheKey
+    let cancelled = false
+    setMoatRuns({ status: 'loading', runs: [], tenantId: cacheKey })
+    ;(async () => {
+      try {
+        const res = (await apiFetch(`/admin/tenants/${encodeURIComponent(cacheKey)}/data-moat-runs`)) as {
+          runs: MoatRun[]
+        }
+        if (cancelled) return
+        setMoatRuns({ status: 'ok', runs: res.runs ?? [], tenantId: cacheKey })
+        // Auto-select most recent run
+        if ((res.runs ?? []).length > 0) {
+          setMoatSelectedRunId(res.runs[0].run_id)
+        }
+      } catch (e) {
+        if (cancelled) return
+        moatRunsLoadingRef.current = null
+        setMoatRuns({ status: 'error', runs: [], tenantId: cacheKey, message: e instanceof Error ? e.message : 'Failed to load runs' })
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moatPopup?.key, selectedOrgId, moatRunsRefreshToken])
 
   useEffect(() => {
     if (!moatPopup) return
@@ -2041,38 +2807,200 @@ export default function AdminPage() {
       })
       return
     }
-    if (moatFiles.status === 'ok' && moatFiles.sourceOfferId === moatSourceOfferId) return
+    // Fetch processing images from ALL offers so every processed blueprint appears in moat.
+    const cacheKey = moatAllOfferIds.join(',') || moatSourceOfferId || 'none'
+    if (moatFilesLoadingRef.current === cacheKey) return
+    moatFilesLoadingRef.current = cacheKey
+
     let cancelled = false
-    setMoatFiles({ status: 'loading', bySection: {}, sourceOfferId: moatSourceOfferId })
+    setMoatFiles({ status: 'loading', bySection: {}, sourceOfferId: cacheKey })
     ;(async () => {
       try {
-        const res = (await apiFetch(
-          `/admin/offers/${encodeURIComponent(moatSourceOfferId)}/processing-images`,
-        )) as Record<string, Array<{ id: string; url: string; filename: string }>>
+        const offerIds = moatAllOfferIds.length > 0 ? moatAllOfferIds : (moatSourceOfferId ? [moatSourceOfferId] : [])
+        if (offerIds.length === 0) throw new Error('No offers available')
+
+        const allResults = await Promise.allSettled(
+          offerIds.map((id) =>
+            apiFetch(`/admin/offers/${encodeURIComponent(id)}/processing-images`) as Promise<
+              Record<string, Array<{ id: string; url: string; filename: string }>>
+            >
+          )
+        )
         if (cancelled) return
+
         const bySection: Record<string, Array<{ id: string; url: string; filename: string; folder: string }>> = {}
-        for (const [folder, imgs] of Object.entries(res ?? {})) {
-          const key = mapProcessingFolderToMoatKey(folder)
-          if (!bySection[key]) bySection[key] = []
-          for (const img of imgs ?? []) {
-            bySection[key].push({ ...img, folder })
+        for (const result of allResults) {
+          if (result.status !== 'fulfilled') continue
+          for (const [folder, imgs] of Object.entries(result.value ?? {})) {
+            for (const img of imgs ?? []) {
+              const key = mapProcessingFolderToMoatKey(folder, img.filename)
+              if (!bySection[key]) bySection[key] = []
+              bySection[key].push({ ...img, folder })
+            }
           }
         }
-        setMoatFiles({ status: 'ok', bySection, sourceOfferId: moatSourceOfferId })
+        setMoatFiles({ status: 'ok', bySection, sourceOfferId: cacheKey })
       } catch (e) {
         if (cancelled) return
+        moatFilesLoadingRef.current = null
         setMoatFiles({
-          status: 'error',
-          bySection: {},
-          sourceOfferId: moatSourceOfferId,
+          status: 'error', bySection: {}, sourceOfferId: cacheKey,
           message: e instanceof Error ? e.message : 'Could not load data moat files.',
         })
       }
     })()
-    return () => {
-      cancelled = true
+    return () => { cancelled = true }
+  }, [moatPopup, moatAllOfferIds.join(','), moatSourceOfferId])
+
+  // Fetch segmentation data (local disk images + crop coords) when plan_segmentation is open.
+  useEffect(() => {
+    if (!moatPopup || moatPopup.key !== 'plan_segmentation') return
+    const selectedRun = moatRuns.runs.find((r) => r.run_id === moatSelectedRunId)
+    const offerId = selectedRun?.offer_id ?? moatSourceOfferId
+    if (!offerId || !isOfferUuid(offerId)) return
+    if (moatSegData.offerId === offerId && moatSegData.status === 'ok') return
+    let cancelled = false
+    setMoatSegData({ status: 'loading', offerId, docs: [] })
+    ;(async () => {
+      try {
+        const res = (await apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/segmentation-data`)) as { docs: MoatSegDoc[] }
+        if (cancelled) return
+        setMoatSegData({ status: 'ok', offerId, docs: res.docs ?? [] })
+      } catch {
+        if (cancelled) return
+        setMoatSegData({ status: 'error', offerId, docs: [] })
+      }
+    })()
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moatPopup?.key, moatSelectedRunId, moatSourceOfferId])
+
+  // Fetch detection vectors + blueprint base images for Data Moat overlays.
+  // Aggregates plans from ALL tenant offers so the moat shows every processed blueprint.
+  // Uses a ref (cacheKey) to avoid React state-triggered re-fetch loops.
+  useEffect(() => {
+    if (!moatPopup || moatAllOfferIds.length === 0) return
+    const cacheKey = moatAllOfferIds.join(',')
+    if (moatDetectionsData.sourceOfferId === cacheKey && moatDetectionsData.status === 'ok') return
+    if (moatDetectionsLoadingRef.current === cacheKey) return
+    moatDetectionsLoadingRef.current = cacheKey
+    setMoatDetectionsData({ status: 'loading', plans: [], blueprintImages: {}, wallMaskUrls: {}, sourceOfferId: cacheKey })
+
+    const parsePoints = (arr: unknown): Array<[number, number]> =>
+      (Array.isArray(arr) ? arr : [])
+        .map((p) => {
+          if (!Array.isArray(p) || p.length < 2) return null
+          const px = Number(p[0]); const py = Number(p[1])
+          if (!Number.isFinite(px) || !Number.isFinite(py)) return null
+          return [px, py] as [number, number]
+        })
+        .filter((p): p is [number, number] => Boolean(p))
+
+    const parsePlansForOffer = (detResValue: unknown, offerId: string, globalOffset: number): MoatVectorPlan[] => {
+      const detPlansRaw = Array.isArray((detResValue as { plans?: unknown[] } | null)?.plans)
+        ? ((detResValue as { plans?: unknown[] }).plans as unknown[])
+        : []
+      return detPlansRaw.map((dp, idx) => {
+        const x = (dp ?? {}) as Record<string, unknown>
+        const rooms = (Array.isArray(x.rooms) ? x.rooms : [])
+          .map((r) => { const rr = (r ?? {}) as Record<string, unknown>; const pts = parsePoints(rr.points); return pts.length >= 3 ? { points: pts, roomName: typeof rr.roomName === 'string' ? rr.roomName : undefined } : null })
+          .filter(Boolean) as Array<{ points: Array<[number, number]>; roomName?: string }>
+        const doors = (Array.isArray(x.doors) ? x.doors : [])
+          .map((d) => { const dd = (d ?? {}) as Record<string, unknown>; const b = Array.isArray(dd.bbox) ? dd.bbox : []; if (b.length < 4) return null; const bbox = [Number(b[0]), Number(b[1]), Number(b[2]), Number(b[3])] as [number, number, number, number]; if (!bbox.every((v) => Number.isFinite(v))) return null; return { bbox, type: typeof dd.type === 'string' ? dd.type : undefined } })
+          .filter(Boolean) as Array<{ bbox: [number, number, number, number]; type?: string }>
+        const roofDemolitions = (Array.isArray(x.roofDemolitions) ? x.roofDemolitions : [])
+          .map((d) => { const dd = (d ?? {}) as Record<string, unknown>; const pts = parsePoints(dd.points); return pts.length >= 3 ? { points: pts } : null })
+          .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+        const stairOpenings = (Array.isArray(x.stairOpenings) ? x.stairOpenings : [])
+          .map((s) => { const ss = (s ?? {}) as Record<string, unknown>; const b = Array.isArray(ss.bbox) ? ss.bbox : []; if (b.length < 4) return null; const bbox = [Number(b[0]), Number(b[1]), Number(b[2]), Number(b[3])] as [number, number, number, number]; if (!bbox.every((v) => Number.isFinite(v))) return null; return { bbox } })
+          .filter(Boolean) as Array<{ bbox: [number, number, number, number] }>
+        const pillars = ((Array.isArray((x as { pillars?: unknown[] }).pillars) ? (x as { pillars?: unknown[] }).pillars : []) as unknown[])
+          .map((p) => { const pp = (p ?? {}) as Record<string, unknown>; const pts = parsePoints(pp.points); return pts.length >= 3 ? { points: pts } : null })
+          .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+        const zubauBestandPolygons = ((Array.isArray((x as { zubauBestandPolygons?: unknown[] }).zubauBestandPolygons) ? (x as { zubauBestandPolygons?: unknown[] }).zubauBestandPolygons : []) as unknown[])
+          .map((p) => { const pp = (p ?? {}) as Record<string, unknown>; const pts = parsePoints(pp.points); return pts.length >= 3 ? { points: pts } : null })
+          .filter(Boolean) as Array<{ points: Array<[number, number]> }>
+        const zubauWallDemolitionLines = ((Array.isArray((x as { zubauWallDemolitionLines?: unknown[] }).zubauWallDemolitionLines) ? (x as { zubauWallDemolitionLines?: unknown[] }).zubauWallDemolitionLines : []) as unknown[])
+          .map((ln) => { const l = (ln ?? {}) as Record<string, unknown>; const a = Array.isArray(l.a) ? l.a : []; const b = Array.isArray(l.b) ? l.b : []; if (a.length < 2 || b.length < 2) return null; const ax = Number(a[0]); const ay = Number(a[1]); const bx = Number(b[0]); const by = Number(b[1]); if (![ax, ay, bx, by].every((v) => Number.isFinite(v))) return null; return { a: [ax, ay] as [number, number], b: [bx, by] as [number, number] } })
+          .filter(Boolean) as Array<{ a: [number, number]; b: [number, number] }>
+        return {
+          offerId,
+          planIndex: globalOffset + idx,
+          planId: typeof x.planId === 'string' ? x.planId : undefined,
+          imageWidth: Number(x.imageWidth) || 0,
+          imageHeight: Number(x.imageHeight) || 0,
+          rooms, doors, roofDemolitions, stairOpenings, pillars, zubauBestandPolygons, zubauWallDemolitionLines,
+        }
+      })
     }
-  }, [moatPopup, moatSourceOfferId, moatFiles.sourceOfferId, moatFiles.status])
+
+    ;(async () => {
+      try {
+        // Fetch all offers in parallel (detection data + snapshots + wall masks)
+        const perOfferResults = await Promise.allSettled(
+          moatAllOfferIds.map((offerId) =>
+            Promise.allSettled([
+              apiFetch(`/offers/${encodeURIComponent(offerId)}/compute/detections-review-data`),
+              apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/editor-snapshots`),
+              apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/wall-mask-plans`),
+            ]).then((r) => ({ offerId, results: r }))
+          )
+        )
+
+        const allPlans: MoatVectorPlan[] = []
+        const allBlueprintImages: Record<string, string> = {}
+        const allWallMaskUrls: Record<string, string> = {}
+
+        for (const offerResult of perOfferResults) {
+          if (offerResult.status !== 'fulfilled') continue
+          const { offerId, results } = offerResult.value
+          const [detRes, snapRes, wallRes] = results
+
+          // Parse detection plans for this offer
+          const detResValue = detRes.status === 'fulfilled' ? detRes.value : null
+          const offerPlans = parsePlansForOffer(detResValue, offerId, allPlans.length)
+          allPlans.push(...offerPlans)
+
+          // Parse blueprint base images
+          const snapResValue = snapRes.status === 'fulfilled' ? snapRes.value : null
+          const blueprintGroups = Array.isArray((snapResValue as { blueprint_groups?: unknown[] } | null)?.blueprint_groups)
+            ? ((snapResValue as { blueprint_groups?: unknown[] }).blueprint_groups as unknown[])
+            : []
+          // Track how many plans this offer contributed (before adding offerPlans above we stored length)
+          const offerPlanOffset = allPlans.length - offerPlans.length
+          blueprintGroups.forEach((g, idx) => {
+            const gg = (g ?? {}) as Record<string, unknown>
+            const layers = (gg.layers ?? {}) as Record<string, unknown>
+            const base = (layers.base ?? {}) as Record<string, unknown>
+            const url = typeof base.url === 'string' ? base.url : ''
+            if (!url) return
+            const planId = typeof gg.plan_id === 'string' ? gg.plan_id : `${offerId}_${idx}`
+            allBlueprintImages[`${offerId}_${planId}`] = url
+            allBlueprintImages[`_idx_${offerPlanOffset + idx}`] = url
+          })
+
+          // Parse wall mask URLs for this offer
+          const wallResValue = wallRes.status === 'fulfilled' ? wallRes.value : null
+          const wallPlansList: Array<{ planId: string }> =
+            Array.isArray((wallResValue as { plans?: unknown[] } | null)?.plans)
+              ? ((wallResValue as { plans?: unknown[] }).plans as Array<{ planId: string }>)
+              : []
+          const offerPlanOffset2 = allPlans.length - offerPlans.length
+          wallPlansList.forEach((wp, idx) => {
+            const url = `/admin/offers/${encodeURIComponent(offerId)}/wall-mask-image?planId=${encodeURIComponent(wp.planId)}`
+            allWallMaskUrls[`${offerId}_${wp.planId}`] = url
+            allWallMaskUrls[`_idx_${offerPlanOffset2 + idx}`] = url
+          })
+        }
+
+        setMoatDetectionsData({ status: 'ok', plans: allPlans, blueprintImages: allBlueprintImages, wallMaskUrls: allWallMaskUrls, sourceOfferId: cacheKey })
+      } catch {
+        moatDetectionsLoadingRef.current = null
+        setMoatDetectionsData({ status: 'idle', plans: [], blueprintImages: {}, wallMaskUrls: {}, sourceOfferId: null })
+      }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moatPopup?.key, moatAllOfferIds.join(',')])
 
   useEffect(() => {
     if (!projectEditorModalOpen) return
@@ -2091,16 +3019,70 @@ export default function AdminPage() {
   }, [permissionsModalOpen, liveWorkspace])
 
   const projectPipelineSteps = useMemo(() => {
-    if (!selectedOrgProject) return []
-    const u = selectedOrgProject.owner ?? '—'
-    const d = selectedOrgProject.dateLabel
     return [
-      { step: 'Form steps', at: `${d} · 09:12`, duration: '38s', user: u },
-      { step: 'Extracted measurements', at: `${d} · 09:13`, duration: '1m 02s', user: u },
-      { step: 'Attributed prices', at: `${d} · 09:15`, duration: '2m 18s', user: u },
-      { step: 'Extracted pricing', at: `${d} · 09:17`, duration: '55s', user: u },
+      { step: 'Measurements', hint: 'All extracted measurement entities', modal: 'measurements' as const },
+      { step: 'Pricing', hint: 'All pricing variables added to offer', modal: 'pricing' as const },
     ]
-  }, [selectedOrgProject])
+  }, [])
+
+  const generatedImageSections = useMemo(() => {
+    type ImgEntry = { id: string; url: string; filename: string; plan_id?: string; storage_path?: string }
+    const sections: Record<string, ImgEntry[]> = {
+      segmentation: [],
+      wall_construction: [],
+      gemini_crops: [],
+      roof: [],
+      other: [],
+    }
+    for (const [key, imgs] of Object.entries(projectProcessingImages.items ?? {})) {
+      const k = key.toLowerCase()
+      let target: ImgEntry[]
+      // segmentation: solidified walls + classified blueprint crops
+      if (k === 'cluster_preview' || k === 'cluster' || k === 'gemini_crop') target = sections.segmentation
+      // wall construction: numbered wall processing steps
+      else if (k === 'cubicasa_step') target = sections.wall_construction
+      // gemini crops: room scale crops (room_X_*.png) + responses
+      else if (k === 'gemini_room_crop') target = sections.gemini_crops
+      else if (k === 'roof') target = sections.roof
+      else target = sections.other
+      for (const img of imgs ?? []) target.push(img)
+    }
+
+    // Backward-compat: old runs uploaded room_X_* as 'cubicasa_step'; move them to gemini_crops
+    const newWallConstruction: typeof sections.wall_construction = []
+    for (const img of sections.wall_construction) {
+      if (/^room_\d+_/.test(img.filename ?? '')) {
+        sections.gemini_crops.push(img)
+      } else {
+        newWallConstruction.push(img)
+      }
+    }
+    sections.wall_construction = newWallConstruction
+
+    // Sort wall construction numerically by leading number prefix (00_, 01_, …)
+    sections.wall_construction.sort((a, b) => {
+      const na = parseInt(a.filename?.match(/^(\d+)/)?.[1] ?? '999', 10)
+      const nb = parseInt(b.filename?.match(/^(\d+)/)?.[1] ?? '999', 10)
+      if (na !== nb) return na - nb
+      return (a.plan_id ?? '').localeCompare(b.plan_id ?? '')
+    })
+
+    // Filter out lone '01_walls_from_coords.png' per plan — happens when walls processing
+    // was skipped (zero rooms); the file is just the raw blueprint, not a processing output.
+    const wallCountByPlan = new Map<string, number>()
+    for (const img of sections.wall_construction) {
+      const pid = img.plan_id ?? '__none__'
+      wallCountByPlan.set(pid, (wallCountByPlan.get(pid) ?? 0) + 1)
+    }
+    sections.wall_construction = sections.wall_construction.filter((img) => {
+      const pid = img.plan_id ?? '__none__'
+      const count = wallCountByPlan.get(pid) ?? 0
+      const isRawBlueprint = img.filename === '01_walls_from_coords.png'
+      return !(isRawBlueprint && count === 1)
+    })
+
+    return sections
+  }, [projectProcessingImages.items])
 
   const adminProjectEditorPreview = useMemo(() => {
     if (projectEditorSnapshots.status !== 'ok') return null
@@ -2582,6 +3564,7 @@ export default function AdminPage() {
             ) : null}
             {clientOrgs.map((org) => {
               const active = activeView !== 'statistics' && org.id === selectedOrgId
+              const platform = org.app_platform ?? 'holzbot'
               return (
                 <button
                   key={org.id}
@@ -2593,7 +3576,23 @@ export default function AdminPage() {
                   }}
                   className={`list-btn ${active ? 'list-btn--active' : ''}`}
                 >
-                  <div className="text-sm font-bold tracking-wide text-sand truncate">{org.name}</div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="min-w-0 flex-1 text-sm font-bold tracking-wide text-sand truncate">{org.name}</div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {(platform === 'holzbot' || platform === 'mixed') && (
+                        <span className="inline-flex h-5 w-16 items-center justify-center rounded border border-amber-500/30 bg-amber-500/10 px-1">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src="/logo.png" alt="Holzbot" className="max-h-full max-w-full object-contain" />
+                        </span>
+                      )}
+                      {(platform === 'betonbot' || platform === 'mixed') && (
+                        <span className="inline-flex h-5 w-16 items-center justify-center rounded border border-slate-400/30 bg-slate-400/10 px-1">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src="/betonbot-logo.png" alt="Betonbot" className="max-h-full max-w-full object-contain" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </button>
               )
             })}
@@ -2836,13 +3835,30 @@ export default function AdminPage() {
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div className="text-lg font-semibold text-sand">Data moat</div>
                     <div className="ml-auto flex shrink-0 items-center gap-2">
-                      <button type="button" className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/55 px-3 py-1 text-sm font-semibold text-white transition hover:bg-[#FF9F0F]/70">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const rows = dataMoatRows
+                          const csv = ['Section,Marked Plans,Artifacts,Avg Artifacts/Plan', ...rows.map((r) => `"${r.title}",${r.markedPlans},${r.artifacts},${r.markedPlans > 0 ? (r.artifacts / r.markedPlans).toFixed(2) : '0.00'}`)].join('\n')
+                          const blob = new Blob([csv], { type: 'text/csv' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url; a.download = 'data_moat_summary.csv'; a.click(); URL.revokeObjectURL(url)
+                        }}
+                        className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/55 px-3 py-1 text-sm font-semibold text-white transition hover:bg-[#FF9F0F]/70"
+                      >
                         Export CSV
                       </button>
-                      <button type="button" className="rounded-md border border-white/15 bg-black/20 px-3 py-1 text-sm font-medium text-sand/85 transition hover:border-[#FF9F0F]/35">
-                        Export PDF
-                      </button>
-                      <button type="button" className="rounded-md border border-white/15 bg-black/20 px-3 py-1 text-sm font-medium text-sand/85 transition hover:border-[#FF9F0F]/35">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          downloadJsonFile(
+                            { sections: dataMoatRows, exported_at: new Date().toISOString(), source_offer_id: moatSourceOfferId },
+                            'data_moat_summary.json',
+                          )
+                        }}
+                        className="rounded-md border border-white/15 bg-black/20 px-3 py-1 text-sm font-medium text-sand/85 transition hover:border-[#FF9F0F]/35"
+                      >
                         Export JSON
                       </button>
                     </div>
@@ -2907,19 +3923,20 @@ export default function AdminPage() {
                         <ChevronLeft size={16} className="shrink-0 text-[#FFB84D]" aria-hidden />
                         Back to projects
                       </button>
-                      <div
-                        className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#FF9F0F]/40 bg-[#FF9F0F]/10 px-2.5 py-1.5"
-                        role="status"
-                        aria-label={`Cost per run ${formatCostCents(avgCostPerRunCents)} euros`}
+                      <button
+                        type="button"
+                        onClick={() => setCostPopupOpen(true)}
+                        className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#FF9F0F]/40 bg-[#FF9F0F]/10 px-2.5 py-1.5 transition hover:border-[#FF9F0F]/70 hover:bg-[#FF9F0F]/15"
+                        aria-label={`Cost per run ${formatCostCents(selectedOrgProject.latestRunCostCents ?? avgCostPerRunCents)} — click for breakdown`}
                       >
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 text-[11px] font-bold text-[#FFD29A]">
                           €
                         </span>
-                        <div className="leading-tight">
+                        <div className="leading-tight text-left">
                           <div className="text-[10px] uppercase tracking-wide text-sand/70">Cost per run</div>
-                          <div className="text-sm font-bold text-white">{formatCostCents(avgCostPerRunCents)}</div>
+                          <div className="text-sm font-bold text-white">{formatCostCents(selectedOrgProject.latestRunCostCents ?? avgCostPerRunCents)}</div>
                         </div>
-                      </div>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -2988,36 +4005,30 @@ export default function AdminPage() {
                               <li key={row.step}>
                                 <button
                                   type="button"
+                                  onClick={() => setPipelineDetailsModal(row.modal)}
                                   className="w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-left text-[11px] transition hover:border-[#FF9F0F]/30 hover:bg-black/30"
                                 >
                                   <div className="font-medium text-sand">{row.step}</div>
-                                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-sand/55">
-                                    <span className="font-mono">{row.at}</span>
-                                    <span>{row.duration}</span>
-                                    <span>{row.user}</span>
-                                  </div>
+                                  <div className="mt-1 text-[10px] text-sand/55">{row.hint}</div>
                                 </button>
                               </li>
                             ))}
                           </ul>
                           <div className="hidden min-w-0 sm:block">
-                            <div className="mb-1.5 grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-2 border-b border-white/10 pb-2 text-[10px] font-semibold uppercase tracking-wide text-sand/45">
+                            <div className="mb-1.5 grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 border-b border-white/10 pb-2 text-[10px] font-semibold uppercase tracking-wide text-sand/45">
                               <span>Function</span>
-                              <span className="text-right tabular-nums">Date / time</span>
-                              <span className="text-right">Duration</span>
-                              <span className="text-right">User</span>
+                              <span className="text-right">Details</span>
                             </div>
                             <ul className="space-y-1.5">
                               {projectPipelineSteps.map((row) => (
                                 <li key={row.step}>
                                   <button
                                     type="button"
-                                    className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-left text-[11px] transition hover:border-[#FF9F0F]/30 hover:bg-black/30"
+                                    onClick={() => setPipelineDetailsModal(row.modal)}
+                                    className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-left text-[11px] transition hover:border-[#FF9F0F]/30 hover:bg-black/30"
                                   >
                                     <span className="min-w-0 truncate font-medium text-sand">{row.step}</span>
-                                    <span className="shrink-0 font-mono text-sand/65">{row.at}</span>
-                                    <span className="shrink-0 tabular-nums text-sand/60">{row.duration}</span>
-                                    <span className="max-w-[5.5rem] shrink-0 truncate text-right text-sand/75">{row.user}</span>
+                                    <span className="shrink-0 text-sand/65">{row.hint}</span>
                                   </button>
                                 </li>
                               ))}
@@ -3121,36 +4132,205 @@ export default function AdminPage() {
                       <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">{projectProcessingImages.message ?? 'Could not load generated images.'}</div>
                     ) : (
                       <div className="space-y-2">
-                        {Object.keys(projectProcessingImages.items).length === 0 ? (
+                        {Object.values(generatedImageSections).every((items) => items.length === 0) && projectPipelineDetails.room_scales_per_plan.length === 0 ? (
                           <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/60">No generated images for this run yet.</div>
                         ) : (
-                          Object.entries(projectProcessingImages.items).map(([folder, imgs]) => (
-                            <div key={folder} className="rounded-lg border border-white/10 bg-black/20 p-2">
-                              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#FFD29A]">{folder.replace(/_/g, ' / ')}</div>
+                          <>
+                          {([
+                            ['Segmentation', generatedImageSections.segmentation],
+                            ['Wall Construction', generatedImageSections.wall_construction],
+                            ['Roof', generatedImageSections.roof],
+                            ['Other', generatedImageSections.other],
+                          ] as const)
+                            .filter(([, imgs]) => imgs.length > 0)
+                            .map(([section, imgs]) => (
+                            <div key={section} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#FFD29A]">{section}</div>
                               <div className="hide-scroll flex gap-2 overflow-x-auto pb-1">
                                 {imgs.map((img) => (
-                                  <a
-                                    key={img.id}
-                                    href={img.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="relative h-24 w-36 shrink-0 overflow-hidden rounded-lg border border-[#FF9F0F]/25 bg-black/30 shadow-sm transition hover:border-[#FF9F0F]/45"
-                                  >
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={img.url} alt={img.filename} className="h-full w-full object-cover opacity-90" />
-                                  </a>
+                                  String(img.filename || '').toLowerCase().endsWith('.json') ? (
+                                    <button
+                                      key={img.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setJsonPreviewModal({ open: true, filename: img.filename, content: '', loading: true, error: null })
+                                        void (async () => {
+                                          try {
+                                            const res = await fetch(img.url)
+                                            const text = await res.text()
+                                            let pretty = text
+                                            try {
+                                              pretty = JSON.stringify(JSON.parse(text), null, 2)
+                                            } catch {
+                                              // keep raw text
+                                            }
+                                            setJsonPreviewModal({ open: true, filename: img.filename, content: pretty, loading: false, error: null })
+                                          } catch (e) {
+                                            setJsonPreviewModal({
+                                              open: true,
+                                              filename: img.filename,
+                                              content: '',
+                                              loading: false,
+                                              error: e instanceof Error ? e.message : 'Could not load JSON file.',
+                                            })
+                                          }
+                                        })()
+                                      }}
+                                      className="relative h-24 w-44 shrink-0 overflow-hidden rounded-lg border border-[#FF9F0F]/25 bg-gradient-to-br from-black/40 to-[#2a2017] px-3 py-2 text-left shadow-sm transition hover:border-[#FF9F0F]/45"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 text-[#FFB84D]">
+                                          <FileText size={14} />
+                                        </span>
+                                        <span className="truncate text-[11px] font-semibold text-[#FFD29A]">JSON details</span>
+                                      </div>
+                                      <div className="mt-2 line-clamp-2 text-[10px] text-sand/70">{img.filename}</div>
+                                    </button>
+                                  ) : (
+                                    <a
+                                      key={img.id}
+                                      href={img.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="relative h-24 w-36 shrink-0 overflow-hidden rounded-lg border border-[#FF9F0F]/25 bg-black/30 shadow-sm transition hover:border-[#FF9F0F]/45"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img src={img.url} alt={img.filename} className="h-full w-full object-cover opacity-90" />
+                                    </a>
+                                  )
                                 ))}
                               </div>
                             </div>
-                          ))
+                          ))}
+
+                  {/* Gemini Crops — all room images (crop/location/mask/batch) + Gemini scale response */}
+                  {(generatedImageSections.gemini_crops.length > 0 || projectPipelineDetails.room_scales_per_plan.length > 0) && selectedOrgProject && (
+                    <div className="rounded-lg border border-[#FF9F0F]/25 bg-black/20 p-2">
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#FFD29A]">Gemini Crops</div>
+                      <div className="space-y-3">
+                        {(() => {
+                          const API_BASE = `${NEST_API_BASE}/admin`
+                          const offerId = selectedOrgProject.id
+                          // Collect all plans that have either room_scales data or crop images
+                          const allPlanIds = Array.from(new Set([
+                            ...projectPipelineDetails.room_scales_per_plan.map((p) => p.plan_id),
+                            ...generatedImageSections.gemini_crops.map((img) => img.plan_id ?? '__none__'),
+                          ]))
+                                  return allPlanIds.map((plan_id) => {
+                                    const scaleEntry = projectPipelineDetails.room_scales_per_plan.find((p) => p.plan_id === plan_id)
+                                    const rooms = scaleEntry ? ((scaleEntry.data.room_scales ?? scaleEntry.data.rooms) as Record<string, Record<string, unknown>> | null) : null
+                                    const planCrops = generatedImageSections.gemini_crops.filter((img) => (img.plan_id ?? '__none__') === plan_id)
+
+                                    // Build a map of supabase images by filename for quick lookup
+                                    const supabaseByFilename = new Map(planCrops.map((img) => [img.filename, img.url]))
+
+                                    // Merge local-only filenames from pipeline-details (for runs where images weren't uploaded)
+                                    type ImgRef = { filename: string; url: string }
+                                    const allImgs: ImgRef[] = [...planCrops.map((img) => ({ filename: img.filename ?? '', url: img.url }))]
+                                    for (const fn of (scaleEntry?.local_crop_filenames ?? [])) {
+                                      if (!supabaseByFilename.has(fn)) {
+                                        allImgs.push({ filename: fn, url: `${API_BASE}/offers/${offerId}/room-crop-image?planId=${plan_id}&filename=${encodeURIComponent(fn)}` })
+                                      }
+                                    }
+
+                                    if (!rooms && allImgs.length === 0) return null
+
+                                    // Group images by room index (room_0_*, room_1_*, …)
+                                    const roomImgMap = new Map<string, ImgRef[]>()
+                                    for (const img of allImgs) {
+                                      const m = img.filename?.match(/^room_(\d+)_/)
+                                      const key = m ? m[1] : '__other__'
+                                      if (!roomImgMap.has(key)) roomImgMap.set(key, [])
+                                      roomImgMap.get(key)!.push(img)
+                                    }
+                                    // Merge room keys from both sources
+                                    const roomKeys = Array.from(new Set([
+                                      ...(rooms ? Object.keys(rooms) : []),
+                                      ...Array.from(roomImgMap.keys()).filter((k) => k !== '__other__'),
+                                    ])).sort((a, b) => Number(a) - Number(b))
+
+                                    // Image label from filename suffix
+                                    const imgLabel = (fn: string) => fn.replace(/^room_\d+_/, '').replace(/\.\w+$/, '')
+
+                                    return (
+                                      <div key={plan_id}>
+                                        {allPlanIds.length > 1 && (
+                                          <div className="mb-1.5 text-[10px] font-semibold text-[#FFD29A]/60">{plan_id.replace(/_/g, ' ')}</div>
+                                        )}
+                                        <div className="space-y-2">
+                                          {roomKeys.map((rk) => {
+                                            const room = rooms?.[rk] ?? null
+                                            const imgs = roomImgMap.get(rk) ?? []
+                                            const mPx = room && typeof room.m_px === 'number' ? room.m_px : null
+                                            const areaM2 = room && typeof room.area_m2 === 'number' ? room.area_m2 : null
+                                            const areaPx = room && typeof room.area_px === 'number' ? room.area_px : null
+                                            const roomName = String(room?.room_name ?? room?.room_type ?? `Room ${rk}`)
+                                            return (
+                                              <div key={rk} className="rounded-md border border-[#FF9F0F]/15 bg-[#FF9F0F]/5 p-2">
+                                                {/* Room header */}
+                                                <div className="mb-2 flex items-center gap-2">
+                                                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded bg-[#FF9F0F]/20 px-1.5 text-[9px] font-bold text-[#FFD29A]">#{rk}</span>
+                                                  <span className="text-xs font-semibold text-sand">{roomName}</span>
+                                                  {room?.room_type != null && String(room.room_type) !== roomName && (
+                                                    <span className="text-[10px] text-sand/50">{String(room.room_type)}</span>
+                                                  )}
+                                                </div>
+                                                {/* All crop images for this room */}
+                                                {imgs.length > 0 && (
+                                                  <div className="hide-scroll mb-2 flex gap-2 overflow-x-auto pb-1">
+                                                    {imgs.map((img) => (
+                                                      <div key={img.filename}
+                                                        className="relative shrink-0 overflow-hidden rounded border border-[#FF9F0F]/20 bg-black/40 shadow-sm transition hover:border-[#FF9F0F]/50"
+                                                        style={{ height: 96, width: 'auto', minWidth: 80 }}
+                                                      >
+                                                        <AuthImage src={img.url} alt={img.filename} className="h-full w-auto object-contain" style={{ maxWidth: 160 }} clickable />
+                                                        <span className="absolute bottom-0.5 left-0.5 rounded bg-black/75 px-1 py-0.5 text-[8px] font-semibold text-[#FFD29A]/80">
+                                                          {imgLabel(img.filename ?? '')}
+                                                        </span>
+                                                      </div>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                                {/* Gemini response */}
+                                                <div className="grid grid-cols-3 gap-x-3 gap-y-0.5 text-[10px]">
+                                                  {areaM2 != null && (
+                                                    <><span className="text-sand/50">Area</span><span className="col-span-2 font-mono text-sand/80">{areaM2.toFixed(2)} m²</span></>
+                                                  )}
+                                                  {areaPx != null && (
+                                                    <><span className="text-sand/50">Area px</span><span className="col-span-2 font-mono text-sand/80">{areaPx.toLocaleString()} px²</span></>
+                                                  )}
+                                                  {mPx != null && (
+                                                    <><span className="text-sand/50">Scale</span><span className="col-span-2 font-mono text-sand/80">{mPx.toFixed(6)} m/px &nbsp;<span className="text-sand/45">({(1/mPx).toFixed(2)} px/m)</span></span></>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            )
+                                          })}
+                                          {/* Unmatched images (no room key) */}
+                                          {(roomImgMap.get('__other__') ?? []).length > 0 && (
+                                            <div className="hide-scroll flex gap-2 overflow-x-auto">
+                                              {roomImgMap.get('__other__')!.map((img) => (
+                                                <a key={img.id} href={img.url} target="_blank" rel="noreferrer"
+                                                  className="relative h-20 w-28 shrink-0 overflow-hidden rounded border border-[#FF9F0F]/20 bg-black/40 shadow-sm transition hover:border-[#FF9F0F]/40">
+                                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                  <img src={img.url} alt={img.filename} className="h-full w-full object-cover" />
+                                                </a>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )
+                                  })
+                                })()}
+                              </div>
+                            </div>
+                          )}
+                          </>
                         )}
                       </div>
                     )}
                   </section>
-
-                  <div className="flex min-h-[100px] items-center justify-center rounded-xl border border-dashed border-white/15 bg-black/10 px-4 py-8 text-center text-xs text-sand/45">
-                    Additional exports and logs · placeholder
-                  </div>
                 </div>
               </div>
             ) : (
@@ -3402,42 +4582,84 @@ export default function AdminPage() {
                     ) : (
                       filteredOrgProjects.map((proj) => {
                         return (
-                          <button
+                          <div
                             key={proj.id}
-                            type="button"
-                            onClick={() => setSelectedProjectRef(proj.id)}
-                            className="relative flex min-h-[min(7.5rem,18vh)] flex-col overflow-hidden rounded-md border border-black/40 bg-coffee-750/95 pl-3 pr-3 pt-2.5 pb-2.5 text-left shadow-soft transition hover:border-caramel hover:bg-coffee-700/95"
-                            style={{ borderLeftWidth: 4, borderLeftColor: '#FF9F0F' }}
+                            className={`relative flex min-h-[min(7.5rem,18vh)] flex-col overflow-hidden rounded-md border border-black/40 bg-coffee-750/95 pl-3 pr-3 pt-2.5 pb-2.5 shadow-soft transition ${proj.isDeleted ? 'opacity-[0.88]' : ''} hover:border-caramel hover:bg-coffee-700/95`}
+                            style={{
+                              borderLeftWidth: 4,
+                              borderLeftColor: proj.isDeleted ? '#52525b' : '#FF9F0F',
+                            }}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <span className="truncate text-sm font-semibold leading-snug text-[#FFD29A] sm:text-[15px]">
-                                {proj.offerKindLabel}
-                              </span>
-                              <span
-                                className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold tracking-wide ${proj.historyStatusBadgeClass}`}
+                            {usingLiveProjects && proj.isLiveRow && proj.isDeleted && selectedOrgId ? (
+                              <button
+                                type="button"
+                                className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-red-500/35 bg-red-500/10 text-red-200/90 transition hover:border-red-400/50 hover:bg-red-500/20"
+                                title="Permanently remove from database and storage (cannot be undone)"
+                                disabled={permanentDeletingId === proj.id}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (
+                                    !window.confirm(
+                                      'Permanently delete this offer? This removes the database row and all uploaded files. This cannot be undone.',
+                                    )
+                                  ) {
+                                    return
+                                  }
+                                  setPermanentDeletingId(proj.id)
+                                  void (async () => {
+                                    try {
+                                      await adminPermanentlyDeleteOffer(selectedOrgId, proj.id)
+                                      setTenantOffers((prev) => prev.filter((x) => x.id !== proj.id))
+                                      if (selectedProjectRef === proj.id) setSelectedProjectRef(null)
+                                    } catch (err) {
+                                      window.alert(
+                                        err instanceof Error ? err.message : 'Permanent delete failed.',
+                                      )
+                                    } finally {
+                                      setPermanentDeletingId(null)
+                                    }
+                                  })()
+                                }}
+                                aria-label="Permanently delete offer"
                               >
-                                {proj.historyStatusLabel}
-                              </span>
-                            </div>
-                            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-sand/55">
-                              <span>{proj.dateLabel}</span>
-                              {proj.owner ? (
-                                <>
-                                  <span className="text-sand/35">·</span>
-                                  <span className="max-w-[9rem] truncate text-sand/75">{proj.owner}</span>
-                                </>
-                              ) : null}
-                              <span className="text-sand/35">·</span>
-                              <span className="truncate font-mono text-[10px] text-sand/45" title={proj.ref}>
-                                {proj.ref}
-                              </span>
-                            </div>
-                            <div className="mt-1 line-clamp-2 text-sm font-medium leading-snug text-sand">{proj.title}</div>
-                            <div className="mt-auto flex items-center gap-1.5 border-t border-white/5 pt-2 text-[11px] text-sand/65">
-                              <Clock3 size={12} className="shrink-0 text-[#FFB84D]/70" />
-                              <span title={proj.durationTooltip}>{proj.duration}</span>
-                            </div>
-                          </button>
+                                <Trash2 size={14} className="shrink-0" />
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProjectRef(proj.id)}
+                              className="flex w-full min-h-0 flex-1 flex-col text-left"
+                            >
+                              <div className="flex items-start justify-between gap-2 pr-6">
+                                <span className="truncate text-sm font-semibold leading-snug text-[#FFD29A] sm:text-[15px]">
+                                  {proj.offerKindLabel}
+                                </span>
+                                <span
+                                  className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold tracking-wide ${proj.historyStatusBadgeClass}`}
+                                >
+                                  {proj.historyStatusLabel}
+                                </span>
+                              </div>
+                              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-sand/55">
+                                <span>{proj.dateLabel}</span>
+                                {proj.owner ? (
+                                  <>
+                                    <span className="text-sand/35">·</span>
+                                    <span className="max-w-[9rem] truncate text-sand/75">{proj.owner}</span>
+                                  </>
+                                ) : null}
+                                <span className="text-sand/35">·</span>
+                                <span className="truncate font-mono text-[10px] text-sand/45" title={proj.ref}>
+                                  {proj.ref}
+                                </span>
+                              </div>
+                              <div className="mt-1 line-clamp-2 text-sm font-medium leading-snug text-sand">{proj.title}</div>
+                              <div className="mt-auto flex items-center gap-1.5 border-t border-white/5 pt-2 text-[11px] text-sand/65">
+                                <Clock3 size={12} className="shrink-0 text-[#FFB84D]/70" />
+                                <span title={proj.durationTooltip}>{proj.duration}</span>
+                              </div>
+                            </button>
+                          </div>
                         )
                       })
                     )}
@@ -3469,19 +4691,61 @@ export default function AdminPage() {
             <Send size={18} className="shrink-0 text-[#FFB84D]" aria-hidden />
             Push update
           </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <button type="button" className="rounded-xl border border-white/15 bg-black/20 w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-sand hover:border-[#FF9F0F]/40 transition">
-                <Sparkles size={14} className="text-[#FFB84D]" />
-                File upload
-              </button>
+            <div className="hide-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
               <label className="block shrink-0">
                 <span className="wiz-label">Title</span>
-                <input type="text" readOnly value={selectedOrg.name} className="sun-input" />
+                <input
+                  type="text"
+                  value={pushTitle}
+                  onChange={(e) => { setPushTitle(e.target.value); setPushSaved(false); setPushError(null) }}
+                  placeholder="Update title…"
+                  className="sun-input"
+                />
               </label>
-              <label className="flex min-h-0 flex-1 flex-col">
+              <label className="flex min-h-0 shrink-0 flex-col">
                 <span className="wiz-label">Message</span>
-                <textarea key={selectedOrgId} rows={8} className="sun-textarea min-h-[120px] flex-1 resize-none" defaultValue={`Update target: ${selectedOrg.name}`} />
+                <textarea
+                  rows={6}
+                  value={pushMessage}
+                  onChange={(e) => { setPushMessage(e.target.value); setPushSaved(false); setPushError(null) }}
+                  placeholder="Describe the update…"
+                  className="sun-textarea min-h-[100px] resize-none"
+                />
               </label>
+              {/* Image upload */}
+              <div className="shrink-0">
+                <span className="wiz-label mb-1.5 block">Image <span className="font-normal text-sand/45">(optional)</span></span>
+                <input
+                  ref={pushImageInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleImageUpload(f) }}
+                />
+                {pushImageUrl ? (
+                  <div className="relative overflow-hidden rounded-lg border border-white/15">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={pushImageUrl} alt="Preview" className="h-28 w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setPushImageUrl(null)}
+                      className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/80 hover:text-white transition"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => pushImageInputRef.current?.click()}
+                    disabled={pushImageUploading}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/20 bg-black/20 py-3 text-xs text-sand/60 hover:border-[#FF9F0F]/40 hover:text-sand/90 transition disabled:opacity-50"
+                  >
+                    <Sparkles size={13} className="text-[#FFB84D]" />
+                    {pushImageUploading ? 'Uploading…' : 'Upload image'}
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -3514,21 +4778,129 @@ export default function AdminPage() {
                 </button>
               </div>
               <div className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-sand/75">
-                Target: {audienceMode === 'all' ? 'All users' : `Custom rules · ${customMode}`}
+                Target: {audienceMode === 'all' || pushTargetTenantIds.length === 0
+                  ? 'All users'
+                  : pushTargetTenantIds.length === 1
+                    ? (clientOrgs.find((o) => o.id === pushTargetTenantIds[0])?.name ?? pushTargetTenantIds[0])
+                    : `${pushTargetTenantIds.length} organizations`}
               </div>
-              <div className="mt-1 shrink-0 space-y-2 border-t border-white/10 pt-3">
-                <button type="button" className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-white font-bold inline-flex items-center justify-center gap-2 shadow-[0_8px_20px_rgba(255,159,15,.25)] hover:brightness-110 transition">
+              {pushError && (
+                <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-2.5 py-2 text-xs text-red-300">{pushError}</div>
+              )}
+              {pushSaved && (
+                <div className="rounded-lg border border-green-500/35 bg-green-500/10 px-2.5 py-2 text-xs text-green-300">Update pushed successfully!</div>
+              )}
+              <div className="shrink-0 space-y-2 border-t border-white/10 pt-3">
+                <button
+                  type="button"
+                  onClick={handleInstantlyPush}
+                  disabled={pushSaving}
+                  className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-white font-bold inline-flex items-center justify-center gap-2 shadow-[0_8px_20px_rgba(255,159,15,.25)] hover:brightness-110 transition disabled:opacity-60"
+                >
                   <Send size={15} />
-                  Instantly Push
+                  {pushSaving ? 'Pushing…' : 'Instantly Push'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setScheduleOpen(true)}
+                  onClick={() => { setPushError(null); setScheduleOpen(true) }}
                   className="w-full rounded-xl border border-white/20 bg-black/20 py-2.5 text-sand font-semibold inline-flex items-center justify-center gap-2 hover:border-[#FF9F0F]/45 hover:text-white transition"
                 >
                   <Clock3 size={15} />
                   Schedule Push
                 </button>
+              </div>
+              {adminAnnouncements.length > 0 && (
+                <div className="shrink-0 space-y-1.5 border-t border-white/10 pt-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-sand/50">Recent</div>
+                  {adminAnnouncements.slice(0, 5).map((ann) => (
+                    <div key={ann.id} className="flex items-start gap-2 rounded-lg border border-white/10 bg-black/20 px-2.5 py-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-medium text-sand/90">{ann.title}</div>
+                        <div className="mt-0.5 text-[10px] text-sand/50">
+                          {ann.scheduled_at
+                            ? `Scheduled · ${new Date(ann.scheduled_at).toLocaleDateString('de-DE')}`
+                            : new Date(ann.created_at).toLocaleDateString('de-DE')}
+                          {' · '}{ann.audience_mode === 'all' ? 'All' : 'Specific'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAnnouncement(ann.id)}
+                        className="shrink-0 text-sand/40 hover:text-red-400 transition"
+                        title="Delete"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Site Banner ── */}
+              <div className="shrink-0 border-t border-white/10 pt-4">
+                <div className="mb-3 flex items-center gap-2 text-sand font-semibold">
+                  <span className="text-[#FFB84D]">▬</span>
+                  Site Banner
+                </div>
+                <div className="space-y-3">
+                  <div
+                    className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5 cursor-pointer"
+                    onClick={async () => {
+                      const next = !bannerVisible
+                      setBannerVisible(next)
+                      await handleSaveBanner({ is_visible: next })
+                    }}
+                  >
+                    <span className="text-xs font-medium text-sand/80">Visible for users</span>
+                    <div className={[
+                      'relative h-6 w-11 rounded-full transition-colors duration-200 shrink-0',
+                      bannerVisible ? 'bg-[#FF9F0F]' : 'bg-white/25',
+                    ].join(' ')}>
+                      <span className={[
+                        'absolute top-1 h-4 w-4 rounded-full bg-white shadow-md transition-transform duration-200',
+                        bannerVisible ? 'translate-x-6' : 'translate-x-1',
+                      ].join(' ')} />
+                    </div>
+                  </div>
+                  <label className="block">
+                    <span className="wiz-label">Message</span>
+                    <textarea
+                      rows={3}
+                      value={bannerMessage}
+                      onChange={(e) => { setBannerMessage(e.target.value); setBannerSaved(false) }}
+                      placeholder="Message visible to all users…"
+                      className="sun-textarea min-h-[64px] resize-none"
+                    />
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-xs text-sand/70">
+                      <span>Color</span>
+                      <input
+                        type="color"
+                        value={bannerColor}
+                        onChange={(e) => { setBannerColor(e.target.value); setBannerSaved(false) }}
+                        className="h-7 w-10 cursor-pointer rounded border border-white/20 bg-transparent p-0.5"
+                      />
+                    </label>
+                    <div className="flex-1" />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBanner()}
+                      disabled={bannerSaving}
+                      className="rounded-lg bg-[#FF9F0F]/25 border border-[#FF9F0F]/45 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] transition hover:bg-[#FF9F0F]/35 disabled:opacity-50"
+                    >
+                      {bannerSaving ? 'Saving…' : bannerSaved ? '✓ Saved' : 'Save banner'}
+                    </button>
+                  </div>
+                  {bannerVisible && bannerMessage.trim() && (
+                    <div
+                      className="rounded-lg px-3 py-2 text-center text-xs font-medium text-white"
+                      style={{ backgroundColor: bannerColor }}
+                    >
+                      {bannerMessage}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             </>
@@ -3749,14 +5121,11 @@ export default function AdminPage() {
                 </div>
 
                 <div className="rounded-xl border border-[#FF9F0F]/25 bg-black/20 p-2.5">
-                  <div className="mb-2 text-sm font-semibold text-sand">Monthly project quota</div>
+                  <div className="mb-2 text-sm font-semibold text-sand">Run quota</div>
                   {liveWorkspace && (
                     <p className="mb-2 text-[11px] leading-snug text-sand/55">
                       {liveWorkspace.tokens.display}
                       <span className="text-sand/45"> · period {liveWorkspace.tokens.period_ym} (Europe/Berlin)</span>
-                      {(liveWorkspace.tokens.bonus ?? 0) > 0 ? (
-                        <span className="block text-[#FFD29A]/90">Bonus added: +{liveWorkspace.tokens.bonus} monthly tokens</span>
-                      ) : null}
                       {!liveWorkspace.tokens.unlimited && liveWorkspace.tokens.limit != null && (
                         <span className="block text-sand/45">
                           {liveWorkspace.tokens.used} used of {liveWorkspace.tokens.limit} this month
@@ -3778,7 +5147,7 @@ export default function AdminPage() {
                     className="w-full rounded-xl border border-[#FF9F0F]/45 bg-linear-to-b from-[#e08414] to-[#f79116] py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(255,159,15,.25)] transition hover:brightness-110 inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Coins size={15} />
-                    Add more tokens
+                    Grant extra runs
                   </button>
                 </div>
 
@@ -4098,92 +5467,457 @@ export default function AdminPage() {
         )}
 
       {moatPopup ? (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-2xl border border-white/15 bg-coffee-850 p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <div className="text-base font-semibold text-sand">{moatPopup.title}</div>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-sand/70 hover:bg-white/10 hover:text-white"
-                onClick={() => setMoatPopup(null)}
-              >
-                Close
-              </button>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm">
+          <div className="flex w-full max-w-5xl flex-col rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl" style={{ maxHeight: '90vh' }}>
+            {/* Header */}
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <div>
+                <div className="text-base font-semibold text-sand">{moatPopup.title}</div>
+                <div className="mt-0.5 text-xs text-sand/50">
+                  {moatPopup.markedPlans.toLocaleString('en-US')} marked plans · {moatPopup.artifacts.toLocaleString('en-US')} artifacts
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {moatDetectionsData.status === 'ok' && moatDetectionsData.plans.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const all = moatDetectionsData.plans.map((p) => extractMoatSectionJson(p, moatPopup.key))
+                      downloadJsonFile({ section: moatPopup.key, total_plans: all.length, plans: all }, `${moatPopup.key}_all_offers.json`)
+                    }}
+                    className="rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/15 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] transition hover:bg-[#FF9F0F]/25"
+                  >
+                    ↓ Export all JSON
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1.5 text-sm text-sand/70 hover:bg-white/10 hover:text-white"
+                  onClick={() => {
+                    setMoatPopup(null)
+                    setMoatDetectionsData({ status: 'idle', plans: [], blueprintImages: {}, wallMaskUrls: {}, sourceOfferId: null })
+                    setMoatFiles({ status: 'idle', bySection: {}, sourceOfferId: null })
+                    setMoatRuns({ status: 'idle', runs: [], tenantId: null })
+                    setMoatSelectedRunId(null)
+                    setMoatSegData({ status: 'idle', offerId: null, docs: [] })
+                    moatDetectionsLoadingRef.current = null
+                    moatFilesLoadingRef.current = null
+                    moatRunsLoadingRef.current = null
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
-            <div className="grid gap-2 md:grid-cols-3">
-              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
-                Marked plans: <span className="font-semibold text-[#FFD29A]">{moatPopup.markedPlans.toLocaleString('en-US')}</span>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
-                Artifacts: <span className="font-semibold text-[#FFD29A]">{moatPopup.artifacts.toLocaleString('en-US')}</span>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-sand/80">
-                Avg artifacts / marked plan:{' '}
-                <span className="font-semibold text-[#FFD29A]">
-                  {moatPopup.markedPlans > 0 ? (moatPopup.artifacts / moatPopup.markedPlans).toFixed(2) : '0.00'}
+
+            {/* Section tabs */}
+            <div className="hide-scroll flex shrink-0 gap-1.5 overflow-x-auto border-b border-white/10 px-4 py-2.5">
+              {dataMoatRows.map((row) => {
+                const active = row.key === moatPopup.key
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    onClick={() => setMoatPopup({ key: row.key, title: row.title, markedPlans: row.markedPlans, artifacts: row.artifacts })}
+                    className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-medium transition ${
+                      active
+                        ? 'border-[#FF9F0F]/55 bg-[#FF9F0F]/18 text-[#FFD29A]'
+                        : 'border-white/10 bg-black/20 text-sand/70 hover:border-[#FF9F0F]/30 hover:text-sand'
+                    }`}
+                  >
+                    {row.title}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Run selector */}
+            <div className="hide-scroll flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/10 px-4 py-2">
+              {moatRuns.status === 'loading' ? (
+                <span className="flex items-center gap-1.5 text-xs text-sand/40">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-sand/20 border-t-sand/60" />
+                  Loading runs…
                 </span>
-              </div>
-            </div>
-            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2.5">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sand/55">Data moat sections</div>
-              <div className="space-y-1.5">
-                {dataMoatRows.map((row) => {
-                  const totalArtifacts = Math.max(1, dataMoatRows.reduce((acc, r) => acc + r.artifacts, 0))
-                  const pct = Math.round((row.artifacts / totalArtifacts) * 100)
-                  const active = row.key === moatPopup.key
+              ) : moatRuns.status === 'ok' && moatRuns.runs.length > 0 ? (
+                moatRuns.runs.map((run) => {
+                  const isActive = run.run_id === moatSelectedRunId
+                  const date = new Date(run.created_at)
+                  const dateStr = `${date.toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit' })} ${date.toLocaleTimeString('ro-RO', { hour: '2-digit', minute: '2-digit' })}`
                   return (
                     <button
-                      key={row.key}
+                      key={run.run_id}
                       type="button"
-                      onClick={() => setMoatPopup({ key: row.key, title: row.title, markedPlans: row.markedPlans, artifacts: row.artifacts })}
-                      className={`flex w-full items-center justify-between rounded-md border px-2.5 py-1.5 text-left text-xs transition ${
-                        active
-                          ? 'border-[#FF9F0F]/55 bg-[#FF9F0F]/14 text-[#FFD29A]'
-                          : 'border-white/10 bg-black/20 text-sand/80 hover:border-[#FF9F0F]/35'
+                      onClick={() => setMoatSelectedRunId(run.run_id)}
+                      className={`shrink-0 rounded-md border px-2.5 py-1 text-[10px] font-medium transition ${
+                        isActive
+                          ? 'border-emerald-500/55 bg-emerald-500/15 text-emerald-300'
+                          : 'border-white/10 bg-black/20 text-sand/60 hover:border-white/25 hover:text-sand'
                       }`}
                     >
-                      <span className="truncate pr-2">{row.title}</span>
-                      <span className="shrink-0 tabular-nums">
-                        {row.artifacts.toLocaleString('en-US')} artifacts · {pct}%
-                      </span>
+                      <span className="font-mono">{dateStr}</span>
+                      <span className="ml-1.5 text-sand/35">#{run.offer_id.slice(0, 6)}</span>
                     </button>
                   )
-                })}
-              </div>
+                })
+              ) : moatRuns.status === 'ok' ? (
+                <span className="text-xs text-sand/35">No runs found</span>
+              ) : null}
+              {/* Refresh button */}
+              <button
+                type="button"
+                title="Refresh runs"
+                onClick={() => {
+                  moatRunsLoadingRef.current = null
+                  setMoatRuns({ status: 'idle', runs: [], tenantId: null })
+                  setMoatSelectedRunId(null)
+                  setMoatSegData({ status: 'idle', offerId: null, docs: [] })
+                  setMoatRunsRefreshToken((t) => t + 1)
+                }}
+                className="ml-auto shrink-0 rounded border border-white/10 px-2 py-0.5 text-[10px] text-sand/40 transition hover:border-white/25 hover:text-sand/70"
+              >
+                ↻ Refresh
+              </button>
             </div>
-            <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-2.5">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-sand/55">Files</div>
-              {moatFiles.status === 'loading' ? (
-                <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/65">
-                  Loading files…
+
+            {/* Content area */}
+            {(() => {
+              const selectedRun = moatRuns.runs.find((r) => r.run_id === moatSelectedRunId)
+              // Section → which kinds from moatRuns to show
+              const RUN_SECTION_KINDS: Record<string, string[]> = {
+                plan_segmentation: ['segmentation_annotated', 'gemini_crop'],
+                wall_detection:    ['cubicasa_step'],
+                rooms_detection:   ['gemini_room_crop'],
+              }
+              const runKinds = RUN_SECTION_KINDS[moatPopup.key] ?? []
+              const runImages: Array<{ id: string; url: string; filename: string; plan_id?: string; kind: string }> =
+                selectedRun
+                  ? runKinds.flatMap((k) => (selectedRun.sections[k] ?? []).map((img) => ({ ...img, kind: k })))
+                  : []
+
+              // Separate overview (cluster_preview) from crops (gemini_crop)
+              const overviewImgs = runImages.filter((i) => i.kind === 'segmentation_annotated')
+              const cropImgs = runImages.filter((i) => i.kind === 'gemini_crop')
+
+              const ImageCard = ({ img, label }: { img: typeof runImages[number]; label?: string }) => (
+                <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+                  <a href={img.url} target="_blank" rel="noreferrer" className="block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={img.url} alt={img.filename} className="w-full rounded object-contain" style={{ maxHeight: '220px' }} />
+                  </a>
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      {label && <div className="text-[9px] font-semibold uppercase tracking-wide text-[#FF9F0F]/70">{label}</div>}
+                      <div className="truncate text-[10px] text-sand/55">{img.filename}</div>
+                      {img.plan_id && <div className="text-[9px] text-sand/35">{img.plan_id}</div>}
+                    </div>
+                    <a href={img.url} download={img.filename} target="_blank" rel="noreferrer"
+                      className="shrink-0 rounded border border-[#FF9F0F]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#FFD29A]/80 transition hover:border-[#FF9F0F]/55 hover:bg-[#FF9F0F]/10">
+                      ↓ img
+                    </a>
+                  </div>
                 </div>
+              )
+
+              return (
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {moatRuns.status === 'loading' && runImages.length === 0 ? (
+                <div className="flex items-center justify-center py-12 text-sm text-sand/50">Loading runs…</div>
+              ) : moatRuns.status === 'error' ? (
+                <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/90">{moatRuns.message}</div>
+              ) : runImages.length > 0 ? (
+                <div className="space-y-4">
+                  {overviewImgs.length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sand/40">Imaginea trimisă Gemini + poligoane coordonate</div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {overviewImgs.map((img) => <ImageCard key={img.id} img={img} />)}
+                      </div>
+                    </div>
+                  )}
+                  {cropImgs.length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sand/40">
+                        {moatPopup.key === 'plan_segmentation' ? 'Crop-uri din coordonatele Gemini (etajele casei)' : 'Imagini'}
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {cropImgs.map((img) => <ImageCard key={img.id} img={img} />)}
+                      </div>
+                    </div>
+                  )}
+                  {/* For plan_segmentation: remaining non-annotated, non-crop images */}
+                  {moatPopup.key === 'plan_segmentation' && runImages.filter(i => i.kind !== 'segmentation_annotated' && i.kind !== 'gemini_crop').length > 0 && (
+                    <div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sand/40">Alte imagini</div>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {runImages.filter(i => i.kind !== 'segmentation_annotated' && i.kind !== 'gemini_crop').map((img) => <ImageCard key={img.id} img={img} />)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : moatPopup.key === 'plan_segmentation' ? (
+                /* plan_segmentation fallback: local disk via moatSegData */
+                moatSegData.status === 'loading' ? (
+                  <div className="flex items-center justify-center py-12 text-sm text-sand/50">
+                    <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-sand/20 border-t-sand/60" />
+                    Loading segmentation data…
+                  </div>
+                ) : moatSegData.docs.length > 0 ? (
+                  <div className="space-y-6">
+                    {moatSegData.docs.map((doc) => (
+                      <div key={doc.doc_id} className="space-y-3">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-sand/40">{doc.doc_id}</div>
+                          <button
+                            type="button"
+                            onClick={() => downloadJsonFile({ doc_id: doc.doc_id, crops: doc.crops }, `segmentation_${doc.doc_id.slice(0, 20)}.json`)}
+                            className="rounded border border-[#FF9F0F]/40 px-2 py-0.5 text-[10px] font-semibold text-[#FFD29A]/80 transition hover:border-[#FF9F0F]/65 hover:bg-[#FF9F0F]/10"
+                          >↓ crop_labels.json</button>
+                        </div>
+                        {doc.source_url && (
+                          <div>
+                            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-sand/35">Imaginea trimisă Gemini</div>
+                            <AuthImage src={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}${doc.source_url}`} alt="solidified source" className="max-h-48 w-full rounded border border-white/10 object-contain" />
+                          </div>
+                        )}
+                        <div>
+                          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-sand/35">Crop-uri (etajele casei)</div>
+                          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                            {doc.crops.map((crop) => (
+                              <div key={crop.file} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                                <AuthImage src={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}${crop.image_url ?? ''}`} alt={crop.file} className="w-full rounded object-contain" style={{ maxHeight: '200px' }} />
+                                <div className="mt-1.5 space-y-1">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <div className="truncate text-[10px] font-medium text-sand/70">{crop.raw_label || crop.file}</div>
+                                    <span className="shrink-0 text-[9px] text-sand/35">{crop.file}</span>
+                                  </div>
+                                  {crop.box_2d && (
+                                    <div className="rounded bg-black/30 px-1.5 py-1 font-mono text-[9px] text-sand/50">
+                                      <span className="mr-1 text-[#FF9F0F]/60">box_2d</span>[{(crop.box_2d as number[]).map((v) => v.toFixed(1)).join(', ')}]
+                                      {crop.image_size && <span className="ml-1.5 text-sand/30">{(crop.image_size as number[])[0]}×{(crop.image_size as number[])[1]}</span>}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-sm text-sand/40">
+                    <div>Nu există date de segmentare pentru această rulare.</div>
+                    <div className="mt-1 text-xs text-sand/25">Rulează engine-ul pentru a genera date noi. Datele noi sunt salvate în Supabase.</div>
+                  </div>
+                )
+              ) : moatRuns.status === 'ok' && moatRuns.runs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-sm text-sand/40">
+                  <div>Nu există rulări înregistrate pentru acest tenant.</div>
+                  <div className="mt-1 text-xs text-sand/25">Rulările apar după ce engine-ul procesează un proiect.</div>
+                </div>
+              ) : !selectedRun ? (
+                <div className="flex items-center justify-center py-12 text-sm text-sand/40">Selectează o rulare.</div>
               ) : moatFiles.status === 'error' ? (
-                <div className="rounded-md border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/95">
-                  {moatFiles.message ?? 'Could not load files.'}
+                <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-xs text-red-200/90">
+                  {moatFiles.message ?? 'Could not load data.'}
                 </div>
-              ) : moatSectionFiles.length === 0 ? (
-                <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-sand/60">
-                  No files found for this section on the latest live offer.
+              ) : moatDetectionsData.status === 'ok' && moatDetectionsData.plans.length > 0 ? (
+                /* Vector overlay cards — one per plan */
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {moatDetectionsData.plans.map((plan) => {
+                    const overlayLayers = MOAT_SECTION_OVERLAY_LAYERS[moatPopup.key] ?? []
+                    const isWallDetection = moatPopup.key === 'wall_detection'
+                    const featCount = getMoatFeatureCount(plan, moatPopup.key)
+
+                    // Blueprint base image from editor snapshots
+                    const bpUrl =
+                      (plan.planId ? moatDetectionsData.blueprintImages[`${plan.offerId}_${plan.planId}`] : undefined) ??
+                      (plan.planId ? moatDetectionsData.blueprintImages[plan.planId] : undefined) ??
+                      moatDetectionsData.blueprintImages[`_idx_${plan.planIndex}`] ??
+                      ''
+
+                    // Wall mask image URL (served via auth-gated endpoint from engine disk)
+                    const wallMaskUrl =
+                      (plan.planId ? moatDetectionsData.wallMaskUrls[`${plan.offerId}_${plan.planId}`] : undefined) ??
+                      moatDetectionsData.wallMaskUrls[`_idx_${plan.planIndex}`] ??
+                      ''
+
+                    // Gemini crop images for plan_segmentation
+                    const segImgs = moatFiles.bySection['plan_segmentation'] ?? []
+
+                    return (
+                      <div key={plan.planIndex} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                        {/* Blueprint + overlay stack */}
+                        <div
+                          className="relative w-full overflow-hidden rounded bg-black/30"
+                          style={{
+                            aspectRatio:
+                              plan.imageWidth > 0 && plan.imageHeight > 0
+                                ? `${plan.imageWidth} / ${plan.imageHeight}`
+                                : '4 / 3',
+                          }}
+                        >
+                          {isWallDetection ? (
+                            // Wall detection: blueprint underneath + wall mask as colorized overlay.
+                            // Wall mask is white-on-black → mix-blend-mode:screen makes black transparent;
+                            // CSS filter colorizes white walls to cyan/orange.
+                            <>
+                              {bpUrl ? (
+                                <AuthImage src={bpUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                              ) : null}
+                              {wallMaskUrl ? (
+                                <AuthImage
+                                  src={wallMaskUrl}
+                                  alt=""
+                                  className="absolute inset-0 h-full w-full object-contain"
+                                  style={{ mixBlendMode: 'screen', filter: 'sepia(1) saturate(10) hue-rotate(160deg) brightness(1.3)', opacity: 0.9 }}
+                                />
+                              ) : (
+                                // Fallback: room outlines as wall proxy
+                                (() => {
+                                  const proxyUrl = buildWallProxyOverlay(plan)
+                                  return proxyUrl ? (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img src={proxyUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                                  ) : !bpUrl ? (
+                                    <div className="absolute inset-0 flex items-center justify-center text-xs text-sand/30">No wall data</div>
+                                  ) : null
+                                })()
+                              )}
+                            </>
+                          ) : moatPopup.key === 'plan_segmentation' ? (
+                            // Plan segmentation: show the Gemini-segmented image for this plan
+                            // (gemini_crop images = the images Gemini analyzed with percentage bboxes).
+                            // The blueprint is the base; segmentation crops show what Gemini found.
+                            <>
+                              {bpUrl ? (
+                                <AuthImage src={bpUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                              ) : segImgs[plan.planIndex]?.url ? (
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={segImgs[plan.planIndex].url} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                              ) : null}
+                              {/* Room + opening detection overlay (Gemini-identified regions) */}
+                              {overlayLayers.map((layer) => {
+                                const url = buildOverlayDataUrl(plan, layer)
+                                return url ? (
+                                  /* eslint-disable-next-line @next/next/no-img-element */
+                                  <img key={layer} src={url} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                                ) : null
+                              })}
+                              {!bpUrl && !segImgs[plan.planIndex]?.url && (
+                                <div className="absolute inset-0 flex items-center justify-center text-xs text-sand/30">No segmentation image</div>
+                              )}
+                            </>
+                          ) : (
+                            // All other sections: blueprint + SVG overlay layers
+                            <>
+                              {bpUrl && (
+                                <AuthImage src={bpUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                              )}
+                              {overlayLayers.map((layer) => {
+                                const url = buildOverlayDataUrl(plan, layer)
+                                return url ? (
+                                  /* eslint-disable-next-line @next/next/no-img-element */
+                                  <img key={layer} src={url} alt="" className="absolute inset-0 h-full w-full object-contain" />
+                                ) : null
+                              })}
+                              {!bpUrl && overlayLayers.length === 0 && (
+                                <div className="absolute inset-0 flex items-center justify-center text-xs text-sand/30">No preview</div>
+                              )}
+                            </>
+                          )}
+                        </div>
+
+                        {/* For plan_segmentation: show the individual Gemini crop images below the blueprint */}
+                        {moatPopup.key === 'plan_segmentation' && segImgs.length > 0 && (
+                          <div className="mt-2 border-t border-white/5 pt-2">
+                            <div className="mb-1 text-[10px] font-medium text-sand/45">Gemini crops ({segImgs.length})</div>
+                            <div className="hide-scroll flex gap-1.5 overflow-x-auto pb-0.5">
+                              {segImgs.map((img) => (
+                                <a key={img.id} href={img.url} target="_blank" rel="noreferrer" className="shrink-0">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={img.url} alt={img.filename} className="h-14 w-14 rounded object-cover border border-white/10 hover:border-[#FF9F0F]/40 transition" />
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Card footer */}
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[11px] text-sand/60">
+                              {featCount > 0 ? `${featCount} feature${featCount !== 1 ? 's' : ''}` : 'No features'}
+                            </div>
+                            <div className="truncate text-[9px] text-sand/35" title={plan.offerId}>
+                              {plan.offerId.slice(0, 8)}…
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const data = extractMoatSectionJson(plan, moatPopup.key)
+                              downloadJsonFile(data, `${moatPopup.key}_${plan.offerId.slice(0, 8)}.json`)
+                            }}
+                            className="shrink-0 rounded border border-[#FF9F0F]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#FFD29A]/80 transition hover:border-[#FF9F0F]/55 hover:bg-[#FF9F0F]/10"
+                          >
+                            ↓ JSON
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : moatSectionFiles.length > 0 ? (
+                /* Pre-rendered detection images from Supabase storage (reliable for all offers) */
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {moatSectionFiles.map((img) => (
+                    <div key={img.id} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                      <a href={img.url} target="_blank" rel="noreferrer" className="block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={img.url} alt={img.filename} className="w-full rounded object-contain" style={{ maxHeight: '240px' }} />
+                      </a>
+                      <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <div className="truncate text-[10px] text-sand/55">{img.filename}</div>
+                        <a
+                          href={img.url}
+                          download={img.filename}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0 rounded border border-[#FF9F0F]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#FFD29A]/80 transition hover:border-[#FF9F0F]/55 hover:bg-[#FF9F0F]/10"
+                        >
+                          ↓ img
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : moatSectionFiles.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {moatSectionFiles.map((img) => (
+                    <div key={img.id} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                      <a href={img.url} target="_blank" rel="noreferrer" className="block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={img.url} alt={img.filename} className="w-full rounded object-contain" style={{ maxHeight: '220px' }} />
+                      </a>
+                      <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <div className="truncate text-[10px] text-sand/55">{img.filename}</div>
+                        <a href={img.url} download={img.filename} target="_blank" rel="noreferrer"
+                          className="shrink-0 rounded border border-[#FF9F0F]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#FFD29A]/80 transition hover:border-[#FF9F0F]/55 hover:bg-[#FF9F0F]/10">
+                          ↓ img
+                        </a>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="hide-scroll flex gap-2 overflow-x-auto pb-1">
-                  {moatSectionFiles.map((img) => (
-                    <a
-                      key={img.id}
-                      href={img.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-44 shrink-0 rounded-lg border border-[#FF9F0F]/25 bg-black/20 p-1.5 transition hover:border-[#FF9F0F]/45"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.url} alt={img.filename} className="h-24 w-full rounded object-cover" />
-                      <div className="mt-1.5 truncate text-[10px] font-medium text-sand/85">{img.filename}</div>
-                      <div className="truncate text-[10px] text-sand/50">{img.folder.replace(/_/g, ' / ')}</div>
-                    </a>
-                  ))}
+                <div className="flex flex-col items-center justify-center gap-3 py-12 text-sm text-sand/40">
+                  <div>Nu s-au găsit imagini pentru această secțiune în rularea selectată.</div>
                 </div>
               )}
             </div>
+              )
+            })()}
           </div>
         </div>
       ) : null}
@@ -4313,98 +6047,57 @@ export default function AdminPage() {
 
       {customUsersOpen && (
         <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl overflow-hidden">
+          <div className="w-full max-w-md rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl overflow-hidden">
             <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
-              <div className="text-base font-semibold text-sand">Custom user targeting</div>
+              <div className="text-base font-semibold text-sand">Select target organizations</div>
               <button type="button" onClick={() => setCustomUsersOpen(false)} className="text-sand/70 hover:text-white text-sm">Close</button>
             </div>
-            <div className="p-4 space-y-3">
-              <div className="inline-flex rounded-xl border border-white/15 bg-black/20 p-1">
-                {[
-                  { id: 'manual', label: 'Manual users' },
-                  { id: 'plans', label: 'By plans owned' },
-                  { id: 'offerTypes', label: 'By offer-type access' },
-                ].map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setCustomMode(item.id as 'manual' | 'plans' | 'offerTypes')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                      customMode === item.id ? 'bg-[#FF9F0F] text-white' : 'text-sand/80 hover:bg-white/8'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+            <div className="p-4 space-y-2">
+              <div className="text-xs text-sand/55 mb-3">Select one or more organizations to target. Leave empty to target all users.</div>
+              <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+                {clientOrgs.map((org) => {
+                  const selected = pushTargetTenantIds.includes(org.id)
+                  return (
+                    <button
+                      key={org.id}
+                      type="button"
+                      onClick={() => setPushTargetTenantIds((prev) =>
+                        prev.includes(org.id) ? prev.filter((x) => x !== org.id) : [...prev, org.id]
+                      )}
+                      className={[
+                        'w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition',
+                        selected
+                          ? 'border-[#FF9F0F]/60 bg-[#FF9F0F]/12 text-[#FFD29A]'
+                          : 'border-white/10 bg-black/20 text-sand/85 hover:border-[#FF9F0F]/30',
+                      ].join(' ')}
+                    >
+                      <span className={[
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] transition',
+                        selected ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/30 text-[#FFD29A]' : 'border-white/20 bg-black/30 text-transparent',
+                      ].join(' ')}>✓</span>
+                      <span className="min-w-0 flex-1 truncate font-medium">{org.name}</span>
+                      {org.app_platform && (
+                        <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-white/8 text-sand/50">{org.app_platform}</span>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
-
-              {customMode === 'manual' && (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div className="text-sm text-sand/85 mb-2">Select specific users</div>
-                  <div className="flex flex-wrap gap-2">
-                    {['Anna Keller', 'Lukas Meier', 'Paul Braun', 'Sofia Lang', 'Mihai Ionescu'].map((u) => {
-                      const active = manualUsers.includes(u)
-                      return (
-                        <button
-                          key={u}
-                          type="button"
-                          onClick={() => setManualUsers((prev) => (prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]))}
-                          className={`rounded-full border px-3 py-1 text-xs transition ${
-                            active ? 'border-[#FF9F0F]/65 bg-[#FF9F0F]/20 text-[#FFD29A]' : 'border-white/15 bg-black/20 text-sand/80'
-                          }`}
-                        >
-                          {u}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {customMode === 'plans' && (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div className="text-sm text-sand/85 mb-2">Target users by number of plans</div>
-                  <div className="flex flex-wrap gap-2">
-                    {['all', '0-10', '11-30', '31+'].map((bucket) => (
-                      <button
-                        key={bucket}
-                        type="button"
-                        onClick={() => setPlanBucket(bucket as 'all' | '0-10' | '11-30' | '31+')}
-                        className={`rounded-lg border px-3 py-1.5 text-xs transition ${
-                          planBucket === bucket ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]' : 'border-white/15 bg-black/20 text-sand/80'
-                        }`}
-                      >
-                        {bucket}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {customMode === 'offerTypes' && (
-                <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-                  <div className="text-sm text-sand/85 mb-2">Target users by offer type access</div>
-                  <div className="flex flex-wrap gap-2">
-                    {['Einfamilienhaus', 'Dachstuhl', 'Mengenermittlung', 'Custom offers'].map((ot) => {
-                      const active = offerTypeTargets.includes(ot)
-                      return (
-                        <button
-                          key={ot}
-                          type="button"
-                          onClick={() => setOfferTypeTargets((prev) => (prev.includes(ot) ? prev.filter((x) => x !== ot) : [...prev, ot]))}
-                          className={`rounded-lg border px-3 py-1.5 text-xs transition ${
-                            active ? 'border-[#FF9F0F]/70 bg-[#FF9F0F]/20 text-[#FFD29A]' : 'border-white/15 bg-black/20 text-sand/80'
-                          }`}
-                        >
-                          {ot}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
+              {pushTargetTenantIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPushTargetTenantIds([])}
+                  className="mt-1 text-xs text-sand/45 hover:text-sand/80 transition"
+                >
+                  Clear selection
+                </button>
               )}
             </div>
-            <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2">
+            <div className="px-4 py-3 border-t border-white/10 flex justify-between items-center gap-2">
+              <span className="text-xs text-sand/50">
+                {pushTargetTenantIds.length === 0 ? 'No selection (all users)' : `${pushTargetTenantIds.length} selected`}
+              </span>
+              <div className="flex gap-2">
               <button type="button" onClick={() => setCustomUsersOpen(false)} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-sand/85 hover:border-[#FF9F0F]/35">Cancel</button>
               <button
                 type="button"
@@ -4416,6 +6109,7 @@ export default function AdminPage() {
               >
                 <span className="inline-flex items-center gap-1"><Check size={12} />Apply target</span>
               </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4435,7 +6129,7 @@ export default function AdminPage() {
               </label>
               <label className="block">
                 <span className="wiz-label">Time</span>
-                <input type="time" className="sun-input py-2" defaultValue="09:00" />
+                <input type="time" className="sun-input py-2" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
               </label>
               <label className="block sm:col-span-2">
                 <span className="wiz-label">Timezone</span>
@@ -4449,25 +6143,186 @@ export default function AdminPage() {
               <label className="block sm:col-span-2">
                 <span className="wiz-label">Repeat</span>
                 <div className="flex gap-2 flex-wrap">
-                  {['Once', 'Daily', 'Weekly', 'Monthly'].map((r) => (
-                    <button key={r} type="button" className="rounded-md border border-white/15 bg-black/20 px-3 py-1 text-xs text-sand/85 hover:border-[#FF9F0F]/35">{r}</button>
+                  {(['once', 'daily', 'weekly', 'monthly'] as const).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setScheduleRepeat(r)}
+                      className={[
+                        'rounded-md border px-3 py-1 text-xs transition',
+                        scheduleRepeat === r
+                          ? 'border-[#FF9F0F]/60 bg-[#FF9F0F]/18 text-[#FFD29A] font-semibold'
+                          : 'border-white/15 bg-black/20 text-sand/85 hover:border-[#FF9F0F]/35',
+                      ].join(' ')}
+                    >
+                      {r.charAt(0).toUpperCase() + r.slice(1)}
+                    </button>
                   ))}
                 </div>
               </label>
             </div>
             <div className="px-4 py-3 border-t border-white/10 flex justify-end gap-2">
               <button type="button" onClick={() => setScheduleOpen(false)} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-sand/85 hover:border-[#FF9F0F]/35">Cancel</button>
-              <button type="button" onClick={() => setScheduleOpen(false)} className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A]">Create schedule</button>
+              <button type="button" onClick={handleSchedulePush} disabled={pushSaving} className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] disabled:opacity-60">
+                {pushSaving ? 'Scheduling…' : 'Create schedule'}
+              </button>
             </div>
           </div>
         </div>
       )}
 
+      {costPopupOpen && selectedOrgProject && (() => {
+        const costCents = selectedOrgProject.latestRunCostCents ?? avgCostPerRunCents
+        const eur = costCents != null ? costCents / 100 : null
+        const meta = selectedOrgProject.latestRunCostMeta ?? null
+        const source: string = typeof meta?.source === 'string' ? meta.source : 'unknown'
+        const geminiUsage = (meta?.gemini_usage && typeof meta.gemini_usage === 'object' ? meta.gemini_usage : null) as Record<string, unknown> | null
+        const calls = Array.isArray(geminiUsage?.calls) ? (geminiUsage!.calls as Array<Record<string, unknown>>) : []
+        const wallSeconds = typeof meta?.wall_seconds === 'number' ? meta.wall_seconds : null
+        const fallbackCents = typeof meta?.fallback_duration_cost_cents === 'number' ? meta.fallback_duration_cost_cents : null
+
+        // Price per 1M tokens in USD — used as fallback when backend estimatedCostCents is absent.
+        // Keys are lowercase model names without "models/" prefix. Costs stored/shown as USD¢.
+        const MODEL_PRICE_PER_M: Record<string, { input: number; output: number }> = {
+          'gemini-3-flash-preview': { input: 0.10,  output: 0.40  },
+          'gemini-2.0-flash':       { input: 0.10,  output: 0.40  },
+          'gemini-2.0-flash-lite':  { input: 0.075, output: 0.30  },
+          'gemini-1.5-flash':       { input: 0.075, output: 0.30  },
+          'gemini-1.5-flash-8b':    { input: 0.075, output: 0.30  },
+          'gemini-1.5-pro':         { input: 1.25,  output: 5.00  },
+          'gemini-2.5-pro':         { input: 1.25,  output: 10.00 },
+        }
+
+        // Helper: get per-call cost in USD¢.
+        // Always recalculate from tokens when the model is in our local table (keeps costs
+        // accurate even for old DB rows that were stored with outdated rates).
+        // Fall back to stored estimatedCostCents only for unknown models.
+        const getCallCostCents = (call: Record<string, unknown>): number | null => {
+          if (call.ok !== true) return 0
+          // Strip "models/" prefix that Gemini SDK sometimes prepends
+          const model = String(call.model ?? '').toLowerCase().replace(/^models\//, '')
+          const prices = MODEL_PRICE_PER_M[model]
+          if (prices) {
+            const usd = (Number(call.promptTokens ?? 0) / 1_000_000) * prices.input +
+                        (Number(call.outputTokens ?? 0) / 1_000_000) * prices.output
+            return usd * 100
+          }
+          // Unknown model — use stored value if available
+          if (typeof call.estimatedCostCents === 'number') return call.estimatedCostCents
+          return null
+        }
+        const successCount = calls.filter((c) => c.ok).length
+        const totalCostCentsFromCalls = calls.reduce((s, c) => s + (getCallCostCents(c) ?? 0), 0)
+
+        return (
+          <div className="fixed inset-0 z-70 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setCostPopupOpen(false)}>
+            <div className="flex w-full max-w-lg flex-col rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl" style={{ maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-sand">
+                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-[#FF9F0F]/45 bg-[#FF9F0F]/20 text-[12px] font-bold text-[#FFD29A]">$</span>
+                  Cost breakdown — last run
+                </div>
+                <button type="button" onClick={() => setCostPopupOpen(false)} className="rounded p-1 text-sand/70 hover:text-white">
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Summary (non-scrollable) */}
+              <div className="shrink-0 space-y-2 p-3">
+                {/* Total */}
+                <div className="flex items-center justify-between rounded-lg border border-[#FF9F0F]/25 bg-[#FF9F0F]/10 px-3 py-2">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-sand/60">Total cost</div>
+                    <div className="text-[10px] text-sand/45">source: {source}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-mono text-lg font-bold text-[#FFD29A]">{formatCostCents(costCents)}</div>
+                  </div>
+                </div>
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-1.5 text-center text-[11px]">
+                  <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                    <div className="text-[9px] uppercase tracking-wide text-sand/45">Run time</div>
+                    <div className="font-mono font-semibold text-sand/80">{wallSeconds != null ? `${wallSeconds.toFixed(1)} s` : '—'}</div>
+                  </div>
+                  <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                    <div className="text-[9px] uppercase tracking-wide text-sand/45">API calls</div>
+                    <div className="font-mono font-semibold text-sand/80">{calls.length > 0 ? `${successCount}/${calls.length} ok` : '—'}</div>
+                  </div>
+                  <div className="rounded border border-white/10 bg-black/20 px-2 py-1.5">
+                    <div className="text-[9px] uppercase tracking-wide text-sand/45">Total tokens</div>
+                    <div className="font-mono font-semibold text-sand/80">
+                      {typeof geminiUsage?.total_tokens === 'number' ? (geminiUsage.total_tokens as number).toLocaleString() : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-call table — scrollable */}
+              {calls.length > 0 && (
+                <div className="mx-3 mb-3 flex min-h-0 flex-col overflow-hidden rounded-lg border border-white/10 bg-black/20">
+                  <div className="shrink-0 border-b border-white/10 px-3 py-1.5">
+                    <div className="grid grid-cols-[1.5rem_1fr_auto_auto] gap-x-2 text-[9px] font-bold uppercase tracking-wide text-sand/45">
+                      <span>#</span><span>Model</span><span>Tokens</span><span>Cost</span>
+                    </div>
+                  </div>
+                  <div className="hide-scroll overflow-y-auto">
+                    <div className="divide-y divide-white/[0.04]">
+                      {calls.map((call, i) => {
+                        const ok = call.ok === true
+                        const model = String(call.model ?? '—').replace(/^models\//, '').replace('gemini-', '').replace('-preview', '★')
+                        const totalT = Number(call.totalTokens ?? 0) || (Number(call.promptTokens ?? 0) + Number(call.outputTokens ?? 0))
+                        const callCostCents = getCallCostCents(call)
+                        return (
+                          <div key={i} className={`grid grid-cols-[1.5rem_1fr_auto_auto] items-center gap-x-2 px-3 py-1 text-[10px] ${ok ? '' : 'opacity-40'}`}>
+                            <span className="font-mono text-sand/35">{i + 1}</span>
+                            <span className="flex items-center gap-1 truncate font-mono text-sand/75">
+                              <span className={`text-[8px] ${ok ? 'text-green-400' : 'text-red-400'}`}>{ok ? '●' : '✗'}</span>
+                              {model}
+                            </span>
+                            <span className="font-mono text-sand/55">{totalT > 0 ? totalT.toLocaleString() : '—'}</span>
+                            <span className="font-mono font-semibold text-[#FFD29A]">
+                              {callCostCents != null ? formatCostCents(callCostCents * 1) : '—'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  {/* Footer totals */}
+                  <div className="shrink-0 border-t border-white/10 px-3 py-1.5">
+                    <div className="grid grid-cols-[1.5rem_1fr_auto_auto] items-center gap-x-2 text-[10px]">
+                      <span />
+                      <span className="font-semibold text-sand/70">{successCount} successful</span>
+                      <span className="font-mono text-sand/55">
+                        {typeof geminiUsage?.total_tokens === 'number' ? (geminiUsage.total_tokens as number).toLocaleString() : ''}
+                      </span>
+                      <span className="font-mono font-bold text-[#FFD29A]">{formatCostCents(totalCostCentsFromCalls)}</span>
+                    </div>
+                    <p className="mt-0.5 text-[8px] text-sand/30">
+                      Rates (USD/1M): flash $0.075–0.10 input / $0.30–0.40 output · pro $1.25 input / $5–10 output · recalculated from tokens
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {calls.length === 0 && (
+                <div className="mx-3 mb-3 rounded-lg border border-white/10 bg-black/20 px-3 py-3 text-xs text-sand/50">
+                  No Gemini call data available for this run.
+                  {source === 'compute-service' && ' Cost was estimated from run duration (fallback mode).'}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {tokensModalOpen && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
           <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/15 bg-coffee-850 shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <div className="text-base font-semibold text-sand">Add tokens</div>
+              <div className="text-base font-semibold text-sand">Grant extra runs</div>
               <button type="button" onClick={() => setTokensModalOpen(false)} className="text-sm text-sand/70 hover:text-white">
                 Close
               </button>
@@ -4477,18 +6332,23 @@ export default function AdminPage() {
                 Organization: <span className="font-medium text-sand/90">{selectedOrgMeta.companyName}</span>
               </p>
               <p className="text-xs text-sand/65">
-                Current balance:{' '}
-                <span className="font-semibold text-[#FFD29A]">{orgTokenBalanceDisplay}</span> tokens
+                Remaining this month:{' '}
+                <span className="font-semibold text-[#FFD29A]">{orgTokenBalanceDisplay}</span>
+                </p>
+              <p className="text-[11px] text-sand/45">
+                Each run uses 1 token. Granting bonus runs decreases the used token count for this month.
               </p>
               <label className="block">
-                <span className="wiz-label">Amount to add</span>
+                <span className="wiz-label">Runs to grant</span>
                 <input
                   type="text"
                   inputMode="numeric"
                   value={tokensAddAmount}
-                  onChange={(e) => setTokensAddAmount(e.target.value.replace(/[^\d]/g, ''))}
+                  onChange={(e) => {
+                    setTokensAddAmount(e.target.value.replace(/[^\d]/g, ''))
+                  }}
                   className="sun-input"
-                  placeholder="e.g. 2500"
+                  placeholder="e.g. 1"
                 />
               </label>
             </div>
@@ -4506,35 +6366,335 @@ export default function AdminPage() {
                 onClick={() => {
                   const add = Math.max(0, parseInt(tokensAddAmount, 10) || 0)
                   if (add <= 0) {
-                    setTokensModalOpen(false)
+                    setOrgError('Enter a number greater than 0.')
                     return
                   }
-                  if (liveWorkspace) {
-                    void (async () => {
-                      try {
-                        setOrgSaving(true)
-                        setOrgError(null)
-                        await updateAdminTenantWorkspace(selectedOrgId, { addTokens: add })
-                        const ws = await fetchAdminTenantWorkspace(selectedOrgId)
-                        setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
-                        setTokensModalOpen(false)
-                      } catch (e) {
-                        setOrgError(e instanceof Error ? e.message : 'Could not add tokens.')
-                      } finally {
-                        setOrgSaving(false)
-                      }
-                    })()
-                    return
-                  }
-                  const base =
-                    tokenBalancesByOrg[selectedOrgId] ?? parseTokenBalanceString(selectedOrgMeta.tokenBalance)
-                  setTokenBalancesByOrg((prev) => ({ ...prev, [selectedOrgId]: base + add }))
-                  setTokensModalOpen(false)
+                  void (async () => {
+                    try {
+                      setOrgSaving(true)
+                      setOrgError(null)
+                      await updateAdminTenantWorkspace(selectedOrgId, { addTokens: add })
+                      const ws = await fetchAdminTenantWorkspace(selectedOrgId)
+                      setTenantWorkspace({ status: 'ok', data: ws, error: null, loadedForTenantId: selectedOrgId })
+                      setTokensModalOpen(false)
+                      setTokensAddAmount('1')
+                    } catch (e) {
+                      setOrgError(e instanceof Error ? e.message : 'Could not grant runs.')
+                    } finally {
+                      setOrgSaving(false)
+                    }
+                  })()
                 }}
                 className="rounded-lg border border-[#FF9F0F]/45 bg-[#FF9F0F]/25 px-3 py-1.5 text-xs font-semibold text-[#FFD29A] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Apply
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pipelineDetailsModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
+          <div className="flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#FF9F0F]/30 bg-[#17120e] shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#FF9F0F]/15">
+                  {pipelineDetailsModal === 'measurements' ? (
+                    <Layers3 size={15} className="text-[#FFB84D]" />
+                  ) : (
+                    <Coins size={15} className="text-[#FFB84D]" />
+                  )}
+                </div>
+                <div>
+                  <div className="text-base font-semibold text-sand">
+                    {pipelineDetailsModal === 'measurements' ? 'Extracted Measurements' : 'Pricing Breakdown'}
+                  </div>
+                  <div className="text-[11px] text-sand/45">
+                    {pipelineDetailsModal === 'measurements'
+                      ? `${(projectPipelineDetails.measurements_raw?.plans as unknown[] | undefined)?.length ?? 0} floor plans`
+                      : (() => {
+                          const totalEur = projectPipelineDetails.pricing_raw_per_plan.reduce((sum, p) => {
+                            const v = (p.data as { total_cost_eur?: number }).total_cost_eur
+                            return sum + (typeof v === 'number' ? v : 0)
+                          }, 0)
+                          return `${projectPipelineDetails.pricing_raw_per_plan.length} plan${projectPipelineDetails.pricing_raw_per_plan.length !== 1 ? 's' : ''} · Total ${totalEur > 0 ? `€${totalEur.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}`
+                        })()}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPipelineDetailsModal(null)}
+                className="flex h-7 w-7 items-center justify-center rounded-lg text-sand/50 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="hide-scroll max-h-[74vh] overflow-y-auto p-5">
+              {projectPipelineDetails.loading ? (
+                <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-sand/60">Loading details…</div>
+              ) : pipelineDetailsModal === 'measurements' ? (
+                /* ── MEASUREMENTS ── */
+                projectPipelineDetails.measurements_raw ? (
+                  <div className="space-y-5">
+                    {((projectPipelineDetails.measurements_raw.plans as Array<Record<string, unknown>>) ?? []).map((plan, pi) => {
+                      const areas = (plan.areas ?? {}) as Record<string, unknown>
+                      const walls = (areas.walls ?? {}) as Record<string, Record<string, unknown>>
+                      const surfaces = (areas.surfaces ?? {}) as Record<string, unknown>
+                      const openings = (plan.openings as Array<{ type: string; width_m: number; status: string }>) ?? []
+                      const floorLabel = plan.floor_type === 'ground_floor' ? 'Ground Floor' : plan.floor_type === 'top_floor' ? 'Top Floor' : String(plan.floor_type ?? '')
+                      const planLabel = String(plan.plan_id ?? `Plan ${pi + 1}`)
+                        .replace('plan_0', 'Plan ')
+                        .replace('_cluster_', ' · Cluster ')
+                      const fmt = (v: unknown) => (v == null ? '—' : typeof v === 'number' ? v.toFixed(2) : String(v))
+                      return (
+                        <div key={String(plan.plan_id ?? pi)} className="rounded-xl border border-white/10 bg-black/25 overflow-hidden">
+                          {/* Plan header */}
+                          <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-4 py-3">
+                            <Building2 size={14} className="shrink-0 text-[#FFB84D]" />
+                            <span className="text-sm font-semibold text-sand">{planLabel}</span>
+                            <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${plan.is_ground_floor ? 'bg-emerald-500/20 text-emerald-300' : 'bg-sky-500/20 text-sky-300'}`}>
+                              {floorLabel}
+                            </span>
+                          </div>
+                          {(plan.error as string | undefined) ? (
+                            <div className="px-4 py-3 text-sm text-red-400/90">{String(plan.error)}</div>
+                          ) : (
+                            <div className="divide-y divide-white/[0.06] p-4 space-y-4">
+                              {/* Areas */}
+                              <div>
+                                <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-sand/40">Floor Areas</div>
+                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                  {[
+                                    { label: 'Net Floor', val: `${fmt(areas.input_net_area_m2)} m²` },
+                                    { label: 'Gross Floor', val: `${fmt(areas.input_gross_area_m2)} m²` },
+                                    { label: 'Foundation', val: `${fmt(surfaces.foundation_m2)} m²` },
+                                    { label: 'Floor Structure', val: `${fmt(surfaces.floor_structure_m2)} m²` },
+                                    { label: 'Ceiling', val: `${fmt(surfaces.ceiling_m2)} m²` },
+                                    { label: 'Wall Height', val: `${fmt(areas.wall_height_m)} m` },
+                                  ].map(({ label, val }) => (
+                                    <div key={label} className="rounded-lg border border-white/[0.07] bg-black/20 px-3 py-2">
+                                      <div className="text-[10px] text-sand/45 uppercase tracking-wide">{label}</div>
+                                      <div className="mt-0.5 text-sm font-semibold text-[#FFD29A]">{val}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                              {/* Walls */}
+                              {(walls.interior || walls.exterior) && (
+                                <div className="pt-3">
+                                  <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-sand/40">Walls</div>
+                                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    {(['interior', 'exterior'] as const).map((side) => {
+                                      const w = walls[side]
+                                      if (!w) return null
+                                      return (
+                                        <div key={side} className="rounded-lg border border-white/[0.07] bg-black/20 p-3">
+                                          <div className="mb-2 text-[11px] font-semibold capitalize text-sand/70">{side} Walls</div>
+                                          <div className="space-y-1">
+                                            {[
+                                              { label: 'Length', val: `${fmt(w.length_m)} m` },
+                                              { label: 'Gross Area', val: `${fmt(w.gross_area_m2)} m²` },
+                                              { label: 'Openings', val: `${fmt(w.openings_area_m2)} m²` },
+                                              { label: 'Net Area', val: `${fmt(w.net_area_m2)} m²` },
+                                            ].filter(({ val }) => !val.startsWith('—')).map(({ label, val }) => (
+                                              <div key={label} className="flex items-center justify-between text-xs">
+                                                <span className="text-sand/50">{label}</span>
+                                                <span className="font-mono text-sand/85">{val}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                              {/* Openings */}
+                              {openings.length > 0 && (
+                                <div className="pt-3">
+                                  <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-sand/40">Openings ({openings.length})</div>
+                                  <div className="overflow-hidden rounded-lg border border-white/[0.07] bg-black/20">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="border-b border-white/[0.07] bg-white/[0.025]">
+                                          <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-sand/40">Type</th>
+                                          <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wide text-sand/40">Status</th>
+                                          <th className="px-3 py-2 text-right text-[10px] font-semibold uppercase tracking-wide text-sand/40">Width</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-white/[0.05]">
+                                        {openings.map((op, oi) => (
+                                          <tr key={oi}>
+                                            <td className="px-3 py-2 capitalize text-sand/80">{op.type}</td>
+                                            <td className="px-3 py-2">
+                                              <span className={`rounded px-1.5 py-0.5 text-[10px] ${op.status === 'exterior' ? 'bg-sky-500/15 text-sky-300' : 'bg-white/10 text-sand/60'}`}>{op.status}</span>
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-mono text-sand/85">{op.width_m.toFixed(2)} m</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  /* fallback flat list */
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {(projectPipelineDetails.measurements.length ? projectPipelineDetails.measurements : [{ key: 'No measurements found', value: '—' }]).map((row) => (
+                      <div key={`${row.key}-${row.value}`} className="rounded-lg border border-white/10 bg-black/25 px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-sand/55">{row.key}</div>
+                        <div className="mt-1 text-sm font-semibold text-[#FFD29A]">{row.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                /* ── PRICING ── */
+                projectPipelineDetails.pricing_raw_per_plan.length > 0 ? (
+                  <div className="space-y-5">
+                    {projectPipelineDetails.pricing_raw_per_plan.map(({ plan_id, data }) => {
+                      const totalEur = (data.total_cost_eur as number) ?? 0
+                      const totalArea = (data.total_area_m2 as number) ?? 0
+                      const breakdown = (data.breakdown ?? {}) as Record<string, { total_cost?: number; detailed_items?: unknown[]; items?: unknown[] }>
+                      const planLabel = plan_id.replace('plan_0', 'Plan ').replace('_cluster_', ' · Cluster ')
+                      const eur = (v: unknown) => typeof v === 'number' ? `€${v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
+                      const CATEGORY_META: Record<string, { label: string; color: string }> = {
+                        foundation:           { label: 'Foundation',       color: 'text-stone-400'   },
+                        structure_walls:      { label: 'Structure Walls',  color: 'text-amber-400'   },
+                        floors_ceilings:      { label: 'Floors & Ceilings',color: 'text-yellow-400'  },
+                        roof:                 { label: 'Roof',             color: 'text-orange-400'  },
+                        openings:             { label: 'Openings',         color: 'text-sky-400'     },
+                        finishes:             { label: 'Finishes',         color: 'text-teal-400'    },
+                        utilities:            { label: 'Utilities',        color: 'text-violet-400'  },
+                        stairs:               { label: 'Stairs',           color: 'text-pink-400'    },
+                        basement:             { label: 'Basement',         color: 'text-slate-400'   },
+                        wintergaerten_balkone:{ label: 'Wintergarten/Balkon',color:'text-green-400'  },
+                        pillars:              { label: 'Pillars',          color: 'text-red-400'     },
+                        fireplace:            { label: 'Fireplace',        color: 'text-orange-500'  },
+                        lift:                 { label: 'Lift',             color: 'text-indigo-400'  },
+                        aufstockung_phase1:   { label: 'Extension Phase 1',color: 'text-cyan-400'    },
+                      }
+                      const activeCategories = Object.entries(breakdown).filter(([, v]) => (v?.total_cost ?? 0) > 0)
+                      return (
+                        <div key={plan_id} className="overflow-hidden rounded-xl border border-white/10 bg-black/25">
+                          {/* Plan header */}
+                          <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Building2 size={14} className="shrink-0 text-[#FFB84D]" />
+                              <span className="text-sm font-semibold text-sand">{planLabel}</span>
+                              {totalArea > 0 && <span className="text-xs text-sand/45">{totalArea.toFixed(1)} m²</span>}
+                            </div>
+                            <div className="text-sm font-bold text-[#FFD29A]">{eur(totalEur)}</div>
+                          </div>
+                          <div className="p-4 space-y-2">
+                            {activeCategories.length === 0 ? (
+                              <div className="text-sm text-sand/50">No pricing data available.</div>
+                            ) : (
+                              activeCategories.map(([cat, section]) => {
+                                const meta = CATEGORY_META[cat] ?? { label: cat, color: 'text-sand/70' }
+                                const items = (section.detailed_items ?? section.items ?? []) as Array<Record<string, unknown>>
+                                return (
+                                  <div key={cat} className="rounded-lg border border-white/[0.07] bg-black/20 overflow-hidden">
+                                    {/* Category header */}
+                                    <div className="flex items-center justify-between px-3 py-2 bg-white/[0.025]">
+                                      <span className={`text-xs font-semibold ${meta.color}`}>{meta.label}</span>
+                                      <span className="text-xs font-bold text-sand/85">{eur(section.total_cost)}</span>
+                                    </div>
+                                    {/* Items */}
+                                    {items.length > 0 && (
+                                      <div className="divide-y divide-white/[0.04] px-3">
+                                        {items.map((item, ii) => {
+                                          const name = String(item.name ?? item.category ?? '')
+                                          const cost = item.cost ?? item.total_cost
+                                          const area = item.area_m2
+                                          const unitP = item.unit_price
+                                          const priceUnit = item.price_unit
+                                          return (
+                                            <div key={ii} className="flex items-start justify-between gap-3 py-2">
+                                              <div className="min-w-0">
+                                                <div className="truncate text-[11px] text-sand/75">{name}</div>
+                                                {area != null && unitP != null && (
+                                                  <div className="text-[10px] text-sand/40 mt-0.5">
+                                                    {typeof area === 'number' ? `${area.toFixed(2)} m²` : String(area)} × {typeof unitP === 'number' ? `€${unitP}` : String(unitP)}{priceUnit ? `/${String(priceUnit).replace('€/', '')}` : ''}
+                                                  </div>
+                                                )}
+                                              </div>
+                                              <div className="shrink-0 text-xs font-mono text-[#FFD29A]">{eur(cost)}</div>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  /* fallback flat list */
+                  <div className="space-y-2">
+                    {(projectPipelineDetails.pricing.length ? projectPipelineDetails.pricing : [{ key: 'No pricing variables found', value: '—', source: 'n/a' }]).map((row) => (
+                      <div key={`${row.source}-${row.key}`} className="rounded-lg border border-white/10 bg-black/25 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 truncate text-xs font-semibold text-sand">{row.key}</div>
+                          <div className="shrink-0 rounded border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 px-2 py-0.5 text-[10px] text-[#FFD29A]">{row.source}</div>
+                        </div>
+                        <div className="mt-1 break-all font-mono text-xs text-sand/70">{row.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {jsonPreviewModal.open && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-4xl overflow-hidden rounded-2xl border border-[#FF9F0F]/30 bg-[#16120f] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+              <div className="flex items-center gap-2 text-base font-semibold text-sand">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[#FF9F0F]/35 bg-[#FF9F0F]/10 text-[#FFB84D]">
+                  <FileText size={14} />
+                </span>
+                <span className="truncate">{jsonPreviewModal.filename || 'JSON file'}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setJsonPreviewModal({ open: false, filename: '', content: '', loading: false, error: null })}
+                className="text-sm text-sand/70 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            <div className="hide-scroll max-h-[76vh] overflow-auto bg-black/35 p-4">
+              {jsonPreviewModal.loading ? (
+                <div className="text-sm text-sand/70">Loading JSON…</div>
+              ) : jsonPreviewModal.error ? (
+                <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-sm text-red-200/95">
+                  {jsonPreviewModal.error}
+                </div>
+              ) : (
+                <pre className="whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/35 p-3 font-mono text-xs text-sand/80">
+                  {jsonPreviewModal.content || 'Empty JSON.'}
+                </pre>
+              )}
             </div>
           </div>
         </div>

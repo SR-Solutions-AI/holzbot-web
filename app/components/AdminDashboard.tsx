@@ -272,11 +272,11 @@ export default function AdminDashboard() {
                   'Dachtyp': { stepKey: 'sistemConstructiv', fieldKey: 'tipAcoperis' },
                   'Dachdeckung': { stepKey: 'daemmungDachdeckung', fieldKey: 'dachdeckung' },
                   'Dachstuhl': { stepKey: 'daemmungDachdeckung', fieldKey: 'dachstuhlTyp' },
-                  'Angebotsumfang': { stepKey: 'materialeFinisaj', fieldKey: 'nivelOferta' },
-                  'Fassade': { stepKey: 'materialeFinisaj', fieldKey: 'fatada' },
-                  'Fenster': { stepKey: 'materialeFinisaj', fieldKey: 'tamplarie' },
-                  'Innenausbau': { stepKey: 'materialeFinisaj', fieldKey: 'finisajInterior' },
-                  'Dachmaterial': { stepKey: 'materialeFinisaj', fieldKey: 'materialAcoperis' },
+                  'Angebotsumfang': { stepKey: 'sistemConstructiv', fieldKey: 'nivelOferta' },
+                  'Fassade': { stepKey: 'wandaufbau', fieldKey: 'fatada' },
+                  'Fenster': { stepKey: 'ferestreUsi', fieldKey: 'windowQuality' },
+                  'Innenausbau': { stepKey: 'wandaufbau', fieldKey: 'finisajInterior' },
+                  'Dachmaterial': { stepKey: 'daemmungDachdeckung', fieldKey: 'dachdeckung' },
                   'Heizung': { stepKey: 'performanta', fieldKey: 'tipIncalzire' },
                   'Energie': { stepKey: 'performanta', fieldKey: 'nivelEnergetic' },
                   'Gelände': { stepKey: 'logistica', fieldKey: 'teren' },
@@ -290,7 +290,7 @@ export default function AdminDashboard() {
             // Build ALL steps from raw steps (preferred), falling back to derived rows.
             const settingsRaw = (o.settings_raw ?? null) as Record<string, any> | null
             const allStepKeys = settingsRaw ? Object.keys(settingsRaw) : []
-            const FORM_ORDER = ['dateGenerale','client','sistemConstructiv','structuraCladirii','daemmungDachdeckung','ferestreUsi','materialeFinisaj','performanta','performantaEnergetica','logistica','conditiiSantier','upload']
+            const FORM_ORDER = ['dateGenerale','client','sistemConstructiv','structuraCladirii','daemmungDachdeckung','ferestreUsi','wandaufbau','bodenDeckeBelag','performanta','performantaEnergetica','logistica','conditiiSantier','upload','materialeFinisaj']
             const stepKeys = (allStepKeys.length ? allStepKeys : FORM_ORDER)
               .slice()
               .sort((a, b) => {

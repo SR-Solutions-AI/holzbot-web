@@ -167,7 +167,7 @@
         {
           "type": "select",
           "name": "pilonType",
-          "label": "Pilonen-Typ",
+          "label": "Säulen-Typ",
           "options": [
             "Stahlbeton",
             "Stahl",
@@ -278,14 +278,14 @@
             },
             {
               "key": "price_per_stair_unit",
-              "label": "Treppe pro Stück (€)",
-              "unit": "€",
+              "label": "Treppe (€/Stück)",
+              "unit": "€/Stück",
               "value": 4500
             },
             {
               "key": "railing_price_per_stair",
-              "label": "Geländer pro Stück (€)",
-              "unit": "€",
+              "label": "Geländer (€/Stück)",
+              "unit": "€/Stück",
               "value": 800
             },
             {
@@ -320,25 +320,25 @@
             },
             {
               "key": "pillar_type_stahlbeton_m3_price",
-              "label": "Pilonen Stahlbeton (€/m³)",
+              "label": "Stahlbeton-Säulen (€/m³)",
               "unit": "€/m³",
               "value": 0
             },
             {
               "key": "pillar_type_stahl_m3_price",
-              "label": "Pilonen Stahl (€/m³)",
+              "label": "Stahl-Säulen (€/m³)",
               "unit": "€/m³",
               "value": 0
             },
             {
               "key": "pillar_type_holz_m3_price",
-              "label": "Pilonen Holz (€/m³)",
+              "label": "Holz-Säulen (€/m³)",
               "unit": "€/m³",
               "value": 0
             },
             {
               "key": "pillar_type_verbund_m3_price",
-              "label": "Pilonen Verbund (€/m³)",
+              "label": "Verbund-Säulen (€/m³)",
               "unit": "€/m³",
               "value": 0
             }
@@ -554,7 +554,7 @@
         {
           "fieldTag": "window_quality",
           "title": "Glasflächen",
-          "subtitle": "Preis pro m² (Fenster und Schiebetüren gleicher Satz)",
+          "subtitle": "Preis pro m² (Fenster)",
           "variables": [
             {
               "key": "window_2_fach_price",
@@ -803,14 +803,7 @@
               "value": 160
             }
           ]
-        }
-      ]
-    },
-    {
-      "key": "materialeFinisaj",
-      "label": "Materialien & Ausbaustufe",
-      "fields": [],
-      "priceSections": [
+        },
         {
           "title": "Innenausbau Innenwände",
           "subtitle": "Innenwände pro m²",
@@ -1231,7 +1224,7 @@
         "subsections": [
           {
             "title": "Glasflächen",
-            "subtitle": "Preis pro m² (Fenster und Schiebetüren gleicher Satz)",
+            "subtitle": "Preis pro m² (Fenster)",
             "fieldTag": "window_quality",
             "variables": [
               {
@@ -1480,13 +1473,7 @@
                 "value": 160
               }
             ]
-          }
-        ]
-      },
-      {
-        "stepKey": "materialeFinisaj",
-        "title": "Materialien & Ausbaustufe",
-        "subsections": [
+          },
           {
             "title": "Innenausbau Innenwände",
             "subtitle": "Innenwände pro m²",
@@ -1631,14 +1618,14 @@
               },
               {
                 "key": "price_per_stair_unit",
-                "label": "Treppe pro Stück (€)",
-                "unit": "€",
+                "label": "Treppe (€/Stück)",
+                "unit": "€/Stück",
                 "value": 4500
               },
               {
                 "key": "railing_price_per_stair",
-                "label": "Geländer pro Stück (€)",
-                "unit": "€",
+                "label": "Geländer (€/Stück)",
+                "unit": "€/Stück",
                 "value": 800
               },
               {
@@ -1724,31 +1711,31 @@
             ]
           },
           {
-            "title": "Piloni",
-            "subtitle": "Preis pro Volumen (€/m³)",
+            "title": "Säulen",
+            "subtitle": "Preis je Kubikmeter Säulenvolumen (€/m³)",
             "fieldTag": "pillar_type",
             "variables": [
               {
                 "key": "pillar_type_stahlbeton_m3_price",
-                "label": "Pilonen Stahlbeton (€/m³)",
+                "label": "Stahlbeton-Säulen (€/m³)",
                 "unit": "€/m³",
                 "value": 0
               },
               {
                 "key": "pillar_type_stahl_m3_price",
-                "label": "Pilonen Stahl (€/m³)",
+                "label": "Stahl-Säulen (€/m³)",
                 "unit": "€/m³",
                 "value": 0
               },
               {
                 "key": "pillar_type_holz_m3_price",
-                "label": "Pilonen Holz (€/m³)",
+                "label": "Holz-Säulen (€/m³)",
                 "unit": "€/m³",
                 "value": 0
               },
               {
                 "key": "pillar_type_verbund_m3_price",
-                "label": "Pilonen Verbund (€/m³)",
+                "label": "Verbund-Säulen (€/m³)",
                 "unit": "€/m³",
                 "value": 0
               }

@@ -342,6 +342,8 @@ const DE = {
     validatingPlan: 'Plan wird überprüft...',
     uploadingFiles: 'Dateien werden hochgeladen...',
     planInvalidTitle: 'Plan ungültig',
+    /** Banner when required fields / selects are empty (not plan validation). */
+    formIncompleteTitle: 'Formular unvollständig',
     planInvalidMsg: 'Die KI konnte keine Raumbezeichnungen oder Maßstäbe erkennen. Bitte laden Sie einen lesbaren Grundriss hoch.',
     planInvalidNoSideView: 'Es wird mindestens eine Ansicht oder ein Schnitt (Seitenansicht) für die Dachklassifizierung benötigt. Bitte laden Sie einen Plan mit Grundriss und mindestens einer Ansicht/Schnitt hoch.',
     computeErrorTitle: 'Ein Problem ist aufgetreten',
@@ -389,7 +391,7 @@ function asBool(v: any): boolean {
 const DEFAULT_NEW_PROJECT_REFERENCE_DE = 'Neues Projekt'
 
 const STEP_FIELD_PREFIXES: Record<string, string[]> = {
-  wandaufbau: ['außenwande', 'innenwande'],
+  wandaufbau: ['außenwande', 'innenwande', 'finisajInterior', 'fatada'],
   bodenDeckeBelag: ['bodenaufbau', 'bodenbelag', 'deckenaufbau'],
   materialeFinisaj: ['finisajInterior', 'fatada'],
 }
@@ -436,13 +438,9 @@ function buildMergedWizardSource(
 const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i
 const phoneRe = /^[0-9+\s().-]{6,}$/
 
-function validateClient(form: Record<string, any>): Errors {
-  const e: Errors = {}
-  const nume = (form.nume ?? '').trim()
-  
-  if (!nume) e.nume = 'Bitte den Namen eingeben.'
-  // Rest ist optional für schnellen Test
-  return e
+/** Kundendaten: kein Zwang – Nutzer kann alles leer lassen oder ausfüllen. */
+function validateClient(_form: Record<string, any>): Errors {
+  return {}
 }
 
 function validateGeneric(stepKey: string, fields: Field[], form: Record<string, any>, drafts?: Record<string, any>): Errors {
@@ -454,7 +452,7 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
     const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
     const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
     if (stepKey === 'projektdaten' && fieldName === 'deckenInnenausbau') {
-      // Optional in validation: this field may be hidden when no tenant options exist.
+      // Wird in validateProjektdatenStep geprüft (nur sichtbar mit Optionen).
       return true
     }
     if (stepKey === 'structuraCladirii' && fieldName === 'treppeTyp' && !hasFloorAboveGround) return true
@@ -480,13 +478,13 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
     }
     if (stepKey === 'ferestreUsi' && fieldName === 'garageDoorType' && !asBool(form.garagentorGewuenscht)) return true
     if (fieldName === 'tipSemineu') return true
-    if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'materialeFinisaj') && fieldName === 'tipAcoperis') return true
+    if ((stepKey === 'sistemConstructiv' || stepKey === 'structuraCladirii' || stepKey === 'wandaufbau') && fieldName === 'tipAcoperis') return true
     if (stepKey === 'structuraCladirii' && fieldName === 'floorsNumber') return true
     if (!nivelOferta) return false
     const nivelStr = String(nivelOferta).toLowerCase()
     const isCasaCompleta = nivelStr.includes('schlüsselfertig') || nivelStr.includes('completă') || nivelStr.includes('completa')
     if (stepKey === 'performantaEnergetica') return false
-    if (stepKey !== 'materialeFinisaj') return false
+    if (stepKey !== 'wandaufbau') return false
     const isStructuraOnly = (nivelStr.includes('rohbau') || nivelStr.includes('tragwerk') || nivelStr.includes('structură'))
       && !nivelStr.includes('fenster') && !nivelStr.includes('ferestre') && !nivelStr.includes('completă') && !nivelStr.includes('schlüsselfertig')
     if (isStructuraOnly) return fieldName === 'tamplarie' || fieldName === 'finisajInterior'
@@ -569,6 +567,42 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
   return e
 }
 
+const SELECT_REQUIRED_MSG = 'Bitte wählen Sie eine Option aus.'
+
+function isEmptySelect(v: unknown): boolean {
+  return v === undefined || v === null || String(v).trim() === ''
+}
+
+function needSelectWhenOptions(val: unknown, options: string[]): boolean {
+  return options.length > 0 && isEmptySelect(val)
+}
+
+function validateProjektdatenStep(
+  form: Record<string, any>,
+  preisdatenbankOptionsByTag: Record<string, string[]>,
+): Errors {
+  const e: Errors = {}
+  if (isEmptySelect(form.projektumfang)) e.projektumfang = SELECT_REQUIRED_MSG
+  if (isEmptySelect(form.nutzungDachraum)) e.nutzungDachraum = SELECT_REQUIRED_MSG
+  const deckOpts = preisdatenbankOptionsByTag['decke_innenausbau'] ?? []
+  if (form.nutzungDachraum === 'Wohnraum / ausgebaut' && deckOpts.length > 0) {
+    if (isEmptySelect(form.deckenInnenausbau)) e.deckenInnenausbau = SELECT_REQUIRED_MSG
+  }
+  return e
+}
+
+function mergeStructuraGewerbeTreppe(form: Record<string, any>, base: Errors): Errors {
+  const e = { ...base }
+  const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+  const hasFloorAboveGround = listaEtaje.some((x: string) => x !== 'parter')
+  if (hasFloorAboveGround && isEmptySelect(form.treppeTyp)) e.treppeTyp = SELECT_REQUIRED_MSG
+  const wp = String((form as any).wizardPackage ?? '').toLowerCase()
+  if (wp === 'gewerbe_wohnbau') {
+    if (form.aufzugVorhanden === true && isEmptySelect(form.aufzugTyp)) e.aufzugTyp = SELECT_REQUIRED_MSG
+    if (form.piloni === true && isEmptySelect(form.pilonType)) e.pilonType = SELECT_REQUIRED_MSG
+  }
+  return e
+}
 
 /* Helper: API poate returna options ca string[] sau { value, label }[] — normalizăm la valoare primitivă */
 function optValue(opt: string | { value?: string; label?: string }): string {
@@ -690,15 +724,15 @@ export default function StepWizard() {
   const [errors, setErrors] = useState<Errors>({})
   const [showErrors, setShowErrors] = useState(false)
   
-  const [validationError, setValidationError] = useState<string | null>(null)
+  const [validationBanner, setValidationBanner] = useState<{ title: string; detail: string } | null>(null)
   /** null = closed; delete_offer = bisheriges Verhalten (Angebot löschen); abort_edit = Bearbeiten verlassen, PDF zurück */
   const [cancelDialog, setCancelDialog] = useState<null | 'delete_offer' | 'abort_edit'>(null)
 
   const [selectedPackage, setSelectedPackage] = useState<
     'mengen' | 'dachstuhl' | 'einfamilienhaus' | 'gewerbe_wohnbau' | 'aufstockung' | 'zubau' | 'zubau_aufstockung' | null
   >(null)
-  /** După „Mengenermittlung“: alegere Einfamilienhaus vs Dachstuhl (fără formular complet, doar Upload + Editor + PDF măsurători). */
-  const [packagePickerMengenSub, setPackagePickerMengenSub] = useState(false)
+  /** Paket-Wahl: root → Preisschätzung / Mengenschätzung / Ausschreibung; Unterseiten preis & mengen. */
+  const [packagePickerView, setPackagePickerView] = useState<'root' | 'preis' | 'mengen'>('root')
   /** Monatslimit für Projekte erreicht; Paket-Karten nicht klickbar. */
   const [tokensBlocked, setTokensBlocked] = useState(false)
   /** Pachet WIP: click pe Aufstockung/Zubau afișează banner „în dezvoltare". */
@@ -731,8 +765,10 @@ export default function StepWizard() {
   const [customOptionsForm, setCustomOptionsForm] = useState<Record<string, Array<{ label: string; value: string; price_key: string }>>>({})
   /** Override-uri de etichete pentru variabile (Preisdatenbank) – folosite la afișarea opțiunilor în formular. */
   const [paramLabelOverrides, setParamLabelOverrides] = useState<Record<string, string>>({})
-  /** Chei ascunse în Preisdatenbank – nu le afișăm în formular (select-uri / opțiuni). */
-  const [hiddenKeysForm, setHiddenKeysForm] = useState<Set<string>>(new Set())
+  /** Keys din DB – filtrăm opțiunile formularului să fie exact ce e în PDB (DB = sursa de adevăr). */
+  const [pricingParamsKeys, setPricingParamsKeys] = useState<Set<string>>(new Set())
+  /** @deprecated Nu mai folosim hidden keys – păstrat pentru compatibilitate cu componente mai vechi. */
+  const [hiddenKeysForm] = useState<Set<string>>(new Set())
   /** Währung nur Anzeige (EUR/CHF) – gleiche Zahlen wie in Preisdatenbank/PDF. */
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('EUR')
 
@@ -859,7 +895,7 @@ export default function StepWizard() {
     if (isOnlyStructure || isStructurePlusWindows) {
       steps = steps.filter((s: { key?: string }) => {
         const key = (s as any).key
-        return key !== 'materialeFinisaj' && key !== 'performantaEnergetica'
+        return key !== 'performantaEnergetica'
       })
       if (isOnlyStructure) {
         steps = steps.filter((s: { key?: string }) => (s as any).key !== 'ferestreUsi')
@@ -875,6 +911,43 @@ export default function StepWizard() {
     drafts.materialeFinisaj,
     editOfferSkipUpload,
   ])
+
+  /** Same scope rules as the former separate „Materialien & Ausbaustufe“ step: hide Innenausbau/Fassade for Rohbau / Tragwerk+Fenster. */
+  const showFinisajInWandaufbau = useMemo(() => {
+    const nivelRaw = (
+      form.nivelOferta ||
+      form.sistemConstructiv?.nivelOferta ||
+      form.materialeFinisaj?.nivelOferta ||
+      drafts.sistemConstructiv?.nivelOferta ||
+      drafts.materialeFinisaj?.nivelOferta ||
+      ''
+    )
+      .toString()
+      .trim()
+      .toLowerCase()
+    const hasOpeningsInScope = nivelRaw.includes('fenster') || nivelRaw.includes('ferestre')
+    const isFullHouse =
+      nivelRaw.includes('completă') ||
+      nivelRaw.includes('completa') ||
+      nivelRaw.includes('schlüsselfertig') ||
+      nivelRaw.includes('schlüsselfertiges haus') ||
+      nivelRaw.includes('schlüsselfertig haus')
+    const isOnlyStructure =
+      !hasOpeningsInScope &&
+      !isFullHouse &&
+      (nivelRaw.includes('rohbau') ||
+        nivelRaw.includes('tragwerk') ||
+        nivelRaw.includes('structură') ||
+        nivelRaw.includes('structura'))
+    const isStructurePlusWindows =
+      hasOpeningsInScope &&
+      !isFullHouse &&
+      (nivelRaw.includes('rohbau') ||
+        nivelRaw.includes('tragwerk') ||
+        nivelRaw.includes('structură') ||
+        nivelRaw.includes('structura'))
+    return !isOnlyStructure && !isStructurePlusWindows
+  }, [form.nivelOferta, form.sistemConstructiv, form.materialeFinisaj, drafts.sistemConstructiv, drafts.materialeFinisaj])
 
   // -- UseMemo hooks (safe to run even if visibleSteps is empty)
   const step = visibleSteps[idx]
@@ -944,11 +1017,12 @@ export default function StepWizard() {
       .trim() || label
   }, [])
 
-  // Opțiuni per tag = exact ce e în Preisdatenbank: variabile din secțiuni (neascunse) + opțiuni custom, în aceeași ordine
+  // Opțiuni per tag = exact ce e în Preisdatenbank: variabile de bază (doar dacă există în DB) + opțiuni custom
   const preisdatenbankOptionsByTag = useMemo(() => {
     const out: Record<string, string[]> = {}
     try {
       const sections = Array.isArray(baseSectionsPreisdatenbank) ? baseSectionsPreisdatenbank : []
+      const hasDbFilter = pricingParamsKeys.size > 0
       for (const sec of sections) {
         const subs = Array.isArray(sec?.subsections) ? sec.subsections : []
         for (const sub of subs) {
@@ -957,8 +1031,10 @@ export default function StepWizard() {
           const options: string[] = Array.isArray(out[tag]) ? [...out[tag]] : []
           const vars = Array.isArray(sub?.variables) ? sub.variables : []
           for (const v of vars) {
-            if (hiddenKeysForm?.has?.(v?.id)) continue
-            const optStr = stripLabelForOption(v?.label ?? '')
+            // Only show base variables that exist in DB (same filter as PDB page).
+            if (hasDbFilter && !pricingParamsKeys.has(v?.id)) continue
+            // Use renamed label if available, otherwise use original stripped label.
+            const optStr = paramLabelOverrides[v?.id ?? ''] ?? stripLabelForOption(v?.label ?? '')
             if (optStr && !options.includes(optStr)) options.push(optStr)
           }
           const custom = Array.isArray(customOptionsForm?.[tag]) ? customOptionsForm[tag] : []
@@ -973,13 +1049,14 @@ export default function StepWizard() {
       // fallback: obiect gol ca formularul să se încarce
     }
     return out
-  }, [baseSectionsPreisdatenbank, hiddenKeysForm, customOptionsForm, stripLabelForOption])
+  }, [baseSectionsPreisdatenbank, pricingParamsKeys, customOptionsForm, stripLabelForOption, paramLabelOverrides])
 
-  // Mapare option string -> price_key (pentru override etichete): din secțiuni Preisdatenbank + custom options
+  // Mapare option string -> price_key: din secțiuni Preisdatenbank (filtrate prin DB) + custom options
   const optionValueToPriceKey = useMemo(() => {
     const out: Record<string, Record<string, string>> = {}
     try {
       const sections = Array.isArray(baseSectionsPreisdatenbank) ? baseSectionsPreisdatenbank : []
+      const hasDbFilter = pricingParamsKeys.size > 0
       for (const sec of sections) {
         const subs = Array.isArray(sec?.subsections) ? sec.subsections : []
         for (const sub of subs) {
@@ -988,8 +1065,12 @@ export default function StepWizard() {
           if (!out[tag]) out[tag] = {}
           const vars = Array.isArray(sub?.variables) ? sub.variables : []
           for (const v of vars) {
-            const optStr = stripLabelForOption(v?.label ?? '')
-            if (optStr && v?.id) out[tag][optStr] = v.id
+            if (hasDbFilter && !pricingParamsKeys.has(v?.id)) continue
+            // Map both original label and renamed label → price_key
+            const originalStr = stripLabelForOption(v?.label ?? '')
+            if (originalStr && v?.id) out[tag][originalStr] = v.id
+            const renamedStr = paramLabelOverrides[v?.id ?? '']
+            if (renamedStr && v?.id) out[tag][renamedStr] = v.id
           }
         }
       }
@@ -1007,7 +1088,7 @@ export default function StepWizard() {
       // fallback
     }
     return out
-  }, [baseSectionsPreisdatenbank, customOptionsForm, stripLabelForOption])
+  }, [baseSectionsPreisdatenbank, pricingParamsKeys, customOptionsForm, stripLabelForOption, paramLabelOverrides])
 
   useEffect(() => {
     setDynamicSteps(formStepsFromJson as any[])
@@ -1104,21 +1185,23 @@ export default function StepWizard() {
     const url = '/pricing-parameters?t=' + Date.now()
     apiFetch(url)
       .then((res: any) => {
-        const hiddenArr = Array.isArray(res?.hiddenKeys) ? res.hiddenKeys.filter((k: unknown) => typeof k === 'string') as string[] : []
-        const hiddenSet = new Set(hiddenArr)
-        setHiddenKeysForm(hiddenSet)
+        // DB = sursa de adevăr: stocăm cheile din pricing_parameters pentru a filtra opțiunile formularului.
+        const rawParams = res?.params
+        const paramsMap: Record<string, number> =
+          rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)
+            ? (rawParams as Record<string, number>)
+            : {}
+        setPricingParamsKeys(new Set(Object.keys(paramsMap)))
         const co = res?.customOptions
         if (co && typeof co === 'object') {
           const filtered: Record<string, Array<{ label: string; value: string; price_key: string }>> = {}
           for (const [tag, arr] of Object.entries(co)) {
             const list = Array.isArray(arr) ? arr : []
-            filtered[tag] = list
-              .filter((o: { label?: string; value?: string; price_key?: string }) => !hiddenSet.has(String(o?.price_key ?? '')))
-              .map((o: { label?: string; value?: string; price_key?: string }) => ({
-                label: String(o?.label ?? ''),
-                value: String(o?.value ?? ''),
-                price_key: String(o?.price_key ?? ''),
-              }))
+            filtered[tag] = list.map((o: { label?: string; value?: string; price_key?: string }) => ({
+              label: String(o?.label ?? ''),
+              value: String(o?.value ?? ''),
+              price_key: String(o?.price_key ?? ''),
+            }))
           }
           setCustomOptionsForm(filtered)
         }
@@ -1168,7 +1251,7 @@ export default function StepWizard() {
       setDrafts({})
       setErrors({})
       setShowErrors(false)
-      setValidationError(null)
+      setValidationBanner(null)
       setPdfUrl(null)
       pdfReadyRunIdRef.current = null
       setComputing(false)
@@ -1177,7 +1260,7 @@ export default function StepWizard() {
       setComputeStartTime(null)
       setSaveStatus('idle')
       setSelectedPackage(null)
-      setPackagePickerMengenSub(false)
+      setPackagePickerView('root')
       setWipNotice(null)
       // Keep current mode until we read offer meta; otherwise a freshly created
       // measurements-only offer can briefly fall back to full-form flow.
@@ -1275,7 +1358,7 @@ export default function StepWizard() {
 
   // 3. Clear Validation Error la schimbarea pasului (nu și la form – obiect nou la fiecare setForm → buclă infinită)
   useEffect(() => {
-    setValidationError(null)
+    setValidationBanner(null)
   }, [idx])
 
   // Ajustare idx când visibleSteps se scurtează (ex. ascundem performantaEnergetica)
@@ -1618,7 +1701,7 @@ export default function StepWizard() {
       stepLoadNonceRef.current += 1
       // Clean current wizard state before loading the newly selected offer
       setSelectedPackage(null)
-      setPackagePickerMengenSub(false)
+      setPackagePickerView('root')
       setWipNotice(null)
       setMeasurementsOnlyFlow(false)
       setEditOfferSkipUpload(false)
@@ -1629,7 +1712,7 @@ export default function StepWizard() {
       setForm({})
       setErrors({})
       setShowErrors(false)
-      setValidationError(null)
+      setValidationBanner(null)
       setComputeFailed(false)
       setComputeRunId(null)
       pdfReadyRunIdRef.current = null
@@ -1783,7 +1866,20 @@ export default function StepWizard() {
     stepLoadNonceRef.current += 1
     const loadNonce = stepLoadNonceRef.current
 
-    const draftData = drafts[key]
+    const combineWandLegacyLoaded = (
+      wandBlob: Record<string, any>,
+      mfBlob?: Record<string, any> | null,
+    ): Record<string, any> => {
+      const w = wandBlob && typeof wandBlob === 'object' ? wandBlob : {}
+      const m = mfBlob && typeof mfBlob === 'object' ? mfBlob : {}
+      return { ...m, ...w }
+    }
+
+    let draftData = drafts[key]
+    if (key === 'wandaufbau' && drafts.materialeFinisaj && typeof drafts.materialeFinisaj === 'object') {
+      draftData = combineWandLegacyLoaded(draftData ?? {}, drafts.materialeFinisaj)
+    }
+
     const applyMerge = (prev: Record<string, any>, loaded: Record<string, any>) => {
       return mergeStepForm(key, extractStepData(key, loaded, step?.fields ?? []), prev)
     }
@@ -1796,32 +1892,52 @@ export default function StepWizard() {
       setForm(prev => loadIntoForm(prev, draftData))
       scheduleFinishBootstrap(loadNonce)
     } else if (offerId) {
-      apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent(key)}`)
-        .then((data: any) => {
-          if (loadNonce !== stepLoadNonceRef.current) return
-          const stepData = data?.data
-          if (stepData && Object.keys(stepData).length > 0) {
-            const scopedStepData = extractStepData(key, stepData, step?.fields ?? [])
-            setDrafts(prev => ({ ...prev, [key]: scopedStepData }))
-            setForm(prev => loadIntoForm(prev, scopedStepData))
-          } else {
-            const defaultForStep =
-              key === 'structuraCladirii'
-                ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', raumhoeheCm: 270, balkonBoden: 'Holz' }
-                : {}
-            setForm(prev => loadIntoForm(prev, defaultForStep))
-          }
-          if (loadNonce === stepLoadNonceRef.current) finishEditBootstrap()
-        })
-        .catch(() => {
-          if (loadNonce !== stepLoadNonceRef.current) return
-          const defaultForStep =
-            key === 'structuraCladirii'
-              ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', raumhoeheCm: 270, balkonBoden: 'Holz' }
-              : {}
+      const defaultStructura = {
+        tipFundatieBeci: 'Kein Keller (nur Bodenplatte)',
+        raumhoeheCm: 270,
+        balkonBoden: 'Holz',
+      } as const
+      const applyLoaded = (stepData: Record<string, any> | null | undefined) => {
+        if (stepData && typeof stepData === 'object' && Object.keys(stepData).length > 0) {
+          const scopedStepData = extractStepData(key, stepData, step?.fields ?? [])
+          setDrafts(prev => ({ ...prev, [key]: scopedStepData }))
+          setForm(prev => loadIntoForm(prev, scopedStepData))
+        } else {
+          const defaultForStep = key === 'structuraCladirii' ? { ...defaultStructura } : {}
           setForm(prev => loadIntoForm(prev, defaultForStep))
-          finishEditBootstrap()
-        })
+        }
+        if (loadNonce === stepLoadNonceRef.current) finishEditBootstrap()
+      }
+      if (key === 'wandaufbau') {
+        Promise.all([
+          apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent('wandaufbau')}`),
+          apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent('materialeFinisaj')}`),
+        ])
+          .then(([wa, mf]) => {
+            if (loadNonce !== stepLoadNonceRef.current) return
+            const waRaw = wa?.data && typeof wa.data === 'object' ? wa.data : {}
+            const mfRaw = mf?.data && typeof mf.data === 'object' ? mf.data : {}
+            applyLoaded(combineWandLegacyLoaded(waRaw, mfRaw))
+          })
+          .catch(() => {
+            if (loadNonce !== stepLoadNonceRef.current) return
+            const defaultForStep = key === 'structuraCladirii' ? { ...defaultStructura } : {}
+            setForm(prev => loadIntoForm(prev, defaultForStep))
+            finishEditBootstrap()
+          })
+      } else {
+        apiFetch(`/offers/${offerId}/step?step_key=${encodeURIComponent(key)}`)
+          .then((data: any) => {
+            if (loadNonce !== stepLoadNonceRef.current) return
+            applyLoaded(data?.data)
+          })
+          .catch(() => {
+            if (loadNonce !== stepLoadNonceRef.current) return
+            const defaultForStep = key === 'structuraCladirii' ? { ...defaultStructura } : {}
+            setForm(prev => loadIntoForm(prev, defaultForStep))
+            finishEditBootstrap()
+          })
+      }
     } else {
       const defaultForStep =
         key === 'structuraCladirii'
@@ -2264,7 +2380,30 @@ export default function StepWizard() {
       return e
     }
     if (step.key === 'upload') return {}
-    return validateGeneric(step.key, step.fields, form, drafts)
+    if (step.key === 'projektdaten') {
+      return validateProjektdatenStep(form, preisdatenbankOptionsByTag)
+    }
+    if (step.key === 'wandaufbau') {
+      return validateWandaufbauStep(
+        form,
+        drafts,
+        preisdatenbankOptionsByTag,
+        computeShowFinisajWandaufbau(form, drafts),
+      )
+    }
+    if (step.key === 'bodenDeckeBelag') {
+      return validateBodenDeckeBelagStep(
+        form,
+        drafts,
+        preisdatenbankOptionsByTag,
+        String(form.wizardPackage ?? selectedPackage ?? '') || undefined,
+      )
+    }
+    const base = validateGeneric(step.key, step.fields, form, drafts)
+    if (step.key === 'structuraCladirii') {
+      return mergeStructuraGewerbeTreppe(form, base)
+    }
+    return base
   }
 
   async function uploadSingleFile(id: string, fieldName: string, file: File): Promise<{ storagePath: string, mime: string }> {
@@ -2304,12 +2443,16 @@ export default function StepWizard() {
     if (!step) return
     try {
       setSaving(true)
-      setValidationError(null)
+      setValidationBanner(null)
 
       const stepErrors = validateCurrentStep()
       setErrors(stepErrors)
       const hasErrors = Object.values(stepErrors).some(Boolean)
       if (hasErrors && step.key !== 'upload') {
+        setValidationBanner({
+          title: DE.common.formIncompleteTitle,
+          detail: 'Bitte alle erforderlichen Felder und Auswahllisten vervollständigen.',
+        })
         setShowErrors(true)
         setSaving(false)
         return
@@ -2418,7 +2561,10 @@ export default function StepWizard() {
               reason.toLowerCase().includes('ansicht') ||
               reason.toLowerCase().includes('schnitt') ||
               reason.toLowerCase().includes('elevation'))
-          setValidationError(noSideView ? (DE.common as any).planInvalidNoSideView || reason : reason)
+          setValidationBanner({
+            title: DE.common.planInvalidTitle,
+            detail: noSideView ? (DE.common as any).planInvalidNoSideView || reason : reason,
+          })
           setSaving(false)
           return
         }
@@ -2548,7 +2694,7 @@ export default function StepWizard() {
     setDrafts({})
     setErrors({})
     setShowErrors(false)
-    setValidationError(null)
+    setValidationBanner(null)
     setComputeFailed(false)
     setComputeRunId(null)
     pdfReadyRunIdRef.current = null
@@ -2558,7 +2704,7 @@ export default function StepWizard() {
     setProcessStatus('')
     setSaveStatus('idle')
     setSelectedPackage(null)
-    setPackagePickerMengenSub(false)
+    setPackagePickerView('root')
     setMeasurementsOnlyFlow(false)
     measurementsOnlyFlowRef.current = false
     setEditOfferSkipUpload(false)
@@ -2815,11 +2961,12 @@ export default function StepWizard() {
         ) : showPackagePicker ? (
           <div className="relative w-full max-w-full self-stretch flex flex-1 min-h-0 flex-col justify-center px-2 page-enter">
             <div className={`px-3 text-center transition-all duration-300 ${wipNotice !== null ? 'opacity-0 pointer-events-none h-0 overflow-hidden mb-0' : 'opacity-100 mb-5 sm:mb-6'}`}>
-              <p className="text-[11px] sm:text-xs uppercase tracking-[0.18em] text-white/45 font-semibold mb-1.5">Projektwahl</p>
               <h2 className="text-white/95 text-2xl sm:text-3xl font-semibold tracking-tight leading-snug">
-                {packagePickerMengenSub
-                  ? 'Für welches Projekt brauchen Sie eine Mengenübersicht?'
-                  : 'Für welches Projekt brauchen Sie eine Preisschätzung?'}
+                {packagePickerView === 'root'
+                  ? 'Leistung auswählen'
+                  : packagePickerView === 'preis'
+                    ? 'Preisschätzung generieren'
+                    : 'Mengenschätzung generieren'}
               </h2>
             </div>
             {tokensBlocked ? (
@@ -2832,216 +2979,267 @@ export default function StepWizard() {
               className="w-full max-w-5xl mx-auto px-1 relative flex-1 min-h-0 flex flex-col"
               style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
             >
+              {/* Root: Leistung auswählen */}
               <div
                 className={`absolute inset-0 flex items-center justify-center px-1 transition-all duration-300 ease-out ${
-                  packagePickerMengenSub || wipNotice !== null
-                    ? 'opacity-0 scale-[0.97] pointer-events-none -translate-y-2'
-                    : 'opacity-100 scale-100 translate-y-0'
+                  packagePickerView === 'root' && wipNotice === null
+                    ? 'opacity-100 scale-100 translate-y-0'
+                    : 'opacity-0 scale-[0.97] pointer-events-none -translate-y-2'
                 }`}
-                aria-hidden={packagePickerMengenSub || wipNotice !== null}
+                aria-hidden={packagePickerView !== 'root' || wipNotice !== null}
               >
                 <div
-                  className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch ${
+                  className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch items-start ${
                     tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                   }`}
                 >
-                  {/* 1) Dachstuhl */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
+                  <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
                     <div className="flex items-center justify-center mb-3">
-                      <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      <div className="relative shrink-0">
+                        <img src="/images/blueprint.png" alt="Mengenschätzung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                        <div className="pointer-events-none absolute right-0 top-0 z-10 h-11 w-11 overflow-hidden">
+                          <span
+                            className="absolute right-[-18%] top-[24%] flex h-[1.2rem] w-[3.8rem] items-center justify-center bg-[#FF9F0F] text-[9px] font-extrabold leading-none text-white shadow-[0_2px_6px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.2)]"
+                            style={{ transform: 'rotate(45deg)' }}
+                            aria-label="Quadratmeter"
+                          >
+                            m²
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Dachstühle</div>
-                    <div className="flex-1" />
-                    <button
-                      type="button"
-                      disabled={tokensBlocked}
-                      onClick={() => {
-                        if (tokensBlocked) return
-                        setMeasurementsOnlyFlow(false)
-                        roofOnlyOfferRef.current = true
-                        setForm(prev => ({ ...prev, wizardPackage: 'dachstuhl' }))
-                        setSelectedPackage('dachstuhl')
-                      }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
-                    >
-                      Kalkulation starten
-                      <ChevronRight size={18} className="opacity-85" />
-                    </button>
-                  </div>
-
-                  {/* 2) Einfamilienhaus */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
-                    <div className="flex items-center justify-center mb-3">
-                      <img src="/images/house.png" alt="Einfamilienhaus" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
-                    </div>
-                    <div className="text-white font-extrabold text-lg text-center">Einfamilienhaus</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Einfamilienhäuser</div>
-                    <div className="flex-1" />
-                    <button
-                      type="button"
-                      disabled={tokensBlocked}
-                      onClick={() => {
-                        if (tokensBlocked) return
-                        setMeasurementsOnlyFlow(false)
-                        roofOnlyOfferRef.current = false
-                        setForm(prev => ({ ...prev, wizardPackage: 'einfamilienhaus' }))
-                        setSelectedPackage('einfamilienhaus')
-                      }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
-                    >
-                      Kalkulation starten
-                      <ChevronRight size={18} className="opacity-85" />
-                    </button>
-                  </div>
-
-                  {/* 3) Zubau / Aufstockung */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-span-2">
-                    <div className="flex items-center justify-center mb-3">
-                      <img src="/images/aufstockung.png" alt="Zubau / Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
-                    </div>
-                    <div className="text-white font-extrabold text-lg text-center">Zubau / Aufstockung</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer kombinierten Preisschätzung für Zubau und Aufstockung</div>
-                    <div className="flex-1" />
-                    <button
-                      type="button"
-                      disabled={tokensBlocked}
-                      onClick={() => {
-                        if (tokensBlocked) return
-                        if (!aufstockungZubauDevAccessRef.current) { setWipNotice('zubau_aufstockung'); return }
-                        setMeasurementsOnlyFlow(false)
-                        roofOnlyOfferRef.current = false
-                        setForm(prev => ({ ...prev, wizardPackage: 'zubau_aufstockung' }))
-                        setSelectedPackage('zubau_aufstockung')
-                      }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
-                    >
-                      Kalkulation starten
-                      <ChevronRight size={18} className="opacity-85" />
-                    </button>
-                  </div>
-
-                  {/* 4) Mengenübersicht */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-start-2 lg:col-span-2">
-                    <div className="flex items-center justify-center mb-3">
-                      <img src="/images/blueprint.png" alt="Mengenübersicht" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
-                    </div>
-                    <div className="text-white font-extrabold text-lg text-center">Mengenübersicht</div>
+                    <div className="text-white font-extrabold text-lg text-center">Mengenschätzung generieren</div>
                     <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Nur Maß-/Mengen-PDF – ohne Preisangebot</div>
-                    <div className="flex-1" />
                     <button
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
                         if (tokensBlocked) return
                         roofOnlyOfferRef.current = false
-                        setPackagePickerMengenSub(true)
+                        setPackagePickerView('mengen')
                       }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
                       Weiter
                       <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
-
-                  {/* 5) Gewerbe- und Wohnbau */}
-                  <div className="bg-black/40 rounded-2xl p-4 flex flex-col border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:col-start-4 lg:col-span-2">
-                    <div className="mb-3 flex justify-center">
-                      <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[#FF9F0F]/30 bg-white ring-1 ring-black/[0.08]">
-                        <img
-                          src="/images/gewerbe.png"
-                          alt="Gewerbe- und Wohnbau"
-                          className="absolute max-h-none object-cover object-center contrast-[1.16]"
-                          style={{
-                            width: '93%',
-                            height: '93%',
-                            left: '50%',
-                            top: '50%',
-                            transform: 'translate(calc(-50% - 4px), calc(-50% + 4px))',
-                          }}
-                        />
+                  <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)]">
+                    <div className="flex items-center justify-center mb-3">
+                      <div className="relative shrink-0">
+                        <img src="/images/house.png" alt="Preisschätzung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                        <div className="pointer-events-none absolute right-0 top-0 z-10 h-11 w-11 overflow-hidden">
+                          <span
+                            className="absolute right-[-18%] top-[24%] flex h-[1.2rem] w-[3.8rem] items-center justify-center bg-[#FF9F0F] text-sm font-extrabold leading-none text-white shadow-[0_2px_6px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.2)]"
+                            style={{ transform: 'rotate(45deg)' }}
+                            aria-label="Euro"
+                          >
+                            €
+                          </span>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau</div>
-                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">
-                      Erstellung einer Preisschätzung für Gewerbe- und Wohnbauten
-                    </div>
-                    <div className="flex-1" />
+                    <div className="text-white font-extrabold text-lg text-center">Preisschätzung generieren</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Automatisierte Preisschätzung für Ihr Bauvorhaben</div>
                     <button
                       type="button"
                       disabled={tokensBlocked}
                       onClick={() => {
                         if (tokensBlocked) return
-                        if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setWipNotice('gewerbe'); return }
-                        roofOnlyOfferRef.current = false
-                        setMeasurementsOnlyFlow(false)
-                        setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
-                        setSelectedPackage('gewerbe_wohnbau')
+                        setPackagePickerView('preis')
                       }}
-                      className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                     >
-                      Kalkulation starten
+                      Weiter
+                      <ChevronRight size={18} className="opacity-85" />
+                    </button>
+                  </div>
+                  <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] sm:col-span-2 lg:col-span-1">
+                    <div className="flex items-center justify-center mb-3">
+                      <img src="/images/compare.png" alt="Ausschreibung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                    </div>
+                    <div className="text-white font-extrabold text-lg text-center">Ausschreibung überprüfen</div>
+                    <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Ausschreibung und Leistungsverzeichnis prüfen</div>
+                    <button
+                      type="button"
+                      disabled={tokensBlocked}
+                      onClick={() => {
+                        if (tokensBlocked) return
+                        setWipNotice('ausschreibung')
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                    >
+                      Weiter
                       <ChevronRight size={18} className="opacity-85" />
                     </button>
                   </div>
                 </div>
               </div>
 
+              {/* Unterauswahl: Preisschätzung / Projekttyp */}
               <div
-                className={`flex flex-col flex-1 min-h-0 transition-all duration-300 ease-out ${
-                  packagePickerMengenSub && wipNotice === null
-                    ? 'opacity-100 scale-100 relative z-0'
-                    : 'opacity-0 scale-[0.97] pointer-events-none absolute inset-0 translate-y-3 z-0'
+                className={`absolute inset-0 flex flex-col justify-center px-1 py-4 overflow-y-auto transition-all duration-300 ease-out ${
+                  packagePickerView === 'preis' && wipNotice === null
+                    ? 'opacity-100 scale-100 translate-y-0'
+                    : 'opacity-0 scale-[0.97] pointer-events-none -translate-y-2'
                 }`}
-                aria-hidden={!(packagePickerMengenSub && wipNotice === null)}
+                aria-hidden={packagePickerView !== 'preis' || wipNotice !== null}
               >
-                <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
+                <div className="w-full max-w-5xl mx-auto">
                   <div
-                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch items-stretch ${
+                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch items-start ${
                       tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
                     }`}
                   >
                     <div className="col-span-full">
                       <button
                         type="button"
-                        onClick={() => setPackagePickerMengenSub(false)}
+                        onClick={() => setPackagePickerView('root')}
                         className="flex items-center gap-1.5 text-sm text-sand/80 hover:text-sand transition-colors py-1"
                       >
                         <ChevronLeft size={18} />
                         Zurück zur Auswahl
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-2 lg:col-start-2 lg:col-span-2">
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-2 lg:col-start-2 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
-                        <img src="/images/blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                        <img src="/images/roof.png" alt="Dachstuhl" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Einfamilienhaus Mengenübersicht</div>
-                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
-                        Nur Maß-/Mengen-PDF – ohne Preisangebot
-                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Dachstühle</div>
                       <button
                         type="button"
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
-                          setMeasurementsOnlyFlow(true)
-                          roofOnlyOfferRef.current = false
-                          setPackagePickerMengenSub(false)
-                          setForm(prev => ({ ...prev, wizardPackage: 'einfamilienhaus' }))
-                          setSelectedPackage('einfamilienhaus')
+                          setMeasurementsOnlyFlow(false)
+                          roofOnlyOfferRef.current = true
+                          setForm(prev => ({ ...prev, wizardPackage: 'dachstuhl' }))
+                          setSelectedPackage('dachstuhl')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-2 lg:col-start-4 lg:col-span-2">
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-2 lg:col-start-4 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
-                        <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                        <img src="/images/house.png" alt="Einfamilienhaus" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Zubau / Aufstockung Mengenübersicht</div>
-                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                      <div className="text-white font-extrabold text-lg text-center">Einfamilienhaus</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer Preisschätzung für Einfamilienhäuser</div>
+                      <button
+                        type="button"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (tokensBlocked) return
+                          setMeasurementsOnlyFlow(false)
+                          roofOnlyOfferRef.current = false
+                          setForm(prev => ({ ...prev, wizardPackage: 'einfamilienhaus' }))
+                          setSelectedPackage('einfamilienhaus')
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-3 lg:col-start-2 lg:col-span-2">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/aufstockung.png" alt="Zubau / Aufstockung" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Zubau / Aufstockung</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 px-1">Erstellung einer kombinierten Preisschätzung für Zubau und Aufstockung</div>
+                      <button
+                        type="button"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (tokensBlocked) return
+                          if (!aufstockungZubauDevAccessRef.current) { setWipNotice('zubau_aufstockung'); return }
+                          setMeasurementsOnlyFlow(false)
+                          roofOnlyOfferRef.current = false
+                          setForm(prev => ({ ...prev, wizardPackage: 'zubau_aufstockung' }))
+                          setSelectedPackage('zubau_aufstockung')
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-3 lg:col-start-4 lg:col-span-2">
+                      <div className="mb-3 flex justify-center">
+                        <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[#FF9F0F]/30 bg-white ring-1 ring-black/[0.08]">
+                          <img
+                            src="/images/gewerbe.png"
+                            alt="Gewerbe- und Wohnbau"
+                            className="absolute max-h-none object-cover object-center contrast-[1.16]"
+                            style={{
+                              width: '93%',
+                              height: '93%',
+                              left: '50%',
+                              top: '50%',
+                              transform: 'translate(calc(-50% - 4px), calc(-50% + 4px))',
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5 px-1">
+                        Erstellung einer Preisschätzung für Gewerbe- und Wohnbauten
+                      </div>
+                      <button
+                        type="button"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (tokensBlocked) return
+                          if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setWipNotice('gewerbe'); return }
+                          roofOnlyOfferRef.current = false
+                          setMeasurementsOnlyFlow(false)
+                          setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
+                          setSelectedPackage('gewerbe_wohnbau')
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={`flex flex-col flex-1 min-h-0 transition-all duration-300 ease-out ${
+                  packagePickerView === 'mengen' && wipNotice === null
+                    ? 'opacity-100 scale-100 relative z-0'
+                    : 'opacity-0 scale-[0.97] pointer-events-none absolute inset-0 translate-y-3 z-0'
+                }`}
+                aria-hidden={!(packagePickerView === 'mengen' && wipNotice === null)}
+              >
+                <div className="flex-1 flex flex-col items-center justify-center px-2 py-8 sm:py-10 min-h-[280px]">
+                  <div
+                    className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 w-full max-w-5xl mx-auto justify-center justify-items-stretch items-start ${
+                      tokensBlocked ? 'opacity-[0.38] pointer-events-none saturate-50' : ''
+                    }`}
+                  >
+                    <div className="col-span-full">
+                      <button
+                        type="button"
+                        onClick={() => setPackagePickerView('root')}
+                        className="flex items-center gap-1.5 text-sm text-sand/80 hover:text-sand transition-colors py-1"
+                      >
+                        <ChevronLeft size={18} />
+                        Zurück zur Auswahl
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/40 shadow-[0_0_24px_rgba(255,159,15,0.2)] lg:row-start-2 lg:col-start-2 lg:col-span-2">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/30" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Einfamilienhaus</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
                       <button
@@ -3049,26 +3247,51 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
-                          if (!aufstockungZubauDevAccessRef.current) { setPackagePickerMengenSub(false); setWipNotice('zubau_aufstockung'); return }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
-                          setPackagePickerMengenSub(false)
+                          setPackagePickerView('root')
+                          setForm(prev => ({ ...prev, wizardPackage: 'einfamilienhaus' }))
+                          setSelectedPackage('einfamilienhaus')
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        Kalkulation starten
+                        <ChevronRight size={18} className="opacity-85" />
+                      </button>
+                    </div>
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-2 lg:col-start-4 lg:col-span-2">
+                      <div className="flex items-center justify-center mb-3">
+                        <img src="/images/aufstockung.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
+                      </div>
+                      <div className="text-white font-extrabold text-lg text-center">Zubau / Aufstockung</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5">
+                        Nur Maß-/Mengen-PDF – ohne Preisangebot
+                      </div>
+                      <button
+                        type="button"
+                        disabled={tokensBlocked}
+                        onClick={() => {
+                          if (tokensBlocked) return
+                          if (!aufstockungZubauDevAccessRef.current) { setPackagePickerView('root'); setWipNotice('zubau_aufstockung'); return }
+                          setMeasurementsOnlyFlow(true)
+                          roofOnlyOfferRef.current = false
+                          setPackagePickerView('root')
                           setForm(prev => ({ ...prev, wizardPackage: 'zubau_aufstockung' }))
                           setSelectedPackage('zubau_aufstockung')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
 
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-2 lg:col-span-2">
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-2 lg:col-span-2">
                       <div className="flex items-center justify-center mb-3">
                         <img src="/images/roof-blueprint.png" alt="" className="w-20 h-20 rounded-full object-cover border-2 border-[#FF9F0F]/25" />
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl Mengenübersicht</div>
-                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                      <div className="text-white font-extrabold text-lg text-center">Dachstuhl</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
                       <button
@@ -3078,18 +3301,18 @@ export default function StepWizard() {
                           if (tokensBlocked) return
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = true
-                          setPackagePickerMengenSub(false)
+                          setPackagePickerView('root')
                           setForm(prev => ({ ...prev, wizardPackage: 'dachstuhl' }))
                           setSelectedPackage('dachstuhl')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
                       </button>
                     </div>
 
-                    <div className="bg-black/40 rounded-2xl p-4 flex flex-col w-full h-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-4 lg:col-span-2">
+                    <div className="bg-black/40 rounded-2xl p-5 flex flex-col gap-3 w-full border border-[#FF9F0F]/25 shadow-[0_0_20px_rgba(255,159,15,0.16)] lg:row-start-3 lg:col-start-4 lg:col-span-2">
                       <div className="mb-3 flex justify-center">
                         <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full border-2 border-[#FF9F0F]/25 bg-white ring-1 ring-black/[0.08]">
                           <img
@@ -3106,8 +3329,8 @@ export default function StepWizard() {
                           />
                         </div>
                       </div>
-                      <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau Mengenübersicht</div>
-                      <div className="text-sand/80 text-sm text-center mt-1.5 flex-1">
+                      <div className="text-white font-extrabold text-lg text-center">Gewerbe- und Wohnbau</div>
+                      <div className="text-sand/80 text-sm text-center mt-1.5">
                         Nur Maß-/Mengen-PDF – ohne Preisangebot
                       </div>
                       <button
@@ -3115,14 +3338,14 @@ export default function StepWizard() {
                         disabled={tokensBlocked}
                         onClick={() => {
                           if (tokensBlocked) return
-                          if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setPackagePickerMengenSub(false); setWipNotice('gewerbe_mengen'); return }
+                          if (!isGewerbeWohnbauAllowed(currentUserEmail)) { setPackagePickerView('root'); setWipNotice('gewerbe_mengen'); return }
                           setMeasurementsOnlyFlow(true)
                           roofOnlyOfferRef.current = false
-                          setPackagePickerMengenSub(false)
+                          setPackagePickerView('root')
                           setForm((prev) => ({ ...prev, wizardPackage: 'gewerbe_wohnbau' }))
                           setSelectedPackage('gewerbe_wohnbau')
                         }}
-                        className="mt-4 w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+                        className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-bold text-white shadow-lg transition-all duration-200 ease-out bg-gradient-to-b from-[#e08414] to-[#f79116] hover:brightness-110 hover:-translate-y-[1px] hover:shadow-[0_4px_14px_rgba(216,162,94,0.3)] active:translate-y-[1px] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         Kalkulation starten
                         <ChevronRight size={18} className="opacity-85" />
@@ -3148,7 +3371,9 @@ export default function StepWizard() {
                 {wipNotice === 'gewerbe'
                   ? 'Gewerbe- und Wohnbau'
                   : wipNotice === 'gewerbe_mengen'
-                    ? 'Gewerbe- und Wohnbau Mengenübersicht'
+                    ? 'Gewerbe- und Wohnbau'
+                    : wipNotice === 'ausschreibung'
+                      ? 'Ausschreibung überprüfen'
                     : wipNotice === 'aufstockung'
                       ? 'Aufstockung'
                       : wipNotice === 'zubau_aufstockung'
@@ -3192,12 +3417,12 @@ export default function StepWizard() {
                 </div>
               )}
 
-              {validationError && (
+              {validationBanner && (
                 <div className="mb-3 p-3 bg-orange-900/30 border border-orange-500/50 rounded-lg flex items-start gap-2 animate-fade-in">
                   <AlertTriangle className="shrink-0 text-orange-400 h-5 w-5 mt-0.5" />
                   <div>
-                    <div className="font-semibold text-orange-200">{DE.common.planInvalidTitle}</div>
-                    <div className="text-sm text-orange-100/80 mt-1">{validationError}</div>
+                    <div className="font-semibold text-orange-200">{validationBanner.title}</div>
+                    <div className="text-sm text-orange-100/80 mt-1">{validationBanner.detail}</div>
                   </div>
                 </div>
               )}
@@ -3262,24 +3487,7 @@ export default function StepWizard() {
                   hiddenKeysForm={hiddenKeysForm}
                   tOption={tOption}
                   preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
-                />
-              ) : step.key === 'materialeFinisaj' ? (
-                <MaterialeFinisajStep
-                  displayCurrency={displayCurrency}
-                  wizardPackage={
-                    String(form.wizardPackage ?? '').toLowerCase() ||
-                    (selectedPackage ?? (activeRoofOnlyOffer ? 'dachstuhl' : 'einfamilienhaus'))
-                  }
-                  form={form}
-                  setForm={(v) => applyFormUpdate(step.key, v)}
-                  errors={visibleErrors}
-                  drafts={drafts}
-                  customOptionsForm={customOptionsForm}
-                  paramLabelOverrides={paramLabelOverrides}
-                  optionValueToPriceKey={optionValueToPriceKey}
-                  hiddenKeysForm={hiddenKeysForm}
-                  tOption={tOption}
-                  preisdatenbankOptionsByTag={preisdatenbankOptionsByTag}
+                  showFinisajSection={showFinisajInWandaufbau}
                 />
               ) : step.key === 'bodenDeckeBelag' ? (
                 <BodenDeckeBelagStep
@@ -3823,6 +4031,184 @@ function resolveAufstockungFlow(form: Record<string, any>, wizardPackageProp?: s
   return wp === 'aufstockung' || wp === 'zubau' || wp === 'zubau_aufstockung'
 }
 
+function computeShowFinisajWandaufbau(form: Record<string, any>, drafts?: Drafts): boolean {
+  const nivelRaw = (
+    form.nivelOferta ||
+    form.sistemConstructiv?.nivelOferta ||
+    form.materialeFinisaj?.nivelOferta ||
+    drafts?.sistemConstructiv?.nivelOferta ||
+    drafts?.materialeFinisaj?.nivelOferta ||
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase()
+  const hasOpeningsInScope = nivelRaw.includes('fenster') || nivelRaw.includes('ferestre')
+  const isFullHouse =
+    nivelRaw.includes('completă') ||
+    nivelRaw.includes('completa') ||
+    nivelRaw.includes('schlüsselfertig') ||
+    nivelRaw.includes('schlüsselfertiges haus') ||
+    nivelRaw.includes('schlüsselfertig haus')
+  const isOnlyStructure =
+    !hasOpeningsInScope &&
+    !isFullHouse &&
+    (nivelRaw.includes('rohbau') ||
+      nivelRaw.includes('tragwerk') ||
+      nivelRaw.includes('structură') ||
+      nivelRaw.includes('structura'))
+  const isStructurePlusWindows =
+    hasOpeningsInScope &&
+    !isFullHouse &&
+    (nivelRaw.includes('rohbau') ||
+      nivelRaw.includes('tragwerk') ||
+      nivelRaw.includes('structură') ||
+      nivelRaw.includes('structura'))
+  return !isOnlyStructure && !isStructurePlusWindows
+}
+
+function validateWandaufbauStep(
+  form: Record<string, any>,
+  drafts: Drafts | undefined,
+  preisdatenbankOptionsByTag: Record<string, string[]>,
+  showFinisajSection: boolean,
+): Errors {
+  const e: Errors = {}
+  const structuraData = drafts?.structuraCladirii || {}
+  const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
+  const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+  const aufstockungFloorKinds = Array.isArray(structuraData.aufstockungFloorKinds)
+    ? structuraData.aufstockungFloorKinds
+    : Array.isArray(form.aufstockungFloorKinds)
+      ? form.aufstockungFloorKinds
+      : []
+  const isAufstockungFlow = resolveAufstockungFlow(form)
+  const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
+  const showBasementDetailFields = hasBasement && !isAufstockungFlow
+  const basementLivable = isKellerMitAusbauChoice(tipFundatieBeci)
+  const hasMansarda = listaEtaje.some((x: string) => x.startsWith('mansarda'))
+  const mansardaIndex = listaEtaje.findIndex((x: string) => x.startsWith('mansarda'))
+  const showMansardaFields =
+    hasMansarda &&
+    (!isAufstockungFlow || ['new', 'zubau', 'aufstockung'].includes(String(aufstockungFloorKinds[mansardaIndex] ?? '').toLowerCase()))
+  const etajeIntermediare = listaEtaje.filter((x: string) => x === 'intermediar').length
+  const totalFloors = 1 + etajeIntermediare
+  const editableFloorIndexes = Array.from({ length: totalFloors }, (_, idx) => idx).filter((idx) =>
+    !isAufstockungFlow || isAufstockungNewBuildStandardFloorIdx(idx, aufstockungFloorKinds, form.groundFloorKind),
+  )
+
+  const außenOptions = preisdatenbankOptionsByTag['wandaufbau_aussen'] ?? []
+  const innenOptions = preisdatenbankOptionsByTag['wandaufbau_innen'] ?? []
+  const finishInner = [...(preisdatenbankOptionsByTag['interior_finish_interior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])]
+  const finishOuter = [...(preisdatenbankOptionsByTag['interior_finish_exterior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])]
+  const finishExt = [...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])]
+
+  if (showBasementDetailFields) {
+    if (needSelectWhenOptions(form.außenwandeBeci, außenOptions)) e.außenwandeBeci = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.innenwandeBeci, innenOptions)) e.innenwandeBeci = SELECT_REQUIRED_MSG
+  }
+  for (const idx of editableFloorIndexes) {
+    const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+    const fk = `außenwande_${floorKey}`
+    const fkIn = `innenwande_${floorKey}`
+    if (needSelectWhenOptions(form[fk], außenOptions)) e[fk] = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form[fkIn], innenOptions)) e[fkIn] = SELECT_REQUIRED_MSG
+  }
+  if (showMansardaFields) {
+    if (needSelectWhenOptions(form.außenwandeMansarda, außenOptions)) e.außenwandeMansarda = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.innenwandeMansarda, innenOptions)) e.innenwandeMansarda = SELECT_REQUIRED_MSG
+  }
+
+  if (showFinisajSection) {
+    if (showBasementDetailFields && basementLivable) {
+      if (needSelectWhenOptions(form.finisajInteriorBeci, finishInner)) e.finisajInteriorBeci = SELECT_REQUIRED_MSG
+    }
+    for (const idx of editableFloorIndexes) {
+      const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+      const vi = form[`finisajInteriorInnen_${floorKey}`] ?? form[`finisajInterior_${floorKey}`]
+      const va = form[`finisajInteriorAussen_${floorKey}`] ?? form[`finisajInterior_${floorKey}`]
+      const vf = form[`fatada_${floorKey}`]
+      if (needSelectWhenOptions(vi, finishInner)) e[`finisajInteriorInnen_${floorKey}`] = SELECT_REQUIRED_MSG
+      if (needSelectWhenOptions(va, finishOuter)) e[`finisajInteriorAussen_${floorKey}`] = SELECT_REQUIRED_MSG
+      if (needSelectWhenOptions(vf, finishExt)) e[`fatada_${floorKey}`] = SELECT_REQUIRED_MSG
+    }
+    if (showMansardaFields) {
+      const vi = form.finisajInteriorInnenMansarda ?? form.finisajInteriorMansarda
+      const va = form.finisajInteriorAussenMansarda ?? form.finisajInteriorMansarda
+      if (needSelectWhenOptions(vi, finishInner)) e.finisajInteriorInnenMansarda = SELECT_REQUIRED_MSG
+      if (needSelectWhenOptions(va, finishOuter)) e.finisajInteriorAussenMansarda = SELECT_REQUIRED_MSG
+      if (needSelectWhenOptions(form.fatadaMansarda, finishExt)) e.fatadaMansarda = SELECT_REQUIRED_MSG
+    }
+  }
+  return e
+}
+
+function validateBodenDeckeBelagStep(
+  form: Record<string, any>,
+  drafts: Drafts | undefined,
+  preisdatenbankOptionsByTag: Record<string, string[]>,
+  wizardPackage?: string,
+): Errors {
+  const e: Errors = {}
+  const structuraData = drafts?.structuraCladirii || {}
+  const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
+  const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+  const aufstockungFloorKinds = Array.isArray(structuraData.aufstockungFloorKinds)
+    ? structuraData.aufstockungFloorKinds
+    : Array.isArray(form.aufstockungFloorKinds)
+      ? form.aufstockungFloorKinds
+      : []
+  const isAufstockungFlow = resolveAufstockungFlow(form, wizardPackage)
+  const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
+  const showBasementDetailFields = hasBasement && !isAufstockungFlow
+  const basementLivable = isKellerMitAusbauChoice(tipFundatieBeci)
+  const hasMansarda = listaEtaje.some((x: string) => x.startsWith('mansarda'))
+  const hasPod = listaEtaje.some((x: string) => x === 'pod')
+  const mansardaIndex = listaEtaje.findIndex((x: string) => x.startsWith('mansarda'))
+  const podIndex = listaEtaje.findIndex((x: string) => x === 'pod')
+  const showMansardaFields =
+    hasMansarda &&
+    (!isAufstockungFlow || ['new', 'zubau', 'aufstockung'].includes(String(aufstockungFloorKinds[mansardaIndex] ?? '').toLowerCase()))
+  const showPodFields =
+    hasPod && (!isAufstockungFlow || ['new', 'zubau', 'aufstockung'].includes(String(aufstockungFloorKinds[podIndex] ?? '').toLowerCase()))
+  const etajeIntermediare = listaEtaje.filter((x: string) => x === 'intermediar').length
+  const totalFloors = 1 + etajeIntermediare
+  const editableFloorIndexes = Array.from({ length: totalFloors }, (_, idx) => idx).filter((idx) =>
+    !isAufstockungFlow || isAufstockungNewBuildStandardFloorIdx(idx, aufstockungFloorKinds, form.groundFloorKind),
+  )
+
+  const bodenaufbauOptions = preisdatenbankOptionsByTag['bodenaufbau'] ?? []
+  const deckenaufbauOptions = preisdatenbankOptionsByTag['deckenaufbau'] ?? []
+  const bodenbelagOptions = preisdatenbankOptionsByTag['bodenbelag'] ?? []
+
+  if (showBasementDetailFields && basementLivable) {
+    if (needSelectWhenOptions(form.bodenbelagBeci, bodenbelagOptions)) e.bodenbelagBeci = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.deckenaufbauBeci, deckenaufbauOptions)) e.deckenaufbauBeci = SELECT_REQUIRED_MSG
+  }
+  for (const idx of editableFloorIndexes) {
+    const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+    const isParter = idx === 0
+    const groundKind = String(form.groundFloorKind ?? '').toLowerCase()
+    const isGroundZubau = isParter && (groundKind === 'new' || groundKind === 'zubau' || groundKind === 'aufstockung')
+    const showBodenaufbauParter = hasBasement || !isParter || isGroundZubau
+    if (showBodenaufbauParter && needSelectWhenOptions(form[`bodenaufbau_${floorKey}`], bodenaufbauOptions)) {
+      e[`bodenaufbau_${floorKey}`] = SELECT_REQUIRED_MSG
+    }
+    if (needSelectWhenOptions(form[`bodenbelag_${floorKey}`], bodenbelagOptions)) e[`bodenbelag_${floorKey}`] = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form[`deckenaufbau_${floorKey}`], deckenaufbauOptions)) e[`deckenaufbau_${floorKey}`] = SELECT_REQUIRED_MSG
+  }
+  if (showMansardaFields) {
+    if (needSelectWhenOptions(form.bodenaufbauMansarda, bodenaufbauOptions)) e.bodenaufbauMansarda = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.bodenbelagMansarda, bodenbelagOptions)) e.bodenbelagMansarda = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.deckenaufbauMansarda, deckenaufbauOptions)) e.deckenaufbauMansarda = SELECT_REQUIRED_MSG
+  }
+  if (showPodFields) {
+    if (needSelectWhenOptions(form.bodenaufbauPod, bodenaufbauOptions)) e.bodenaufbauPod = SELECT_REQUIRED_MSG
+    if (needSelectWhenOptions(form.bodenbelagPod, bodenbelagOptions)) e.bodenbelagPod = SELECT_REQUIRED_MSG
+  }
+  return e
+}
+
 function WandaufbauStep({
   form,
   setForm,
@@ -3836,6 +4222,7 @@ function WandaufbauStep({
   tOption,
   preisdatenbankOptionsByTag = {},
   displayCurrency = 'EUR',
+  showFinisajSection = true,
 }: {
   form: Record<string, any>
   setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void
@@ -3849,6 +4236,7 @@ function WandaufbauStep({
   tOption: (stepKey: string, fieldName: string, opt: string) => string
   preisdatenbankOptionsByTag?: Record<string, string[]>
   displayCurrency?: DisplayCurrency
+  showFinisajSection?: boolean
 }) {
   const structuraData = drafts?.structuraCladirii || {}
   const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
@@ -3859,6 +4247,7 @@ function WandaufbauStep({
   const isAufstockungFlow = resolveAufstockungFlow(form, wizardPackage)
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const showBasementDetailFields = hasBasement && !isAufstockungFlow
+  const basementLivable = isKellerMitAusbauChoice(tipFundatieBeci)
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const mansardaIndex = listaEtaje.findIndex((e: string) => e.startsWith('mansarda'))
   const showMansardaFields = hasMansarda && (!isAufstockungFlow || ['new', 'zubau', 'aufstockung'].includes(String(aufstockungFloorKinds[mansardaIndex] ?? '').toLowerCase()))
@@ -3881,52 +4270,93 @@ function WandaufbauStep({
       displayCurrency,
     )
 
+  const INTERIOR_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_tencuiala', 'Lemn': 'interior_lemn', 'Fibrociment': 'interior_fibrociment', 'Mix': 'interior_mix' }
+  const INTERIOR_OUTER_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_outer_tencuiala', 'Lemn': 'interior_outer_lemn', 'Fibrociment': 'interior_outer_fibrociment', 'Mix': 'interior_outer_mix' }
+  const EXTERIOR_FACADE_KEY: Record<string, string> = { 'Tencuială': 'exterior_tencuiala', 'Lemn': 'exterior_lemn', 'Fibrociment': 'exterior_fibrociment', 'Mix': 'exterior_mix' }
+  const finishOptionsInteriorInner = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_interior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_interior_walls'], preisdatenbankOptionsByTag['interior_finish']])
+  const finishOptionsInteriorOuter = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_exterior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_exterior_walls'], preisdatenbankOptionsByTag['interior_finish']])
+  const finishOptionsExterior = useMemo(() => [...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])], [preisdatenbankOptionsByTag['exterior_facade']])
+  const displayFinish = (fieldName: string, opt: string) => {
+    const isExterior = fieldName.startsWith('fatada')
+    const isInteriorOuter = fieldName.startsWith('finisajInteriorAussen')
+    const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : isInteriorOuter ? INTERIOR_OUTER_FINISH_KEY[opt] : INTERIOR_FINISH_KEY[opt]
+    let raw: string
+    if (key && paramLabelOverrides[key]) raw = paramLabelOverrides[key]
+    else {
+      const tag = isExterior ? 'exterior_facade' : isInteriorOuter ? 'interior_finish_exterior_walls' : 'interior_finish_interior_walls'
+      const pk = optionValueToPriceKey[tag]?.[opt] ?? (!isExterior && !isInteriorOuter ? optionValueToPriceKey['interior_finish']?.[opt] : undefined)
+      if (pk && paramLabelOverrides[pk]) raw = paramLabelOverrides[pk]
+      else raw = tOption('wandaufbau', fieldName, opt) || opt
+    }
+    return adaptCurrencyCopy(raw, displayCurrency)
+  }
+
+  const ringSel = (field: string) => (errors[field] ? 'ring-2 ring-orange-400/60 rounded-lg' : '')
+
   return (
     <div className="space-y-4">
       {showBasementDetailFields && (
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1" data-field="außenwandeBeci">
             <span className="wiz-label text-sun/90">Außenwände – Keller</span>
-            <SelectSun
-              value={form.außenwandeBeci || ''}
-              onChange={(v) => setForm(prev => ({ ...prev, außenwandeBeci: v }))}
-              options={außenOptions}
-              displayFor={displayAußen}
-            />
+            <div className={ringSel('außenwandeBeci')}>
+              <SelectSun
+                value={form.außenwandeBeci || ''}
+                onChange={(v) => setForm(prev => ({ ...prev, außenwandeBeci: v }))}
+                options={außenOptions}
+                displayFor={displayAußen}
+                placeholder={DE.common.selectPlaceholder}
+              />
+            </div>
+            {errors.außenwandeBeci && <span className="text-xs text-orange-400">{errors.außenwandeBeci}</span>}
           </label>
           <label className="flex flex-col gap-1 flex-1" data-field="innenwandeBeci">
             <span className="wiz-label text-sun/90">Innenwände – Keller</span>
-            <SelectSun
-              value={form.innenwandeBeci || ''}
-              onChange={(v) => setForm(prev => ({ ...prev, innenwandeBeci: v }))}
-              options={innenOptions}
-              displayFor={displayInnen}
-            />
+            <div className={ringSel('innenwandeBeci')}>
+              <SelectSun
+                value={form.innenwandeBeci || ''}
+                onChange={(v) => setForm(prev => ({ ...prev, innenwandeBeci: v }))}
+                options={innenOptions}
+                displayFor={displayInnen}
+                placeholder={DE.common.selectPlaceholder}
+              />
+            </div>
+            {errors.innenwandeBeci && <span className="text-xs text-orange-400">{errors.innenwandeBeci}</span>}
           </label>
         </div>
       )}
       {editableFloorIndexes.map((idx) => {
         const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
         const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+        const fk = `außenwande_${floorKey}`
+        const fkIn = `innenwande_${floorKey}`
         return (
           <div key={floorKey} className="flex gap-4 items-start">
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Außenwände – {floorLabel}</span>
-              <SelectSun
-                value={form[`außenwande_${floorKey}`] || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, [`außenwande_${floorKey}`]: v }))}
-                options={außenOptions}
-                displayFor={displayAußen}
-              />
+              <div className={ringSel(fk)}>
+                <SelectSun
+                  value={form[fk] || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, [fk]: v }))}
+                  options={außenOptions}
+                  displayFor={displayAußen}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors[fk] && <span className="text-xs text-orange-400">{errors[fk]}</span>}
             </label>
             <label className="flex flex-col gap-1 flex-1">
               <span className="wiz-label text-sun/90">Innenwände – {floorLabel}</span>
-              <SelectSun
-                value={form[`innenwande_${floorKey}`] || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, [`innenwande_${floorKey}`]: v }))}
-                options={innenOptions}
-                displayFor={displayInnen}
-              />
+              <div className={ringSel(fkIn)}>
+                <SelectSun
+                  value={form[fkIn] || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, [fkIn]: v }))}
+                  options={innenOptions}
+                  displayFor={displayInnen}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors[fkIn] && <span className="text-xs text-orange-400">{errors[fkIn]}</span>}
             </label>
           </div>
         )
@@ -3935,23 +4365,146 @@ function WandaufbauStep({
         <div className="flex gap-4 items-start">
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Außenwände – Dachgeschoss</span>
-            <SelectSun
-              value={form.außenwandeMansarda || ''}
-              onChange={(v) => setForm(prev => ({ ...prev, außenwandeMansarda: v }))}
-              options={außenOptions}
-              displayFor={displayAußen}
-            />
+            <div className={ringSel('außenwandeMansarda')}>
+              <SelectSun
+                value={form.außenwandeMansarda || ''}
+                onChange={(v) => setForm(prev => ({ ...prev, außenwandeMansarda: v }))}
+                options={außenOptions}
+                displayFor={displayAußen}
+                placeholder={DE.common.selectPlaceholder}
+              />
+            </div>
+            {errors.außenwandeMansarda && <span className="text-xs text-orange-400">{errors.außenwandeMansarda}</span>}
           </label>
           <label className="flex flex-col gap-1 flex-1">
             <span className="wiz-label text-sun/90">Innenwände – Dachgeschoss</span>
-            <SelectSun
-              value={form.innenwandeMansarda || ''}
-              onChange={(v) => setForm(prev => ({ ...prev, innenwandeMansarda: v }))}
-              options={innenOptions}
-              displayFor={displayInnen}
-            />
+            <div className={ringSel('innenwandeMansarda')}>
+              <SelectSun
+                value={form.innenwandeMansarda || ''}
+                onChange={(v) => setForm(prev => ({ ...prev, innenwandeMansarda: v }))}
+                options={innenOptions}
+                displayFor={displayInnen}
+                placeholder={DE.common.selectPlaceholder}
+              />
+            </div>
+            {errors.innenwandeMansarda && <span className="text-xs text-orange-400">{errors.innenwandeMansarda}</span>}
           </label>
         </div>
+      )}
+      {showFinisajSection && (
+        <>
+          {showBasementDetailFields && basementLivable && (
+            <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
+              <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
+              <div className={ringSel('finisajInteriorBeci')}>
+                <SelectSun
+                  value={form.finisajInteriorBeci || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorBeci: v }))}
+                  options={finishOptionsInteriorInner}
+                  displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.finisajInteriorBeci && <span className="text-xs text-orange-400">{errors.finisajInteriorBeci}</span>}
+            </label>
+          )}
+          {editableFloorIndexes.map((idx) => {
+            const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
+            const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
+            const kn = `finisajInteriorInnen_${floorKey}`
+            const ka = `finisajInteriorAussen_${floorKey}`
+            const kf = `fatada_${floorKey}`
+            return (
+              <div key={`fin-${floorKey}`} className="rounded-lg border border-white/10 p-3 space-y-4 bg-panel/30">
+                <span className="wiz-label text-sun/90 font-medium">Innenausbau & Fassade – {floorLabel}</span>
+                <div className="grid gap-4 md:grid-cols-3 items-start">
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="wiz-label text-sun/90">Innenausbau Innenwände - {floorLabel}</span>
+                    <div className={ringSel(kn)}>
+                      <SelectSun
+                        value={form[kn] || form[`finisajInterior_${floorKey}`] || ''}
+                        onChange={(v) => setForm(prev => ({ ...prev, [kn]: v }))}
+                        options={finishOptionsInteriorInner}
+                        displayFor={(opt) => displayFinish(kn, opt)}
+                        placeholder={DE.common.selectPlaceholder}
+                      />
+                    </div>
+                    {errors[kn] && <span className="text-xs text-orange-400">{errors[kn]}</span>}
+                  </label>
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="wiz-label text-sun/90">Innenausbau Außenwände - {floorLabel}</span>
+                    <div className={ringSel(ka)}>
+                      <SelectSun
+                        value={form[ka] || form[`finisajInterior_${floorKey}`] || ''}
+                        onChange={(v) => setForm(prev => ({ ...prev, [ka]: v }))}
+                        options={finishOptionsInteriorOuter}
+                        displayFor={(opt) => displayFinish(ka, opt)}
+                        placeholder={DE.common.selectPlaceholder}
+                      />
+                    </div>
+                    {errors[ka] && <span className="text-xs text-orange-400">{errors[ka]}</span>}
+                  </label>
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
+                    <div className={ringSel(kf)}>
+                      <SelectSun
+                        value={form[kf] || ''}
+                        onChange={(v) => setForm(prev => ({ ...prev, [kf]: v }))}
+                        options={finishOptionsExterior}
+                        displayFor={(opt) => displayFinish(kf, opt)}
+                        placeholder={DE.common.selectPlaceholder}
+                      />
+                    </div>
+                    {errors[kf] && <span className="text-xs text-orange-400">{errors[kf]}</span>}
+                  </label>
+                </div>
+              </div>
+            )
+          })}
+          {showMansardaFields && (
+            <div className="grid gap-4 md:grid-cols-3 items-start">
+              <label className="flex flex-col gap-1 flex-1">
+                <span className="wiz-label text-sun/90">Innenausbau Innenwände - Dachgeschoss</span>
+                <div className={ringSel('finisajInteriorInnenMansarda')}>
+                  <SelectSun
+                    value={form.finisajInteriorInnenMansarda || form.finisajInteriorMansarda || ''}
+                    onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorInnenMansarda: v }))}
+                    options={finishOptionsInteriorInner}
+                    displayFor={(opt) => displayFinish('finisajInteriorInnenMansarda', opt)}
+                    placeholder={DE.common.selectPlaceholder}
+                  />
+                </div>
+                {errors.finisajInteriorInnenMansarda && <span className="text-xs text-orange-400">{errors.finisajInteriorInnenMansarda}</span>}
+              </label>
+              <label className="flex flex-col gap-1 flex-1">
+                <span className="wiz-label text-sun/90">Innenausbau Außenwände - Dachgeschoss</span>
+                <div className={ringSel('finisajInteriorAussenMansarda')}>
+                  <SelectSun
+                    value={form.finisajInteriorAussenMansarda || form.finisajInteriorMansarda || ''}
+                    onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorAussenMansarda: v }))}
+                    options={finishOptionsInteriorOuter}
+                    displayFor={(opt) => displayFinish('finisajInteriorAussenMansarda', opt)}
+                    placeholder={DE.common.selectPlaceholder}
+                  />
+                </div>
+                {errors.finisajInteriorAussenMansarda && <span className="text-xs text-orange-400">{errors.finisajInteriorAussenMansarda}</span>}
+              </label>
+              <label className="flex flex-col gap-1 flex-1">
+                <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
+                <div className={ringSel('fatadaMansarda')}>
+                  <SelectSun
+                    value={form.fatadaMansarda || ''}
+                    onChange={(v) => setForm(prev => ({ ...prev, fatadaMansarda: v }))}
+                    options={finishOptionsExterior}
+                    displayFor={(opt) => displayFinish('fatadaMansarda', opt)}
+                    placeholder={DE.common.selectPlaceholder}
+                  />
+                </div>
+                {errors.fatadaMansarda && <span className="text-xs text-orange-400">{errors.fatadaMansarda}</span>}
+              </label>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -4027,6 +4580,7 @@ function BodenDeckeBelagStep({
       paramLabelOverrides[optionValueToPriceKey['bodenbelag']?.[opt] ?? ''] ?? tOption('bodenDeckeBelag', 'bodenbelag', opt),
       displayCurrency,
     )
+  const ringSel = (field: string) => (errors[field] ? 'ring-2 ring-orange-400/60 rounded-lg' : '')
   return (
     <div className="space-y-4">
       <p className="text-sun/70 text-sm">Wählen Sie für jede Etage die passende Konstruktion und den entsprechenden Bodenaufbau entsprechend Ihrer Gebäudeplanung.</p>
@@ -4036,21 +4590,29 @@ function BodenDeckeBelagStep({
           <div className="flex flex-wrap gap-4 items-start">
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Bodenbelag</span>
-              <SelectSun
-                value={form.bodenbelagBeci || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagBeci: v }))}
-                options={bodenbelagOptions}
-                displayFor={displayBodenbelag}
-              />
+              <div className={ringSel('bodenbelagBeci')}>
+                <SelectSun
+                  value={form.bodenbelagBeci || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, bodenbelagBeci: v }))}
+                  options={bodenbelagOptions}
+                  displayFor={displayBodenbelag}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.bodenbelagBeci && <span className="text-xs text-orange-400">{errors.bodenbelagBeci}</span>}
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Deckenaufbau</span>
-              <SelectSun
-                value={form.deckenaufbauBeci || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauBeci: v }))}
-                options={deckenaufbauOptions}
-                displayFor={displayDeckenaufbau}
-              />
+              <div className={ringSel('deckenaufbauBeci')}>
+                <SelectSun
+                  value={form.deckenaufbauBeci || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauBeci: v }))}
+                  options={deckenaufbauOptions}
+                  displayFor={displayDeckenaufbau}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.deckenaufbauBeci && <span className="text-xs text-orange-400">{errors.deckenaufbauBeci}</span>}
             </label>
           </div>
         </div>
@@ -4062,6 +4624,9 @@ function BodenDeckeBelagStep({
         const groundKind = String(form.groundFloorKind ?? '').toLowerCase()
         const isGroundZubau = isParter && (groundKind === 'new' || groundKind === 'zubau' || groundKind === 'aufstockung')
         const showBodenaufbauParter = hasBasement || !isParter || isGroundZubau
+        const kb = `bodenaufbau_${floorKey}`
+        const kbb = `bodenbelag_${floorKey}`
+        const kd = `deckenaufbau_${floorKey}`
         return (
           <div key={floorKey} className="rounded-lg border border-white/10 p-3 space-y-3 bg-panel/30">
             <span className="wiz-label text-sun/90 font-medium">{floorLabel}</span>
@@ -4069,31 +4634,43 @@ function BodenDeckeBelagStep({
               {showBodenaufbauParter && (
                 <label className="flex flex-col gap-1 min-w-[180px]">
                   <span className="text-xs text-sun/70">Bodenaufbau</span>
-                  <SelectSun
-                    value={form[`bodenaufbau_${floorKey}`] || ''}
-                    onChange={(v) => setForm(prev => ({ ...prev, [`bodenaufbau_${floorKey}`]: v }))}
-                    options={bodenaufbauOptions}
-                    displayFor={displayBodenaufbau}
-                  />
+                  <div className={ringSel(kb)}>
+                    <SelectSun
+                      value={form[kb] || ''}
+                      onChange={(v) => setForm(prev => ({ ...prev, [kb]: v }))}
+                      options={bodenaufbauOptions}
+                      displayFor={displayBodenaufbau}
+                      placeholder={DE.common.selectPlaceholder}
+                    />
+                  </div>
+                  {errors[kb] && <span className="text-xs text-orange-400">{errors[kb]}</span>}
                 </label>
               )}
               <label className="flex flex-col gap-1 min-w-[180px]">
                 <span className="text-xs text-sun/70">Bodenbelag</span>
-                <SelectSun
-                  value={form[`bodenbelag_${floorKey}`] || ''}
-                  onChange={(v) => setForm(prev => ({ ...prev, [`bodenbelag_${floorKey}`]: v }))}
-                  options={bodenbelagOptions}
-                  displayFor={displayBodenbelag}
-                />
+                <div className={ringSel(kbb)}>
+                  <SelectSun
+                    value={form[kbb] || ''}
+                    onChange={(v) => setForm(prev => ({ ...prev, [kbb]: v }))}
+                    options={bodenbelagOptions}
+                    displayFor={displayBodenbelag}
+                    placeholder={DE.common.selectPlaceholder}
+                  />
+                </div>
+                {errors[kbb] && <span className="text-xs text-orange-400">{errors[kbb]}</span>}
               </label>
               <label className="flex flex-col gap-1 min-w-[180px]">
                 <span className="text-xs text-sun/70">Deckenaufbau</span>
-                <SelectSun
-                  value={form[`deckenaufbau_${floorKey}`] || ''}
-                  onChange={(v) => setForm(prev => ({ ...prev, [`deckenaufbau_${floorKey}`]: v }))}
-                  options={deckenaufbauOptions}
-                  displayFor={displayDeckenaufbau}
-                />
+                <div className={ringSel(kd)}>
+                  <SelectSun
+                    value={form[kd] || ''}
+                    onChange={(v) => setForm(prev => ({ ...prev, [kd]: v }))}
+                    options={deckenaufbauOptions}
+                    displayFor={displayDeckenaufbau}
+                    placeholder={DE.common.selectPlaceholder}
+                  />
+                </div>
+                {errors[kd] && <span className="text-xs text-orange-400">{errors[kd]}</span>}
               </label>
             </div>
           </div>
@@ -4105,30 +4682,42 @@ function BodenDeckeBelagStep({
           <div className="flex flex-wrap gap-4 items-start">
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Bodenaufbau</span>
-              <SelectSun
-                value={form.bodenaufbauMansarda || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauMansarda: v }))}
-                options={bodenaufbauOptions}
-                displayFor={displayBodenaufbau}
-              />
+              <div className={ringSel('bodenaufbauMansarda')}>
+                <SelectSun
+                  value={form.bodenaufbauMansarda || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauMansarda: v }))}
+                  options={bodenaufbauOptions}
+                  displayFor={displayBodenaufbau}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.bodenaufbauMansarda && <span className="text-xs text-orange-400">{errors.bodenaufbauMansarda}</span>}
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Bodenbelag</span>
-              <SelectSun
-                value={form.bodenbelagMansarda || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagMansarda: v }))}
-                options={bodenbelagOptions}
-                displayFor={displayBodenbelag}
-              />
+              <div className={ringSel('bodenbelagMansarda')}>
+                <SelectSun
+                  value={form.bodenbelagMansarda || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, bodenbelagMansarda: v }))}
+                  options={bodenbelagOptions}
+                  displayFor={displayBodenbelag}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.bodenbelagMansarda && <span className="text-xs text-orange-400">{errors.bodenbelagMansarda}</span>}
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Deckenaufbau</span>
-              <SelectSun
-                value={form.deckenaufbauMansarda || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauMansarda: v }))}
-                options={deckenaufbauOptions}
-                displayFor={displayDeckenaufbau}
-              />
+              <div className={ringSel('deckenaufbauMansarda')}>
+                <SelectSun
+                  value={form.deckenaufbauMansarda || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, deckenaufbauMansarda: v }))}
+                  options={deckenaufbauOptions}
+                  displayFor={displayDeckenaufbau}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.deckenaufbauMansarda && <span className="text-xs text-orange-400">{errors.deckenaufbauMansarda}</span>}
             </label>
           </div>
         </div>
@@ -4139,117 +4728,31 @@ function BodenDeckeBelagStep({
           <div className="flex flex-wrap gap-4 items-start">
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Bodenaufbau</span>
-              <SelectSun
-                value={form.bodenaufbauPod || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauPod: v }))}
-                options={bodenaufbauOptions}
-                displayFor={displayBodenaufbau}
-              />
+              <div className={ringSel('bodenaufbauPod')}>
+                <SelectSun
+                  value={form.bodenaufbauPod || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, bodenaufbauPod: v }))}
+                  options={bodenaufbauOptions}
+                  displayFor={displayBodenaufbau}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.bodenaufbauPod && <span className="text-xs text-orange-400">{errors.bodenaufbauPod}</span>}
             </label>
             <label className="flex flex-col gap-1 min-w-[180px]">
               <span className="text-xs text-sun/70">Bodenbelag (wenn ausgebaut)</span>
-              <SelectSun
-                value={form.bodenbelagPod || ''}
-                onChange={(v) => setForm(prev => ({ ...prev, bodenbelagPod: v }))}
-                options={bodenbelagOptions}
-                placeholder="— auswählen —"
-                displayFor={displayBodenbelag}
-              />
+              <div className={ringSel('bodenbelagPod')}>
+                <SelectSun
+                  value={form.bodenbelagPod || ''}
+                  onChange={(v) => setForm(prev => ({ ...prev, bodenbelagPod: v }))}
+                  options={bodenbelagOptions}
+                  displayFor={displayBodenbelag}
+                  placeholder={DE.common.selectPlaceholder}
+                />
+              </div>
+              {errors.bodenbelagPod && <span className="text-xs text-orange-400">{errors.bodenbelagPod}</span>}
             </label>
           </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function MaterialeFinisajStep({ form, setForm, errors, drafts, wizardPackage, customOptionsForm = {}, paramLabelOverrides = {}, optionValueToPriceKey = {}, hiddenKeysForm = new Set<string>(), tOption, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR' }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; drafts: Drafts; wizardPackage?: string; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; optionValueToPriceKey?: Record<string, Record<string, string>>; hiddenKeysForm?: Set<string>; tOption: (stepKey: string, fieldName: string, opt: string) => string; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency }) {
-  const structuraData = drafts?.structuraCladirii || {}
-  const tipFundatieBeci = structuraData.tipFundatieBeci || form.tipFundatieBeci || 'Kein Keller (nur Bodenplatte)'
-  const listaEtaje = Array.isArray(structuraData.listaEtaje) ? structuraData.listaEtaje : (Array.isArray(form.listaEtaje) ? form.listaEtaje : [])
-  const aufstockungFloorKinds = Array.isArray(structuraData.aufstockungFloorKinds)
-    ? structuraData.aufstockungFloorKinds
-    : (Array.isArray(form.aufstockungFloorKinds) ? form.aufstockungFloorKinds : [])
-  const isAufstockungFlow = resolveAufstockungFlow(form, wizardPackage)
-  const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
-  const showBasementDetailFields = hasBasement && !isAufstockungFlow
-  const basementLivable = isKellerMitAusbauChoice(tipFundatieBeci)
-  const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
-  const mansardaIndex = listaEtaje.findIndex((e: string) => e.startsWith('mansarda'))
-  const showMansardaFields = hasMansarda && (!isAufstockungFlow || ['new', 'zubau', 'aufstockung'].includes(String(aufstockungFloorKinds[mansardaIndex] ?? '').toLowerCase()))
-  const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
-  const totalFloors = 1 + etajeIntermediare
-  const editableFloorIndexes = Array.from({ length: totalFloors }, (_, idx) => idx).filter(
-    (idx) => !isAufstockungFlow || isAufstockungNewBuildStandardFloorIdx(idx, aufstockungFloorKinds, form.groundFloorKind),
-  )
-  const INTERIOR_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_tencuiala', 'Lemn': 'interior_lemn', 'Fibrociment': 'interior_fibrociment', 'Mix': 'interior_mix' }
-  const INTERIOR_OUTER_FINISH_KEY: Record<string, string> = { 'Tencuială': 'interior_outer_tencuiala', 'Lemn': 'interior_outer_lemn', 'Fibrociment': 'interior_outer_fibrociment', 'Mix': 'interior_outer_mix' }
-  const EXTERIOR_FACADE_KEY: Record<string, string> = { 'Tencuială': 'exterior_tencuiala', 'Lemn': 'exterior_lemn', 'Fibrociment': 'exterior_fibrociment', 'Mix': 'exterior_mix' }
-  const finishOptionsInteriorInner = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_interior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_interior_walls'], preisdatenbankOptionsByTag['interior_finish']])
-  const finishOptionsInteriorOuter = useMemo(() => [...(preisdatenbankOptionsByTag['interior_finish_exterior_walls'] ?? preisdatenbankOptionsByTag['interior_finish'] ?? [])], [preisdatenbankOptionsByTag['interior_finish_exterior_walls'], preisdatenbankOptionsByTag['interior_finish']])
-  const finishOptionsExterior = useMemo(() => [...(preisdatenbankOptionsByTag['exterior_facade'] ?? [])], [preisdatenbankOptionsByTag['exterior_facade']])
-  const displayFinish = (fieldName: string, opt: string) => {
-    const isExterior = fieldName.startsWith('fatada')
-    const isInteriorOuter = fieldName.startsWith('finisajInteriorAussen')
-    const key = isExterior ? EXTERIOR_FACADE_KEY[opt] : isInteriorOuter ? INTERIOR_OUTER_FINISH_KEY[opt] : INTERIOR_FINISH_KEY[opt]
-    let raw: string
-    if (key && paramLabelOverrides[key]) raw = paramLabelOverrides[key]
-    else {
-      const tag = isExterior ? 'exterior_facade' : isInteriorOuter ? 'interior_finish_exterior_walls' : 'interior_finish_interior_walls'
-      const pk = optionValueToPriceKey[tag]?.[opt] ?? (!isExterior && !isInteriorOuter ? optionValueToPriceKey['interior_finish']?.[opt] : undefined)
-      if (pk && paramLabelOverrides[pk]) raw = paramLabelOverrides[pk]
-      else raw = tOption('materialeFinisaj', fieldName, opt) || opt
-    }
-    return adaptCurrencyCopy(raw, displayCurrency)
-  }
-
-  return (
-    <div className="space-y-4">
-      {showBasementDetailFields && basementLivable && (
-        <label className="flex flex-col gap-1" data-field="finisajInteriorBeci">
-          <span className="wiz-label text-sun/90">Innenausbau (Keller)</span>
-          <div className={errors.finisajInteriorBeci ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
-            <SelectSun value={form.finisajInteriorBeci || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorBeci: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish('finisajInteriorBeci', opt)} />
-          </div>
-        </label>
-      )}
-      {editableFloorIndexes.map((idx) => {
-        const floorLabel = idx === 0 ? 'Erdgeschoss' : `Obergeschoss ${idx}`
-        const floorKey = idx === 0 ? 'ground' : `floor_${idx}`
-        return (
-          <div key={floorKey} className="rounded-lg border border-white/10 p-3 space-y-4 bg-panel/30">
-            <span className="wiz-label text-sun/90 font-medium">{floorLabel}</span>
-            <div className="grid gap-4 md:grid-cols-3 items-start">
-              <label className="flex flex-col gap-1 flex-1">
-                <span className="wiz-label text-sun/90">Innenausbau Innenwände - {floorLabel}</span>
-                <SelectSun value={form[`finisajInteriorInnen_${floorKey}`] || form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInteriorInnen_${floorKey}`]: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish(`finisajInteriorInnen_${floorKey}`, opt)} />
-              </label>
-              <label className="flex flex-col gap-1 flex-1">
-                <span className="wiz-label text-sun/90">Innenausbau Außenwände - {floorLabel}</span>
-                <SelectSun value={form[`finisajInteriorAussen_${floorKey}`] || form[`finisajInterior_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`finisajInteriorAussen_${floorKey}`]: v }))} options={finishOptionsInteriorOuter} displayFor={(opt) => displayFinish(`finisajInteriorAussen_${floorKey}`, opt)} />
-              </label>
-              <label className="flex flex-col gap-1 flex-1">
-                <span className="wiz-label text-sun/90">Fassade - {floorLabel}</span>
-                <SelectSun value={form[`fatada_${floorKey}`] || ''} onChange={(v) => setForm(prev => ({ ...prev, [`fatada_${floorKey}`]: v }))} options={finishOptionsExterior} displayFor={(opt) => displayFinish(`fatada_${floorKey}`, opt)} />
-              </label>
-            </div>
-          </div>
-        )
-      })}
-      {showMansardaFields && (
-        <div className="grid gap-4 md:grid-cols-3 items-start">
-          <label className="flex flex-col gap-1 flex-1">
-            <span className="wiz-label text-sun/90">Innenausbau Innenwände - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorInnenMansarda || form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorInnenMansarda: v }))} options={finishOptionsInteriorInner} displayFor={(opt) => displayFinish('finisajInteriorInnenMansarda', opt)} />
-          </label>
-          <label className="flex flex-col gap-1 flex-1">
-            <span className="wiz-label text-sun/90">Innenausbau Außenwände - Dachgeschoss</span>
-            <SelectSun value={form.finisajInteriorAussenMansarda || form.finisajInteriorMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, finisajInteriorAussenMansarda: v }))} options={finishOptionsInteriorOuter} displayFor={(opt) => displayFinish('finisajInteriorAussenMansarda', opt)} />
-          </label>
-          <label className="flex flex-col gap-1 flex-1">
-            <span className="wiz-label text-sun/90">Fassade - Dachgeschoss</span>
-            <SelectSun value={form.fatadaMansarda || ''} onChange={(v) => setForm(prev => ({ ...prev, fatadaMansarda: v }))} options={finishOptionsExterior} displayFor={(opt) => displayFinish('fatadaMansarda', opt)} />
-          </label>
         </div>
       )}
     </div>
@@ -4312,22 +4815,6 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
   const stairOptsEffective = stairTypeOptions.length > 0 ? stairTypeOptions : Array.from(STAIR_TYPE_OPTIONS)
-  useEffect(() => {
-    if (!hasFloorAboveGround) return
-    const def = stairOptsEffective[0] ?? 'Standard'
-    if (form.treppeTyp == null || String(form.treppeTyp).trim() === '') {
-      setForm((prev: Record<string, any>) => ({ ...prev, treppeTyp: def }))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- default treppe when field becomes visible
-  }, [hasFloorAboveGround, stairOptsEffective.join(',')])
-  useEffect(() => {
-    if (!hasFloorAboveGround || stairOptsEffective.length === 0) return
-    const cur = form.treppeTyp != null ? String(form.treppeTyp) : ''
-    if (cur && !stairOptsEffective.includes(cur)) {
-      setForm((prev: Record<string, any>) => ({ ...prev, treppeTyp: stairOptsEffective[0] }))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- resync when DB option list changes
-  }, [hasFloorAboveGround, stairOptsEffective.join(','), form.treppeTyp])
   const hasPod = listaEtaje.some((e: string) => e === 'pod')
   const hasMansarda = listaEtaje.some((e: string) => e.startsWith('mansarda'))
   const mansardaType = listaEtaje.find((e: string) => e.startsWith('mansarda'))?.split('_')[1] ?? null
@@ -5155,10 +5642,10 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             </span>
             <div className={errors.treppeTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
               <SelectSun
-                value={String(form.treppeTyp || (stairOptsEffective[0] ?? STAIR_TYPE_OPTIONS[0]))}
+                value={String(form.treppeTyp ?? '')}
                 onChange={(v) => setForm(prev => ({ ...prev, treppeTyp: v }))}
                 options={stairOptsEffective}
-                placeholder="Wählen Sie eine Option"
+                placeholder={DE.common.selectPlaceholder}
                 displayFor={(opt) => {
                   const key = optionValueToPriceKey['stairs_type']?.[opt]
                   const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
@@ -5177,10 +5664,10 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                 <span className="wiz-label text-sun/90">Aufzugtyp</span>
                 <div className={errors.aufzugTyp ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
                   <SelectSun
-                    value={String(form.aufzugTyp || (liftTypeOptions[0] ?? LIFT_TYPE_OPTIONS[0]))}
+                    value={String(form.aufzugTyp ?? '')}
                     onChange={(v) => setForm(prev => ({ ...prev, aufzugTyp: v }))}
                     options={liftTypeOptions.length > 0 ? liftTypeOptions : Array.from(LIFT_TYPE_OPTIONS)}
-                    placeholder="Wählen Sie eine Option"
+                    placeholder={DE.common.selectPlaceholder}
                     displayFor={(opt) => {
                       const key = optionValueToPriceKey['lift_type']?.[opt]
                       const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
@@ -5193,13 +5680,13 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             )}
             {form.piloni === true && (
               <label className="flex flex-col gap-1" data-field="pilonType">
-                <span className="wiz-label text-sun/90">Pilonen-Typ</span>
+                <span className="wiz-label text-sun/90">Säulen-Typ</span>
                 <div className={errors.pilonType ? 'ring-2 ring-orange-400/60 rounded-lg' : ''}>
                   <SelectSun
-                    value={String(form.pilonType || (pillarTypeOptions[0] ?? PILLAR_TYPE_OPTIONS[0]))}
+                    value={String(form.pilonType ?? '')}
                     onChange={(v) => setForm(prev => ({ ...prev, pilonType: v }))}
                     options={pillarTypeOptions.length > 0 ? pillarTypeOptions : Array.from(PILLAR_TYPE_OPTIONS)}
-                    placeholder="Wählen Sie eine Option"
+                    placeholder={DE.common.selectPlaceholder}
                     displayFor={(opt) => {
                       const key = optionValueToPriceKey['pillar_type']?.[opt]
                       const raw = key ? (paramLabelOverrides[key] ?? opt) : opt
@@ -5240,7 +5727,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                     }))
                   }
                 />
-                <span className="text-sm font-medium text-sun/90">Piloni vorhanden</span>
+                <span className="text-sm font-medium text-sun/90">Säulen vorhanden</span>
                 {errors.piloni && <span className="ml-2 text-xs text-orange-400">{errors.piloni}</span>}
               </label>
             </div>
@@ -5392,11 +5879,9 @@ function DynamicFields({
                     const next: Record<string, any> = { ...prev, [f.name]: checked }
                     if (f.name === 'dachfensterImDach') {
                       if (!checked) next.dachfensterTyp = ''
-                      else if (!prev.dachfensterTyp) next.dachfensterTyp = 'Standard'
                     }
                     if (f.name === 'garagentorGewuenscht') {
                       if (!checked) next.garageDoorType = ''
-                      else if (!prev.garageDoorType) next.garageDoorType = 'Sektionaltor Standard'
                     }
                     return next
                   })

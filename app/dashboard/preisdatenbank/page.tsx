@@ -26,6 +26,8 @@ const CARD_WIDE_PX = 500
 
 function getStep(unit: string): number {
   if (unit === '€/m²' || unit === '€/m' || unit === 'CHF/m²' || unit === 'CHF/m') return 1
+  if (unit === '€/m³' || unit === 'CHF/m³') return 1
+  if (unit === '€/Stück' || unit === 'CHF/Stück') return 10
   if (unit === '%') return 0.5
   if (unit === 'm') return 0.1
   return 10
@@ -67,7 +69,7 @@ function dedupePendingNewOptions(
 function labelWithoutUnit(label: string): string {
   if (!label || typeof label !== 'string') return label
   return label
-    .replace(/\s*\((?:€\/m²|€\/m|€|CHF\/m²|CHF\/m|CHF|Faktor!?|Stufe)\)\s*$/i, '')
+    .replace(/\s*\((?:€\/m²|€\/m|€\/m³|€\/Stück|€|CHF\/m²|CHF\/m|CHF\/m³|CHF\/Stück|CHF|Faktor!?|Stufe)\)\s*$/i, '')
     .trim() || label
 }
 
@@ -126,6 +128,7 @@ const CARD_SUBTITLES: Record<string, string> = {
   'Pfahlgründung': 'Preis €/m² bei Pfahlgründung',
   'Fläche & Treppe': 'Preis pro Stück',
   'Treppe': 'Preis pro Stück',
+  Säulen: 'Preis je Kubikmeter Säulenvolumen (€/m³)',
   'Aufstockung: Rückbau / Statik': 'Rückbaufläche, Treppenöffnung und Statik-Zuschläge',
   'Dämmung': 'Welche Dämmungsarten bieten Sie an?',
   'Unterdach': 'Welche Arten Unterdach bieten Sie an?',
@@ -133,7 +136,7 @@ const CARD_SUBTITLES: Record<string, string> = {
   'Sichtdachstuhl': 'Aufschlag €/m² bei Sichtdachstuhl',
   'Dachdeckung': 'Welche Dachdeckungen bieten Sie an?',
   'Fensterart': '3-fach verglast oder Passiv – €/m² Glasfläche',
-  'Glasflächen': 'Preis pro m² (Fenster und Schiebetüren gleicher Satz)',
+  'Glasflächen': 'Preis pro m² (Fenster)',
   'Türtyp Innentüren': 'Stückpreis je nach gewähltem Typ',
   'Türtyp Außentüren': 'Stückpreis je nach gewähltem Typ',
   'Garagentor gewünscht': 'Wenn ja: Typ und Stückpreis aus Preisdatenbank',
@@ -159,7 +162,8 @@ const STEP_SUBTITLES: Record<string, string> = {
   bodenDeckeBelag: 'Pfahlgründung, Fundament, Treppen, Geschossdecken und Bodenbeläge',
   daemmungDachdeckung: 'Dämmung, Unterdach, Dachstuhl und Dachdeckung',
   ferestreUsi: 'Glasflächen, Türen und Garagentor',
-  materialeFinisaj: 'Innenausbau Innenwände, Außenwände und Fassade',
+  wandaufbau:
+    'Außen- und Innenwand-Konstruktion; Innenausbau Innen-/Außenwände und Fassade (€/m²).',
   performantaEnergetica: 'Preisaufschläge für Heizung, Kamin und Haustechnik.',
   projektdaten: 'Bitte Stück- und Quadratmeterpreise für die Positionen eingeben',
   aufstockungZubau: 'Zusatzkosten für Aufstockung und Zubau',
@@ -276,13 +280,6 @@ export default function PreisdatenbankPage() {
       try {
         // Structura paginii = strict din data/form-schema/holzbau-form-steps.json (steps[].priceSections[].variables)
         const baseSectionsFromJson = buildPriceSectionsFromFormStepsJson(holzbauFormStepsJson as unknown)
-        const allowedKeys = new Set<string>()
-        for (const sec of baseSectionsFromJson) {
-          for (const sub of sec.subsections) {
-            for (const v of sub.variables) allowedKeys.add(v.id)
-          }
-        }
-        if (!cancelled) allowedPricingKeysRef.current = allowedKeys
 
         const tenantCfg = (await apiFetch('/tenant-config').catch(() => null)) as
           | { displayCurrency?: string }
@@ -294,7 +291,6 @@ export default function PreisdatenbankPage() {
               params?: Record<string, number>
               customOptions?: Record<string, Array<{ label: string; value: string; price_key: string }>>
               paramLabelOverrides?: Record<string, string>
-              hiddenKeys?: string[]
             }
           | Record<string, unknown>
         const rawParams =
@@ -315,30 +311,29 @@ export default function PreisdatenbankPage() {
           rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
             ? (rawOverrides as Record<string, string>)
             : {}
-        const rawHidden =
-          apiRes && typeof apiRes === 'object' && 'hiddenKeys' in apiRes ? apiRes.hiddenKeys : undefined
-        const hiddenKeysSet = new Set<string>(
-          Array.isArray(rawHidden) ? rawHidden.filter((k): k is string => typeof k === 'string') : []
-        )
+
+        // DB is the single source of truth: only show base variables that exist in DB.
+        // Custom options from tenant_form_options are also shown as-is.
+        const allowedKeys = new Set<string>(Object.keys(pricesMap))
         for (const sec of baseSectionsFromJson) {
           for (const sub of sec.subsections) {
             const tag = sub.fieldTag
             if (tag && customOptions[tag]) {
-              for (const o of customOptions[tag]) {
-                if (!hiddenKeysSet.has(o.price_key)) allowedKeys.add(o.price_key)
-              }
+              for (const o of customOptions[tag]) allowedKeys.add(o.price_key)
             }
           }
         }
         if (!cancelled) allowedPricingKeysRef.current = allowedKeys
+
         const merged: PreisdatenbankSection[] = baseSectionsFromJson.map((sec) => ({
           ...sec,
           subsections: sec.subsections.map((sub) => {
+            // Only show base variables that exist in DB (pricesMap).
             const baseVars = sub.variables
-              .filter((v) => !hiddenKeysSet.has(v.id))
+              .filter((v) => v.id in pricesMap)
               .map((v) => ({
                 ...v,
-                value: typeof pricesMap[v.id] === 'number' ? pricesMap[v.id] : v.value,
+                value: pricesMap[v.id],
                 label: paramLabelOverrides[v.id] ?? v.label,
               }))
               .filter((v) => !isBlockedOption(v))
@@ -346,8 +341,7 @@ export default function PreisdatenbankPage() {
             const customVars =
               tag && customOptions[tag]
                 ? customOptions[tag]
-                    .filter((o) => !hiddenKeysSet.has(o.price_key))
-                  .map((o) => ({
+                    .map((o) => ({
                       id: o.price_key,
                       label: o.label,
                       unit: sub.variables[0]?.unit ?? '€',

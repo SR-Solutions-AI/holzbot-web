@@ -6,6 +6,8 @@ export type AdminTenant = {
   name: string
   /** Signed or public URL for tenant-uploaded logo (Angebotsanpassung). */
   logo_url: string | null
+  /** Which application this tenant primarily uses. */
+  app_platform?: 'holzbot' | 'betonbot' | 'mixed'
 }
 
 /** Read-only: all organisations for admin client list / filters. */
@@ -13,7 +15,13 @@ export async function fetchAdminTenants(): Promise<{ items: AdminTenant[] }> {
   return apiFetch('/admin/tenants')
 }
 
-export type AdminTenantOfferStatusUi = 'Running' | 'Queued' | 'Completed' | 'Failed' | 'Cancelled'
+export type AdminTenantOfferStatusUi =
+  | 'Running'
+  | 'Queued'
+  | 'Completed'
+  | 'Failed'
+  | 'Cancelled'
+  | 'Deleted'
 
 export type AdminTenantOfferMetaKind = {
   roof_only_offer?: true
@@ -41,8 +49,14 @@ export type AdminTenantOffer = {
   duration_wall_seconds: number | null
   /** Duration of the most recent calc run (created_at → finished_at). */
   last_run_duration_seconds: number | null
+  /** Cost of the latest run for this offer, in euro cents. */
+  latest_run_cost_cents?: number | null
+  /** Raw meta from run_costs for the latest run (includes gemini_usage breakdown). */
+  latest_run_cost_meta?: Record<string, unknown> | null
   /** Subset of offer meta for admin card offer-kind label. */
   meta_for_kind?: AdminTenantOfferMetaKind
+  /** Soft-delete timestamp from DB; null = active tenant-visible offer. */
+  deleted_at?: string | null
 }
 
 export async function fetchAdminTenantOffers(
@@ -51,6 +65,14 @@ export async function fetchAdminTenantOffers(
 ): Promise<{ items: AdminTenantOffer[] }> {
   const q = opts?.limit != null ? `?limit=${encodeURIComponent(String(opts.limit))}` : ''
   return apiFetch(`/admin/tenants/${encodeURIComponent(tenantId)}/offers${q}`)
+}
+
+/** Removes DB row and storage files (platform admin only). Irreversible. */
+export async function adminPermanentlyDeleteOffer(tenantId: string, offerId: string): Promise<{ success: boolean }> {
+  return apiFetch(
+    `/admin/tenants/${encodeURIComponent(tenantId)}/offers/${encodeURIComponent(offerId)}/permanent`,
+    { method: 'DELETE' },
+  )
 }
 
 export type AdminTenantWorkspaceProfile = {
@@ -210,4 +232,21 @@ export async function updateAdminTenantWorkspace(
     method: 'PATCH',
     body: JSON.stringify(payload),
   })
+}
+
+export type AdminOfferPipelineDetails = {
+  offer_id: string
+  pricing_variables: Array<{ key: string; value: unknown; source: string }>
+  measurement_values?: Array<{ key: string; value: unknown; source: string }>
+  applied_pricing_values?: Array<{ key: string; value: unknown; source: string }>
+  measurements_raw?: Record<string, unknown> | null
+  pricing_raw_per_plan?: Array<{ plan_id: string; data: Record<string, unknown> }>
+  room_scales_per_plan?: Array<{ plan_id: string; data: Record<string, unknown>; local_crop_filenames?: string[] }>
+  plan_metadata?: Array<{ plan_id: string; data: Record<string, unknown> }>
+  settings_summary: string[]
+  total_price: number | null
+}
+
+export async function fetchAdminOfferPipelineDetails(offerId: string): Promise<AdminOfferPipelineDetails> {
+  return apiFetch(`/admin/offers/${encodeURIComponent(offerId)}/pipeline-details`)
 }

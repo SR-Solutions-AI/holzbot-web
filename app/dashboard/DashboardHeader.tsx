@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home, Coins, FlaskConical, Server } from 'lucide-react'
+import { LogOut, User, Database, Settings, ChevronDown, Building2, FileText, Home, Coins, FlaskConical, Server, Bell, X, ChevronRight } from 'lucide-react'
 import { supabase } from '../lib/supabaseClient'
 import { apiFetch } from '../lib/supabaseClient'
 import { useCallback, useEffect, useState, useRef } from 'react'
@@ -81,6 +81,22 @@ export default function DashboardHeader() {
   const [vpsNavbarLoading, setVpsNavbarLoading] = useState(false)
   const mountedRef = useRef(true)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const bellRef = useRef<HTMLDivElement>(null)
+
+  // Announcements / push updates
+  type Announcement = {
+    id: string
+    title: string
+    message: string
+    created_at: string
+    scheduled_at: string | null
+    image_url: string | null
+    is_read: boolean
+  }
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [bellOpen, setBellOpen] = useState(false)
+  const [activeAnnouncement, setActiveAnnouncement] = useState<Announcement | null>(null)
+  const autoShownRef = useRef<Set<string>>(new Set())
 
   const role = (me?.user as any)?.role as string | undefined
   const canSeeOrgSettings =
@@ -135,6 +151,32 @@ export default function DashboardHeader() {
     }
   }, [])
 
+  const fetchAnnouncements = useCallback(async () => {
+    if (isAdminRoute) return
+    try {
+      const data = await apiFetch('/announcements')
+      if (!mountedRef.current) return
+      const list: Announcement[] = data?.announcements ?? []
+      setAnnouncements(list)
+      // Auto-show the most recent unread announcement once per session
+      const unread = list.filter((a) => !a.is_read)
+      if (unread.length > 0) {
+        const newest = unread[0]
+        if (!autoShownRef.current.has(newest.id)) {
+          autoShownRef.current.add(newest.id)
+          setActiveAnnouncement(newest)
+        }
+      }
+    } catch { /* silent */ }
+  }, [isAdminRoute])
+
+  const markRead = async (id: string) => {
+    try {
+      await apiFetch(`/announcements/${id}/read`, { method: 'POST' })
+      setAnnouncements((prev) => prev.map((a) => a.id === id ? { ...a, is_read: true } : a))
+    } catch { /* silent */ }
+  }
+
   useEffect(() => {
     mountedRef.current = true
     void fetchMe()
@@ -148,14 +190,18 @@ export default function DashboardHeader() {
     document.addEventListener('visibilitychange', onVisibility)
     const intervalMs = 30_000
     const intervalId = window.setInterval(() => void fetchMe(), intervalMs)
+    // Poll announcements every 60s
+    void fetchAnnouncements()
+    const annIntervalId = window.setInterval(() => void fetchAnnouncements(), 60_000)
     return () => {
       mountedRef.current = false
       window.removeEventListener('tenant-config:saved', onTenantConfigSaved)
       window.removeEventListener('tokens:refresh', onTokensRefresh)
       document.removeEventListener('visibilitychange', onVisibility)
       window.clearInterval(intervalId)
+      window.clearInterval(annIntervalId)
     }
-  }, [fetchMe])
+  }, [fetchMe, fetchAnnouncements])
 
   /** Admin navbar: Hostinger-backed CPU % (holzbot-api GET /admin/vps-status). */
   useEffect(() => {
@@ -194,6 +240,9 @@ export default function DashboardHeader() {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setSettingsOpen(false)
       }
+      if (bellRef.current && !bellRef.current.contains(e.target as Node)) {
+        setBellOpen(false)
+      }
     }
     document.addEventListener('click', handleClickOutside)
     return () => document.removeEventListener('click', handleClickOutside)
@@ -228,6 +277,7 @@ export default function DashboardHeader() {
   }
 
   return (
+    <>
     <header className="h-[4.5rem] flex items-center bg-coffee-850 border-b border-black/50 shadow-soft relative shrink-0 z-40">
         <div
           className="absolute inset-0 pointer-events-none opacity-30"
@@ -306,6 +356,79 @@ export default function DashboardHeader() {
               ) : null}
             </div>
             {!isAdminRoute && !isSiteAdmin ? (
+              <div className="relative shrink-0" ref={bellRef}>
+                {/* Bell button — matches Log Out button style */}
+                <button
+                  type="button"
+                  onClick={() => setBellOpen((o) => !o)}
+                  className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/30 bg-coffee-850 text-sand/70 shadow-md transition hover:bg-coffee-800 hover:border-[#FF9F0F]/50 hover:text-sand"
+                  title="Updates"
+                >
+                  <Bell size={17} />
+                  {announcements.filter((a) => !a.is_read).length > 0 && (
+                    <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#FF9F0F] px-1 text-[9px] font-bold leading-none text-white">
+                      {announcements.filter((a) => !a.is_read).length > 9 ? '9+' : announcements.filter((a) => !a.is_read).length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Dropdown panel — matches settings dropdown style */}
+                {bellOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-72 rounded-xl bg-coffee-850 border border-white/20 shadow-xl z-50 overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <Bell size={14} className="text-sand/60" />
+                        <span className="text-sm font-semibold text-sand">Updates</span>
+                        {announcements.filter((a) => !a.is_read).length > 0 && (
+                          <span className="rounded-full bg-[#FF9F0F]/20 px-2 py-0.5 text-[10px] font-semibold text-[#FFB84D]">
+                            {announcements.filter((a) => !a.is_read).length} neu
+                          </span>
+                        )}
+                      </div>
+                      <button type="button" onClick={() => setBellOpen(false)} className="text-sand/40 hover:text-sand transition">
+                        <X size={14} />
+                      </button>
+                    </div>
+
+                    {/* List */}
+                    {announcements.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-xs text-sand/40">Noch keine Updates</div>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto py-1">
+                        {announcements.map((ann) => (
+                          <div key={ann.id} className="mx-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBellOpen(false)
+                                if (!ann.is_read) void markRead(ann.id)
+                                setActiveAnnouncement(ann)
+                              }}
+                              className="group flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition hover:bg-white/10"
+                            >
+                              <div className="mt-1.5 shrink-0">
+                                <span className={['block h-2 w-2 rounded-full', !ann.is_read ? 'bg-[#FF9F0F]' : 'bg-white/20'].join(' ')} />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className={['truncate text-sm leading-snug', !ann.is_read ? 'font-semibold text-white' : 'text-sand/70'].join(' ')}>
+                                  {ann.title}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-sand/40">
+                                  {new Date(ann.created_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </div>
+                              </div>
+                              <ChevronRight size={13} className="mt-1.5 shrink-0 text-sand/30 transition group-hover:text-sand/60" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
+            {!isAdminRoute && !isSiteAdmin ? (
               <div className="relative shrink-0" ref={dropdownRef}>
                 <>
                   <button
@@ -374,6 +497,59 @@ export default function DashboardHeader() {
           </div>
         </div>
     </header>
+
+    {/* Announcement popup modal */}
+    {activeAnnouncement && (
+      <div
+        className="fixed inset-0 z-200 flex items-end justify-center bg-black/70 p-4 pb-8 backdrop-blur-md sm:items-center"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) {
+            if (!activeAnnouncement.is_read) void markRead(activeAnnouncement.id)
+            setActiveAnnouncement(null)
+          }
+        }}
+      >
+        <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/20 bg-coffee-850 shadow-2xl">
+          {/* Top accent line */}
+          <div className="h-1 w-full bg-linear-to-r from-[#FF9F0F] to-[#FF9F0F]/20" />
+          {/* Content */}
+          <div className="px-6 pt-5 pb-4">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <Bell size={12} className="shrink-0 text-[#FF9F0F]" />
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-[#FF9F0F]/70">Update</span>
+            </div>
+            <h2 className="text-lg font-bold leading-snug text-white">{activeAnnouncement.title}</h2>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-sand/75">
+              {activeAnnouncement.message}
+            </p>
+            {/* Image below message */}
+            {activeAnnouncement.image_url && (
+              <div className="mt-4 w-full overflow-hidden rounded-xl border border-white/10">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={activeAnnouncement.image_url} alt="" className="w-full object-contain max-h-[32rem]" />
+              </div>
+            )}
+          </div>
+          {/* Footer */}
+          <div className="flex items-center justify-between border-t border-white/10 px-6 py-4">
+            <span className="text-[11px] text-sand/35">
+              {new Date(activeAnnouncement.created_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (!activeAnnouncement.is_read) void markRead(activeAnnouncement.id)
+                setActiveAnnouncement(null)
+              }}
+              className="flex items-center justify-center gap-2 rounded-xl bg-linear-to-b from-[#e08414] to-[#f79116] px-5 py-2 text-sm font-bold text-white shadow-lg transition hover:brightness-110"
+            >
+              Verstanden
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
 

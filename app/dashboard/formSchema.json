@@ -549,11 +549,11 @@
       ]
     },
     {
-      "key": "materialeFinisaj",
+      "key": "wandaufbau",
       "labels": {
-        "ro": "Materiale și nivel de finisaj",
-        "de": "Materialien & Ausbaustufe",
-        "en": "Materials & finish level"
+        "ro": "Structură pereți și finisaje",
+        "de": "Wandaufbau",
+        "en": "Wall construction & finishes"
       },
       "fields": [
         {

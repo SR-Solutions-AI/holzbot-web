@@ -6,7 +6,9 @@ export const ADMIN_STEP_LABELS_DE: Record<string, string> = {
   client: 'Kunde',
   sistemConstructiv: 'Bausystem',
   daemmungDachdeckung: 'Dämmung & Dachdeckung',
-  materialeFinisaj: 'Materialien & Ausbaustufe',
+  wandaufbau: 'Wandaufbau',
+  /** Legacy offer_steps key before merge into Wandaufbau */
+  materialeFinisaj: 'Wandaufbau (Innenausbau archiviert)',
   performanta: 'Energieeffizienz',
   performantaEnergetica: 'Energieeffizienz',
   logistica: 'Baustellenbedingungen & Logistik',

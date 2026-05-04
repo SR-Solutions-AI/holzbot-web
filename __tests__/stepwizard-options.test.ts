@@ -61,21 +61,21 @@ describe('mergeSelectOptions', () => {
 
   it('hides deleted custom option via hiddenKeys mapping', () => {
     const result = mergeSelectOptions({
-      tag: 'sliding_door_type',
+      tag: 'garage_door_type',
       schemaOptions: [],
-      preisdatenbankOptions: ['Standard', 'Panorama', 'Skyline'],
+      preisdatenbankOptions: ['Sektionaltor Standard', 'Sektionaltor Premium', 'Rolltor'],
       customOptions: [],
-      hiddenKeys: new Set<string>(['opt_sliding_door_type_skyline']),
+      hiddenKeys: new Set<string>(['garage_door_rolltor_stueck']),
       optionValueToPriceKey: {
-        sliding_door_type: {
-          Standard: 'sliding_door_standard_price',
-          Panorama: 'sliding_door_panorama_price',
-          Skyline: 'opt_sliding_door_type_skyline',
+        garage_door_type: {
+          'Sektionaltor Standard': 'garage_door_sektional_standard_stueck',
+          'Sektionaltor Premium': 'garage_door_sektional_premium_stueck',
+          Rolltor: 'garage_door_rolltor_stueck',
         },
       },
     })
 
-    expect(result).toEqual(['Standard', 'Panorama'])
+    expect(result).toEqual(['Sektionaltor Standard', 'Sektionaltor Premium'])
   })
 
   it('deduplicates repeated labels from mixed sources', () => {

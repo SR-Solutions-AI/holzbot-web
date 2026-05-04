@@ -83,7 +83,7 @@ export default function AGBPage() {
             <motion.h1 variants={fadeInUp} className="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-6 text-white leading-tight">
               Allgemeine <br/> <span className="text-[#FF9F0F]">Geschäftsbedingungen (AGB)</span> – Holzbot
             </motion.h1>
-            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 18. Februar 2026</motion.p>
+            <motion.p variants={fadeInUp} className="text-white/60 text-lg">Stand: 22. November 2025</motion.p>
         </motion.div>
 
         {/* Content */}
@@ -113,10 +113,10 @@ export default function AGBPage() {
           <motion.section variants={fadeInUp}>
             <h2 className="text-2xl font-bold text-[#FF9F0F] mb-4">§3 Preise & Zahlung</h2>
             <p className="mb-4">(1) Die Preise für jedes Holzbot-Paket können auf www.holzbot.com aufgefunden werden.</p>
-            <p className="mb-4">(2) Die Zahlung erfolgt per SEPA-Lastschriftmandat oder per monatlicher Überweisung.</p>
+            <p className="mb-4">(2) Die Zahlung erfolgt per monatlicher Überweisung.</p>
             <p className="mb-4">(3) Das monatliche Abo beginnt am 1. Kalendertag des Folgemonats, nach der Unterzeichnung des Bestellformulars.</p>
             <p className="mb-4">(4) Die monatliche Abogebühr wird immer am 1. Kalendertag eines Monats in Rechnung gestellt und ist bis spätestens 15. Kalendertag desselben Monats vollständig zu begleichen.</p>
-            <p className="mb-4">(5) Bei Nichtzahlung oder Rücklastschrift ist SR Solutions berechtigt, den Zugang zu Holzbot sofort und vollständig zu sperren, ohne Anspruch auf Rückerstattung oder Gutschrift bereits geleisteter Zahlungen.</p>
+            <p className="mb-4">(5) Bei Nichtzahlung ist SR Solutions berechtigt, den Zugang zu Holzbot sofort und vollständig zu sperren, ohne Anspruch auf Rückerstattung oder Gutschrift bereits geleisteter Zahlungen.</p>
             <p>(6) Bei Zahlungsverzug von mehr als 30 Tagen ist der Anbieter berechtigt, den Vertrag außerordentlich zu kündigen.</p>
           </motion.section>
 

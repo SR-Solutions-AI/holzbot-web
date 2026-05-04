@@ -5,9 +5,17 @@ import { useRouter } from 'next/navigation'
 import { Save, Loader2, CheckCircle2, AlertCircle, Upload } from 'lucide-react'
 import { apiFetch, supabase } from '../../../lib/supabaseClient'
 import SimplePdfViewer from '../../../components/SimplePdfViewer'
+import { SelectSun } from '../../../components/SunSelect'
 import { normalizeDisplayCurrency } from '../../../../lib/displayCurrency'
 
 type VatPreset = 'DE' | 'AT' | 'CH' | 'custom'
+
+type AbrechnungsnormOeffnungen = 'din_18334_vob' | 'oenorm_b2215'
+
+const ABRECHNUNGSNORM_LABELS: Record<AbrechnungsnormOeffnungen, string> = {
+  din_18334_vob: '🇩🇪 DIN 18334 / VOB (Abzug ab 2,5 m²)',
+  oenorm_b2215: '🇦🇹 ÖNORM B 2215 (Abzug ab 4,0 m²)',
+}
 
 type CompanyInfo = {
   companyName: string
@@ -29,6 +37,7 @@ type CompanyInfo = {
   displayCurrency: 'EUR' | 'CHF'
   vatPreset: VatPreset
   vatCustomPercent: number
+  abrechnungsnormOeffnungen: AbrechnungsnormOeffnungen
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -86,6 +95,7 @@ export default function OfferCustomizationPage() {
     displayCurrency: 'EUR',
     vatPreset: 'DE',
     vatCustomPercent: 19,
+    abrechnungsnormOeffnungen: 'din_18334_vob',
   })
   const [currencyModalOpen, setCurrencyModalOpen] = useState(false)
   const [pendingCurrency, setPendingCurrency] = useState<'EUR' | 'CHF' | null>(null)
@@ -114,7 +124,11 @@ export default function OfferCustomizationPage() {
 
         const config = await apiFetch('/tenant-config').catch(() => null)
         if (!cancelled && config && typeof config === 'object') {
-          const c = config as CompanyInfo & { vatPreset?: string; vatCustomPercent?: number }
+          const c = config as CompanyInfo & {
+            vatPreset?: string
+            vatCustomPercent?: number
+            abrechnungsnormOeffnungen?: string
+          }
           const vp =
             c.vatPreset === 'CH' || c.vatPreset === 'AT' || c.vatPreset === 'custom' ? c.vatPreset : 'DE'
           setCompanyInfo({
@@ -144,6 +158,8 @@ export default function OfferCustomizationPage() {
                   : vp === 'AT'
                     ? 20
                     : 19,
+            abrechnungsnormOeffnungen:
+              c.abrechnungsnormOeffnungen === 'oenorm_b2215' ? 'oenorm_b2215' : 'din_18334_vob',
           })
         }
       } catch {
@@ -180,6 +196,7 @@ export default function OfferCustomizationPage() {
           displayCurrency: companyInfo.displayCurrency,
           vatPreset: companyInfo.vatPreset,
           vatCustomPercent: companyInfo.vatCustomPercent,
+          abrechnungsnormOeffnungen: companyInfo.abrechnungsnormOeffnungen,
         }),
       })
       setCompanyInfoMessage('success')
@@ -272,7 +289,7 @@ export default function OfferCustomizationPage() {
         const message = getErrorMessage(error, 'Preview konnte nicht generiert werden.')
         setPreviewError(
           message.includes('cel putin o oferta')
-            ? 'Pentru acest cont nu exista inca nicio oferta. Genereaza mai intai o oferta, apoi preview-ul va folosi ultima oferta ca baza.'
+            ? 'Vorschau nicht möglich: Es konnte keine Vorlagen-Angebot geladen werden. Bitte erzeugen Sie zuerst ein eigenes Angebot oder wenden Sie sich an den Support.'
             : message,
         )
         setPreviewPdfUrl((prev) => {
@@ -371,10 +388,53 @@ export default function OfferCustomizationPage() {
         }}
       />
       <div className="h-full flex flex-col min-h-0">
-        <div className="preisdatenbank-scroll px-4 py-4 md:px-5 md:py-5 w-full flex-1 min-h-0 overflow-y-auto">
-          <div className="w-full max-w-[1600px] mx-auto">
-            <h1 className="text-2xl md:text-3xl font-bold text-white mb-2 text-center">Angebotsanpassung</h1>
-            <p className="text-sand/80 text-base mb-6 text-center">PDF-Inhalte und Vorschau der Offer verwalten.</p>
+        <div className="preisdatenbank-scroll w-full flex-1 min-h-0 overflow-y-auto">
+          <div className="p-6 w-full max-w-[1600px] mx-auto">
+            <div className="sticky top-0 z-20 -mx-6 px-6 pt-6 pb-4 mb-4 bg-white/[0.06] backdrop-blur-md border-b border-white/10">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">Angebotsanpassung</h1>
+                  <p className="text-sand/80 text-base md:text-lg">
+                    PDF-Inhalte und Vorschau der Offer verwalten.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {companyInfoMessage === 'success' && (
+                    <span className="flex items-center gap-1.5 text-orange-400 text-base">
+                      <CheckCircle2 size={18} /> Gespeichert
+                    </span>
+                  )}
+                  {companyInfoMessage === 'error' && (
+                    <span className="flex items-center gap-1.5 text-amber-400 text-base">
+                      <AlertCircle size={18} /> Fehler beim Speichern
+                    </span>
+                  )}
+                  <div className="flex flex-col items-end gap-1.5">
+                    <button
+                      type="button"
+                      disabled={companyInfoSaving}
+                      onClick={handleSaveCompanyInfo}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold shadow-lg bg-[#FF9F0F] hover:bg-[#e08e0d] text-white disabled:opacity-60 transition-all duration-200"
+                    >
+                      {companyInfoSaving ? (
+                        <>
+                          <Loader2 size={18} className="animate-spin" />
+                          Speichern…
+                        </>
+                      ) : (
+                        <>
+                          <Save size={18} />
+                          Angaben speichern
+                        </>
+                      )}
+                    </button>
+                    <p className="text-sand/60 text-sm text-right max-w-[220px]">
+                      Gilt für künftige PDF-Angebote und die Vorschau.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.06fr)_minmax(560px,1.34fr)] gap-6 items-start w-full">
               <div className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-6">
@@ -504,6 +564,32 @@ export default function OfferCustomizationPage() {
                     <input type="text" value={companyInfo.handlerName} onChange={(e) => setCompanyInfo((p) => ({ ...p, handlerName: e.target.value }))} className="sun-input w-full mt-1" />
                   </div>
                   <div>
+                    <label className="text-sm font-medium text-sun/90">Abrechnungsnorm (Übermessungsregel)</label>
+                    <div className="mt-1">
+                      <SelectSun
+                        value={companyInfo.abrechnungsnormOeffnungen}
+                        onChange={(v) =>
+                          setCompanyInfo((p) => ({
+                            ...p,
+                            abrechnungsnormOeffnungen:
+                              v === 'oenorm_b2215' ? 'oenorm_b2215' : 'din_18334_vob',
+                          }))
+                        }
+                        options={[
+                          { value: 'din_18334_vob', label: ABRECHNUNGSNORM_LABELS.din_18334_vob },
+                          { value: 'oenorm_b2215', label: ABRECHNUNGSNORM_LABELS.oenorm_b2215 },
+                        ]}
+                        displayFor={(val) =>
+                          ABRECHNUNGSNORM_LABELS[val as AbrechnungsnormOeffnungen] ?? val
+                        }
+                        placeholder="— auswählen —"
+                      />
+                    </div>
+                    <p className="text-xs text-white/55 mt-1">
+                      Steuert den Mindestflächenwert für den strukturellen Abzug von Öffnungen bei der Wandflächenberechnung.
+                    </p>
+                  </div>
+                  <div>
                     <label className="text-sm font-medium text-sun/90">Spalte 1</label>
                     <textarea value={companyInfo.footerLeft} onChange={(e) => setCompanyInfo((p) => ({ ...p, footerLeft: e.target.value }))} className="sun-input w-full min-h-[96px] mt-1" rows={4} />
                   </div>
@@ -532,14 +618,6 @@ export default function OfferCustomizationPage() {
                   <div>
                     <label className="text-sm font-medium text-sun/90">Abschnitt 2 Inhalt</label>
                     <textarea value={companyInfo.section2Content} onChange={(e) => setCompanyInfo((p) => ({ ...p, section2Content: e.target.value }))} className="sun-input w-full min-h-[260px] mt-1" rows={10} />
-                  </div>
-                  <div className="flex items-center gap-3 pt-2">
-                    <button type="button" disabled={companyInfoSaving} onClick={handleSaveCompanyInfo} className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold bg-[#FF9F0F] hover:bg-[#e08e0d] text-white disabled:opacity-60">
-                      {companyInfoSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-                      Angaben speichern
-                    </button>
-                    {companyInfoMessage === 'success' && <span className="flex items-center gap-1.5 text-orange-400 text-sm"><CheckCircle2 size={18} /> Gespeichert</span>}
-                    {companyInfoMessage === 'error' && <span className="flex items-center gap-1.5 text-amber-400 text-sm"><AlertCircle size={18} /> Fehler</span>}
                   </div>
                 </div>
               </div>
