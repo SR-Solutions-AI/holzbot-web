@@ -549,6 +549,8 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   },
   ref,
 ) {
+  /** Kanten-Überhang UI/deck dezactivate — același comportament ca înainte de tool-uri pe muchie. */
+  const allowOh = false
   const [toolInternal, setToolInternal] = useState<Tool>('select')
   const chromeParent = Boolean(
     chromeInParent &&
@@ -1306,9 +1308,13 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             ? 'Zwei Punkte auf dem Rand einer bestehenden Dachfläche – nur auf Kanten'
             : 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
           : tool === 'remove'
-            ? 'Klicken Sie auf eine Fläche bzw. Überhang-Linie zum Entfernen'
+            ? allowOh
+              ? 'Klicken Sie auf eine Fläche bzw. Überhang-Linie zum Entfernen'
+              : 'Klicken Sie auf eine Fläche zum Entfernen'
             : tool === 'edit'
-              ? 'Dachfläche: Ecken/Kanten wie zuvor. Überhang: Griffe der gewählten Linie zuerst. Entf/⌫: gewählte Überhang-Linie löschen. Reiter Überhang/Dachfläche: jeweils der andere Typ ausgegraut.'
+              ? allowOh
+                ? 'Dachfläche: Ecken/Kanten wie zuvor. Überhang: Griffe der gewählten Linie zuerst. Entf/⌫: gewählte Überhang-Linie löschen. Reiter Überhang/Dachfläche: jeweils der andere Typ ausgegraut.'
+                : 'Eckpunkte ziehen; auf Kante klicken = neuer Punkt; Kante ziehen = Segment verschieben'
               : ''
 
   /** Wie Fenster/Türen: Maße oben in der Leiste, sobald Dachfenster gewählt + Werkzeug „Verschieben“. */
@@ -1471,19 +1477,21 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
           >
             Dachfläche
           </button>
-          <button
-            type="button"
-            disabled={!currentPlan || currentPlan.rectangles.length === 0}
-            title={
-              !currentPlan || currentPlan.rectangles.length === 0
-                ? 'Zuerst mindestens eine Dachfläche anlegen'
-                : 'Überhang-Linie auf einer Kante'
-            }
-            onClick={() => setRoofAddSubtool('overhang')}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
-          >
-            Überhang
-          </button>
+          {allowOh ? (
+            <button
+              type="button"
+              disabled={!currentPlan || currentPlan.rectangles.length === 0}
+              title={
+                !currentPlan || currentPlan.rectangles.length === 0
+                  ? 'Zuerst mindestens eine Dachfläche anlegen'
+                  : 'Überhang-Linie auf einer Kante'
+              }
+              onClick={() => setRoofAddSubtool('overhang')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+            >
+              Überhang
+            </button>
+          ) : null}
         </div>
       )}
 
@@ -1636,12 +1644,12 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                     dimUnselectedRoomPolygons
                     selectedIndex={selectedPolygonIndex}
                     newPoints={tool === 'add' && roofAddSubtool === 'surface' ? newPolygonPoints : null}
-                    roomsAddMode={roofAddSubtool === 'overhang' ? 'roof_overhang_line' : 'polygon'}
-                    onRoofOverhangLineComplete={handleRoofOverhangLineComplete}
-                    onRoofOverhangLineEditRequest={handleRoofOverhangLineEditRequest}
-                    roofOverhangLines={currentPlan.overhangLines ?? []}
-                    onRemoveRoofOverhangLine={handleRemoveRoofOverhangLine}
-                    onRoofOverhangLinesChange={handleRoofOverhangLinesChange}
+                    roomsAddMode={allowOh && roofAddSubtool === 'overhang' ? 'roof_overhang_line' : 'polygon'}
+                    onRoofOverhangLineComplete={allowOh ? handleRoofOverhangLineComplete : undefined}
+                    onRoofOverhangLineEditRequest={allowOh ? handleRoofOverhangLineEditRequest : undefined}
+                    roofOverhangLines={allowOh ? (currentPlan.overhangLines ?? []) : []}
+                    onRemoveRoofOverhangLine={allowOh ? handleRemoveRoofOverhangLine : undefined}
+                    onRoofOverhangLinesChange={allowOh ? handleRoofOverhangLinesChange : undefined}
                     onSelect={setSelectedPolygonIndex}
                     onAddPoint={(x, y) => setNewPolygonPoints((prev) => (prev ? [...prev, [x, y]] : [[x, y]]))}
                     onCloseNewPolygon={() => {
@@ -2015,7 +2023,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
         </div>
       )}
 
-      {overhangLineDialog && currentPlan && (
+      {allowOh && overhangLineDialog && currentPlan && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-3 sm:p-4">
           <div
             lang="de"

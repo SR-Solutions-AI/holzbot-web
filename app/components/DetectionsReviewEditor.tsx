@@ -563,6 +563,9 @@ export function DetectionsReviewEditor({
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
   const [newDoorType, setNewDoorType] = useState<DoorType>('door')
   const [roofAddSubtool, setRoofAddSubtool] = useState<'surface' | 'overhang'>('surface')
+  useEffect(() => {
+    if (roofAddSubtool === 'overhang') setRoofAddSubtool('surface')
+  }, [roofAddSubtool])
   const [editorConstraints, setEditorConstraints] = useState<EditorConstraints>(() => mergeEditorConstraints(undefined))
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [pendingDemolitionPoints, setPendingDemolitionPoints] = useState<Point[] | null>(null)
@@ -2906,13 +2909,6 @@ export function DetectionsReviewEditor({
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'surface' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
           >
             Dachfläche
-          </button>
-          <button
-            type="button"
-            onClick={() => setRoofAddSubtool('overhang')}
-            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
-          >
-            Überhang
           </button>
         </div>
       )}
