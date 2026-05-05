@@ -826,7 +826,7 @@ export default function LiveFeed() {
         roofReviewActiveRef.current ||
         reviewPendingRef.current != null ||
         roofReviewPendingRef.current != null
-      if (editorOpen) {
+      if (editorOpen && targetProgressRef.current < 99.5) {
         freezeProgressAtCurrent()
         return
       }
@@ -1769,12 +1769,20 @@ export default function LiveFeed() {
       stage,
       flowModeRef.current,
     )
-    if (!serverDrivesProgressRef.current) {
+    if (stage === 'computation_complete') {
+      serverDrivesProgressRef.current = true
+      targetProgressRef.current = 100
+      displayProgressRef.current = 100
+      setProgress(100)
+      setCurrentStageName('Abgeschlossen')
+    } else if (!serverDrivesProgressRef.current) {
       setProgress(progressData.progress)
       targetProgressRef.current = progressData.progress
       displayProgressRef.current = progressData.progress
     }
-    setCurrentStageName(progressData.currentStageName)
+    if (stage !== 'computation_complete') {
+      setCurrentStageName(progressData.currentStageName)
+    }
     
     // ✅ PASS CURRENT SESSION ID
     await executeStage(stage, false, sessionRef.current)
@@ -1788,12 +1796,19 @@ export default function LiveFeed() {
       null,
       flowModeRef.current,
     )
-    if (!serverDrivesProgressRef.current) {
+    if (stage === 'computation_complete') {
+      targetProgressRef.current = 100
+      displayProgressRef.current = 100
+      setProgress(100)
+      setCurrentStageName('Abgeschlossen')
+    } else if (!serverDrivesProgressRef.current) {
       setProgress(finalProgressData.progress)
       targetProgressRef.current = finalProgressData.progress
       displayProgressRef.current = finalProgressData.progress
     }
-    setCurrentStageName(finalProgressData.currentStageName)
+    if (stage !== 'computation_complete') {
+      setCurrentStageName(finalProgressData.currentStageName)
+    }
     
     processing.current = false
     processQueue()
