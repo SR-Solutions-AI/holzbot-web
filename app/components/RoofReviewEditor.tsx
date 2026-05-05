@@ -550,6 +550,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   ref,
 ) {
   /** Kanten-Überhang UI/deck dezactivate — același comportament ca înainte de tool-uri pe muchie. */
+  /** Kein Kanten-Überhang-Tool — nur Polygon + roofOverhangM (klassische Flächenformel). */
   const allowOh = false
   const [toolInternal, setToolInternal] = useState<Tool>('select')
   const chromeParent = Boolean(
@@ -590,6 +591,8 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   const [dialogAngle, setDialogAngle] = useState(DEFAULT_ROOF_ANGLE)
   const [dialogAngleStr, setDialogAngleStr] = useState(String(DEFAULT_ROOF_ANGLE))
   const [dialogType, setDialogType] = useState<RoofTypeId>(DEFAULT_ROOF_TYPE)
+  /** Polygon-weiter Dachüberstand (cm) beim neuen Dach – wird zu roofOverhangM (m). */
+  const [dialogOverhangCmStr, setDialogOverhangCmStr] = useState('40')
   const [sidebarAngleStr, setSidebarAngleStr] = useState('')
   const [overhangLineDialog, setOverhangLineDialog] = useState<
     null | { a: Point; b: Point; roofIndex: number; editLineIndex?: number }
@@ -1073,6 +1076,9 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     pushHistory()
     const label = nextRoofLabel(currentPlan.rectangles)
     const angleDeg = parseDecimalField(dialogAngleStr, 0, 60) ?? dialogAngle
+    const ohCm = parseDecimalField(dialogOverhangCmStr, 0, 500)
+    const ohM =
+      ohCm != null ? clampRoofOverhangM(ohCm / 100) : DEFAULT_ROOF_OVERHANG_M
     setRectangles(planIndexClamped, [
       ...currentPlan.rectangles,
       normalizeRect({
@@ -1080,7 +1086,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
         roomName: label,
         roofAngleDeg: angleDeg,
         roofType: dialogType,
-        roofOverhangM: 0,
+        roofOverhangM: ohM,
       }),
     ])
     setPendingNewPoints(null)
@@ -1088,8 +1094,20 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     setDialogAngle(DEFAULT_ROOF_ANGLE)
     setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
     setDialogType(DEFAULT_ROOF_TYPE)
+    setDialogOverhangCmStr('40')
     setTool('add')
-  }, [pendingNewPoints, currentPlan, pushHistory, setRectangles, planIndexClamped, dialogAngle, dialogAngleStr, dialogType, setTool])
+  }, [
+    pendingNewPoints,
+    currentPlan,
+    pushHistory,
+    setRectangles,
+    planIndexClamped,
+    dialogAngle,
+    dialogAngleStr,
+    dialogType,
+    dialogOverhangCmStr,
+    setTool,
+  ])
 
   const cancelNewRoofDialog = useCallback(() => {
     setPendingNewPoints(null)
@@ -1097,6 +1115,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     setDialogAngle(DEFAULT_ROOF_ANGLE)
     setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
     setDialogType(DEFAULT_ROOF_TYPE)
+    setDialogOverhangCmStr('40')
     setTool('select')
   }, [])
 
@@ -1659,6 +1678,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                       setDialogAngle(DEFAULT_ROOF_ANGLE)
                       setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
                       setDialogType(DEFAULT_ROOF_TYPE)
+                      setDialogOverhangCmStr('40')
                       setNewRoofDialogOpen(true)
                     }}
                     onMoveVertex={(polyIndex, vertexIndex, x, y) => {
@@ -1925,7 +1945,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             className="w-fit max-w-[calc(100vw-1.5rem)] rounded-2xl border border-[#FF9F0F]/40 bg-coffee-800/95 p-3 sm:p-4 shadow-xl space-y-3"
           >
             <h3 className="text-white font-semibold text-center text-sm sm:text-base leading-snug">
-              Neues Dach – Neigung &amp; Typ
+              Neues Dach – Neigung, Überstand &amp; Typ
             </h3>
             <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center gap-3 sm:gap-x-6 sm:gap-y-2">
               <label className="flex items-center gap-2 text-sand/80 text-sm">
@@ -1942,6 +1962,17 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                     const v = parseDecimalField(raw, 0, 60)
                     if (v != null) setDialogAngle(v)
                   }}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sand/80 text-sm">
+                <span className="shrink-0">Dachüberstand (cm)</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  className="min-w-[5rem] w-32 px-3 py-1.5 rounded-lg bg-black/40 border border-white/20 text-white text-sm tabular-nums"
+                  value={dialogOverhangCmStr}
+                  onChange={(e) => setDialogOverhangCmStr(e.target.value.replace(',', '.'))}
                 />
               </label>
             </div>

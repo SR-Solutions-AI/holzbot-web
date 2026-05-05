@@ -2392,6 +2392,7 @@ export function DetectionsReviewEditor({
       : (roofPreviewByPlan[idx] ?? [])
   }, [planIndexClamped, activeTab, stackRoofOverPhase1, roofLiveOverlayByPlan, roofPreviewByPlan])
 
+  /** Mind. eine Dachfläche für Kanten-Überhang (Live-Overlay aus RoofReviewEditor oder Preview aus API). */
   const showWerkzeuge = !loading && plansData.length > 0 && !existingFloorReadOnly
 
   const reviewFooterActions = (
