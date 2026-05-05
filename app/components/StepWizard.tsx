@@ -561,8 +561,8 @@ function validateGeneric(
     if (usesPerFloorRoomHeights(wizardPackage)) {
       const egRaw = (form as any).erdgeschossRaumhoeheCm
       const egEff = Number(egRaw !== undefined && egRaw !== '' ? egRaw : (form as any).raumhoeheCm)
-      if (!Number.isFinite(egEff) || egEff < 200 || egEff > 400) {
-        e.erdgeschossRaumhoeheCm = 'Bitte geben Sie die Raumhöhe für das Erdgeschoss an (200–400 cm).'
+      if (!Number.isFinite(egEff) || egEff <= 0) {
+        e.erdgeschossRaumhoeheCm = 'Bitte geben Sie eine positive Raumhöhe für das Erdgeschoss an.'
       }
       const listaEtajeLocal = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
       const requestedHeights = Array.isArray((form as any).roomHeightsCm) ? (form as any).roomHeightsCm : []
@@ -572,9 +572,9 @@ function validateGeneric(
         const floor = String(f ?? '').toLowerCase()
         return floor === 'intermediar' || floor.startsWith('mansarda')
       }).length + (hasBasement ? 1 : 0)
-      const validHeights = requestedHeights.filter((h: unknown) => Number.isFinite(Number(h)) && Number(h) >= 200 && Number(h) <= 400)
+      const validHeights = requestedHeights.filter((h: unknown) => Number.isFinite(Number(h)) && Number(h) > 0)
       if (validHeights.length !== expectedCount) {
-        e.roomHeightsCm = 'Bitte geben Sie für jede Wohnebene eine Raumhöhe zwischen 200 und 400 cm an.'
+        e.roomHeightsCm = 'Bitte geben Sie für jede Wohnebene eine positive Raumhöhe an.'
       }
     }
   }
@@ -4892,7 +4892,9 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     setForm((prev: Record<string, any>) => {
       const rawEg = prev.erdgeschossRaumhoeheCm
       if (rawEg !== undefined && rawEg !== '' && rawEg !== null) return prev
-      const rh = Number(prev.raumhoeheCm)
+      const rawRh = prev.raumhoeheCm
+      if (rawRh === '' || rawRh === undefined || rawRh === null) return prev
+      const rh = Number(rawRh)
       if (!Number.isFinite(rh)) return prev
       return { ...prev, erdgeschossRaumhoeheCm: rh }
     })
@@ -4910,7 +4912,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     return normalized === 'intermediar' || normalized.startsWith('mansarda')
   }, [])
   const remapRoomHeights = useCallback((prevLista: string[], nextLista: string[], prevHeightsRaw: unknown[], fallbackRaw: unknown, prevHasBasement = false, nextHasBasement = false) => {
-    const prevHeights = prevHeightsRaw.map((v) => Number(v))
+    const prevHeights = prevHeightsRaw.map((v) => (v === '' || v == null ? Number.NaN : Number(v)))
     const fallbackNum = Number(fallbackRaw)
     const fallback =
       Number.isFinite(fallbackNum) && fallbackNum >= 200 && fallbackNum <= 400
@@ -5322,9 +5324,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
               <input
                 type="number"
-                min={200}
-                max={400}
-                step={1}
+                step="any"
                 className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-20 text-[15px] font-normal text-black outline-none focus:ring-0 placeholder:text-black/40 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={form.raumhoeheCm != null && form.raumhoeheCm !== '' ? String(form.raumhoeheCm) : ''}
                 placeholder="270"
@@ -5345,7 +5345,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                       setForm((prev: Record<string, any>) => {
                         const cur = Number(prev.raumhoeheCm ?? 270)
                         const safe = Number.isFinite(cur) ? cur : 270
-                        return { ...prev, raumhoeheCm: Math.min(400, safe + 1) }
+                        return { ...prev, raumhoeheCm: safe + 1 }
                       })
                     }
                     aria-label="Durchschnittliche Raumhöhe im Haus erhöhen"
@@ -5414,18 +5414,19 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
               <input
                 type="number"
-                min={200}
-                max={400}
-                step={1}
+                step="any"
                 className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 value={(() => {
                   const values = Array.isArray(form.roomHeightsCm) ? form.roomHeightsCm : []
-                  const raw = Number(values[0] ?? form.raumhoeheCm ?? 270)
-                  return String(Number.isFinite(raw) ? raw : 270)
+                  const raw = values[0] ?? form.raumhoeheCm ?? ''
+                  if (raw === '') return ''
+                  const n = Number(raw)
+                  return Number.isFinite(n) ? String(n) : ''
                 })()}
                 onChange={(e) => {
-                  const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
-                  const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                  const raw = e.target.value
+                  const nextVal = raw === '' ? '' : Number(raw)
+                  const safeVal = raw === '' ? '' : (Number.isFinite(nextVal) ? nextVal : '')
                   setForm((prev: Record<string, any>) => {
                     const values = Array.isArray(prev.roomHeightsCm) ? [...prev.roomHeightsCm] : []
                     values[0] = safeVal
@@ -5447,17 +5448,18 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
               <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
                 <input
                   type="number"
-                  min={200}
-                  max={400}
-                  step={1}
+                  step="any"
                   className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   value={(() => {
-                    const raw = Number(form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? 270)
-                    return String(Number.isFinite(raw) ? raw : 270)
+                    const raw = form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? ''
+                    if (raw === '') return ''
+                    const n = Number(raw)
+                    return Number.isFinite(n) ? String(n) : ''
                   })()}
                   onChange={(e) => {
-                    const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
-                    const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                    const raw = e.target.value
+                    const nextVal = raw === '' ? '' : Number(raw)
+                    const safeVal = raw === '' ? '' : (Number.isFinite(nextVal) ? nextVal : '')
                     setForm((prev: Record<string, any>) => ({
                       ...prev,
                       erdgeschossRaumhoeheCm: safeVal,
@@ -5590,9 +5592,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                     <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
                       <input
                         type="number"
-                        min={200}
-                        max={400}
-                        step={1}
+                        step="any"
                         className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         value={(() => {
                           const livableIdx = listaEtaje
@@ -5600,12 +5600,15 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                             .filter((f: string) => isLivableFloorType(f))
                             .length - 1 + (hasBasement ? 1 : 0)
                           const values = Array.isArray(form.roomHeightsCm) ? form.roomHeightsCm : []
-                          const raw = Number(values[livableIdx] ?? form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? 270)
-                          return String(Number.isFinite(raw) ? raw : 270)
+                          const raw = values[livableIdx] ?? form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? ''
+                          if (raw === '') return ''
+                          const n = Number(raw)
+                          return Number.isFinite(n) ? String(n) : ''
                         })()}
                         onChange={(e) => {
-                          const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
-                          const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                          const raw = e.target.value
+                          const nextVal = raw === '' ? '' : Number(raw)
+                          const safeVal = raw === '' ? '' : (Number.isFinite(nextVal) ? nextVal : '')
                           setForm((prev: Record<string, any>) => {
                             const values = Array.isArray(prev.roomHeightsCm) ? [...prev.roomHeightsCm] : []
                             const livableIdx = listaEtaje
@@ -5713,7 +5716,13 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                     max={300}
                     step={1}
                     value={form[`inaltimePeretiMansarda_${idx}`] ?? ''}
-                    onChange={(e) => setForm(prev => ({ ...prev, [`inaltimePeretiMansarda_${idx}`]: parseFloat(e.target.value) || 0 }))}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      setForm((prev) => ({
+                        ...prev,
+                        [`inaltimePeretiMansarda_${idx}`]: raw === '' ? '' : Number(raw),
+                      }))
+                    }}
                     placeholder="z.B. 150"
                   />
                 </label>
