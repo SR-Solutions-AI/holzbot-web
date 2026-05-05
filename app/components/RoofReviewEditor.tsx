@@ -1320,11 +1320,11 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             : 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
           : tool === 'remove'
             ? allowOh
-              ? 'Klicken Sie auf eine Fläche bzw. Überhang-Linie zum Entfernen'
+              ? 'Klicken Sie auf eine Fläche bzw. Überstand-Linie zum Entfernen'
               : 'Klicken Sie auf eine Fläche zum Entfernen'
             : tool === 'edit'
               ? allowOh
-                ? 'Dachfläche: Ecken/Kanten wie zuvor. Überhang: Griffe der gewählten Linie zuerst. Entf/⌫: gewählte Überhang-Linie löschen. Reiter Überhang/Dachfläche: jeweils der andere Typ ausgegraut.'
+                ? 'Dachfläche: Ecken/Kanten wie zuvor. Überstand: Griffe der gewählten Linie zuerst. Entf/⌫: gewählte Überstand-Linie löschen. Reiter Überstand/Dachfläche: jeweils der andere Typ ausgegraut.'
                 : 'Eckpunkte ziehen; auf Kante klicken = neuer Punkt; Kante ziehen = Segment verschieben'
               : ''
 
@@ -1495,12 +1495,12 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
               title={
                 !currentPlan || currentPlan.rectangles.length === 0
                   ? 'Zuerst mindestens eine Dachfläche anlegen'
-                  : 'Überhang-Linie auf einer Kante'
+                  : 'Überstand-Linie auf einer Kante'
               }
               onClick={() => setRoofAddSubtool('overhang')}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
             >
-              Überhang
+              Überstand
             </button>
           ) : null}
         </div>
@@ -2041,7 +2041,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             className="w-[min(100%,34rem)] rounded-2xl border border-[#FF9F0F]/40 bg-coffee-800/95 p-4 shadow-xl space-y-3"
           >
             <h3 className="text-white font-semibold text-center text-sm sm:text-base">
-              {overhangLineDialog.editLineIndex !== undefined ? 'Überhang bearbeiten' : 'Überhang'}
+              {overhangLineDialog.editLineIndex !== undefined ? 'Überstand bearbeiten' : 'Überstand'}
             </h3>
             {(() => {
               const rt = (currentPlan.rectangles[overhangLineDialog.roofIndex]?.roofType ??
@@ -2069,7 +2069,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
               )
             })()}
             <label className="block text-sand/80 text-sm">
-              Überhang (cm)
+              Überstand (cm)
               <input
                 type="text"
                 inputMode="decimal"

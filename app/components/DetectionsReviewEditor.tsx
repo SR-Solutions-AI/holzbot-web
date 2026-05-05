@@ -2920,12 +2920,12 @@ export function DetectionsReviewEditor({
             title={
               roofSurfaceCountForOhToolbar === 0
                 ? 'Zuerst mindestens eine Dachfläche anlegen'
-                : 'Überhang-Linie auf einer Kante'
+                : 'Überstand-Linie auf einer Kante'
             }
             onClick={() => setRoofAddSubtool('overhang')}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
           >
-            Überhang
+            Überstand
           </button>
         </div>
       )}
