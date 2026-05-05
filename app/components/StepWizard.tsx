@@ -413,6 +413,8 @@ const STEP_FIELD_NAMES: Record<string, string[]> = {
     'floorsNumber',
     'tuerhoeheCm',
     'dachfensterImDach',
+    'hasWintergarden',
+    'hasBalkone',
   ],
 }
 
@@ -2522,9 +2524,14 @@ export default function StepWizard() {
       const skipSingleSaveForEditFlush = editOfferSkipUpload && isLast
 
       if (step.key !== 'upload' && !skipSingleSaveForEditFlush) {
-        try {
-          await saveStepLive(step.key, extractStepData(step.key, form, step.fields))
-        } catch (_) {}
+        const stepPayload = extractStepData(step.key, form, step.fields)
+        if (!isLast) {
+          void saveStepLive(step.key, stepPayload).catch(() => {})
+        } else {
+          try {
+            await saveStepLive(step.key, stepPayload)
+          } catch (_) {}
+        }
       }
 
       if (!isLast) {
@@ -5897,6 +5904,29 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
             </div>
           </>
         )}
+
+        <div className="space-y-2 pt-3 mt-3 border-t border-[#e3c7ab22]">
+          <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-wintergarden" data-field="hasWintergarden">
+            <input
+              id="struct-has-wintergarden"
+              type="checkbox"
+              className="sun-checkbox cursor-pointer"
+              checked={form.hasWintergarden === true}
+              onChange={(e) => setForm((prev: Record<string, any>) => ({ ...prev, hasWintergarden: e.target.checked }))}
+            />
+            <span className="text-sm font-medium text-sun/90">Wintergarten vorhanden</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none" htmlFor="struct-has-balkone" data-field="hasBalkone">
+            <input
+              id="struct-has-balkone"
+              type="checkbox"
+              className="sun-checkbox cursor-pointer"
+              checked={form.hasBalkone === true}
+              onChange={(e) => setForm((prev: Record<string, any>) => ({ ...prev, hasBalkone: e.target.checked }))}
+            />
+            <span className="text-sm font-medium text-sun/90">Balkone vorhanden</span>
+          </label>
+        </div>
 
         </div>
       </div>
