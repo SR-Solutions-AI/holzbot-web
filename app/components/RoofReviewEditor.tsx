@@ -15,7 +15,15 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, MousePointer2, Pencil, Plus, Trash2, Undo2, X } from 'lucide-react'
-import { DetectionsPolygonCanvas, formatRoofSurfaceCanvasLabel, type Point, type RoomPolygon, type DoorRect } from './DetectionsPolygonCanvas'
+import {
+  DetectionsPolygonCanvas,
+  formatRoofSurfaceCanvasLabel,
+  type Point,
+  type RoomPolygon,
+  type DoorRect,
+} from './DetectionsPolygonCanvas'
+import type { RoofOverhangEdgeKind, RoofOverhangLine } from '@/app/lib/roofOverhangGeometry'
+import { transformRoofOverhangLinesWithPolygon } from '@/app/lib/roofOverhangGeometry'
 import { nextRoofLabel } from '../lib/roofReviewHelpers'
 import { apiFetch } from '../lib/supabaseClient'
 import { displayFloorTabLabelDe } from '@/lib/displayFloorTabLabelDe'
@@ -36,6 +44,8 @@ type PlanData = {
   rectangles: RoomPolygon[]
   /** Dachfenster (Rechtecke), strikt innerhalb der Dachflächen-Polylines. */
   doors: DoorRect[]
+  /** Überhang je muchie (linie pe contur), nu pe întreg poligonul. */
+  overhangLines?: RoofOverhangLine[]
 }
 
 type ImageDimsSeed = { imageWidth: number; imageHeight: number }
@@ -71,6 +81,11 @@ function alignRoofPlanToSeedDims(plan: PlanData, seed: ImageDimsSeed): PlanData 
         bbox: [x1 * sx, y1 * sy, x2 * sx, y2 * sy] as [number, number, number, number],
       }
     }),
+    overhangLines: (plan.overhangLines ?? []).map((ln) => ({
+      ...ln,
+      a: [ln.a[0] * sx, ln.a[1] * sy] as Point,
+      b: [ln.b[0] * sx, ln.b[1] * sy] as Point,
+    })),
   }
 }
 
@@ -120,6 +135,7 @@ function reorderRoofPlansToEmbeddedSlots(plans: PlanData[], seeds: ImageDimsSeed
     imageHeight: Number(seeds[k]?.imageHeight) || 0,
     rectangles: [],
     doors: [],
+    overhangLines: [],
   }))
   for (let i = 0; i < plans.length; i++) {
     const si = matchRoofRowToSeedIndex(plans[i], seeds, i)
@@ -135,9 +151,6 @@ type Tool = 'select' | 'add' | 'remove' | 'edit' | 'bulk_select'
 function clampRoofOverhangM(v: number): number {
   return Math.max(0, Math.min(5, v))
 }
-
-/** UI: centimetri; `roofOverhangM` rămâne în metri (0–5 m → 0–500 cm). */
-const ROOF_OVERHANG_CM_MAX = 500
 
 function normalizeRect(r: {
   points: Point[]
@@ -164,24 +177,53 @@ function normalizeRect(r: {
   }
 }
 
+const OH_EDGE_SET = new Set(['traufe', 'ortgang', 'first', 'dachrand'])
+
+function normalizeOverhangLine(input: Partial<RoofOverhangLine> & { a?: Point; b?: Point }): RoofOverhangLine | null {
+  const a = input.a
+  const b = input.b
+  if (!a || !b || a.length < 2 || b.length < 2) return null
+  let roofIndex = typeof input.roofIndex === 'number' && Number.isFinite(input.roofIndex) ? Math.round(input.roofIndex) : -1
+  if (roofIndex < 0) return null
+  const ek0 = typeof input.edgeKind === 'string' ? input.edgeKind : 'traufe'
+  const edgeKind = (OH_EDGE_SET.has(ek0) ? ek0 : 'traufe') as RoofOverhangEdgeKind
+  let overhangCm = typeof input.overhangCm === 'number' && Number.isFinite(input.overhangCm) ? input.overhangCm : 40
+  overhangCm = Math.max(0, Math.min(500, Math.round(overhangCm)))
+  return {
+    a: [a[0], a[1]],
+    b: [b[0], b[1]],
+    roofIndex,
+    edgeKind,
+    overhangCm,
+  }
+}
+
+function filterOverhangLinesForRoofCount(lines: RoofOverhangLine[] | undefined, nRect: number): RoofOverhangLine[] {
+  if (!lines?.length) return []
+  return lines.filter((l) => l.roofIndex >= 0 && l.roofIndex < nRect)
+}
+
+function edgeKindChoicesForRoofType(rt: RoofTypeId): { id: RoofOverhangEdgeKind; label: string }[] {
+  if (rt === '0_w') return [{ id: 'dachrand', label: 'Dachrand' }]
+  if (rt === '1_w') {
+    return [
+      { id: 'traufe', label: 'Traufe' },
+      { id: 'ortgang', label: 'Ortgang' },
+      { id: 'first', label: 'First' },
+    ]
+  }
+  return [
+    { id: 'traufe', label: 'Traufe' },
+    { id: 'ortgang', label: 'Ortgang' },
+  ]
+}
+
 function parseDecimalField(s: string, min: number, max: number): number | null {
   const t = s.replace(',', '.').trim()
   if (t === '' || t === '-' || t === '.' || t === '-.') return null
   const v = parseFloat(t)
   if (!Number.isFinite(v)) return null
   return Math.max(min, Math.min(max, v))
-}
-
-function overhangMetersToCmStr(meters: number): string {
-  const cm = Math.round(meters * 1000) / 10
-  if (Math.abs(cm - Math.round(cm)) < 1e-9) return String(Math.round(cm))
-  return String(cm)
-}
-
-function parseOverhangCmToMeters(s: string): number | null {
-  const cm = parseDecimalField(s, 0, ROOF_OVERHANG_CM_MAX)
-  if (cm == null) return null
-  return clampRoofOverhangM(cm / 100)
 }
 
 function fallbackFloorLabelDe(index: number): string {
@@ -476,6 +518,9 @@ type RoofReviewEditorProps = {
     /** Dimensiuni spațiului în care sunt `rectangles` (din `plansData` roof); părintele scalează la planul detections dacă diferă. */
     sourceImageDims?: { imageWidth: number; imageHeight: number },
   ) => void
+  /** Editor unificat: Dachfläche vs. Überhang (părintele ține starea când `chromeInParent`). */
+  roofAddSubtool?: 'surface' | 'overhang'
+  setRoofAddSubtool?: Dispatch<SetStateAction<'surface' | 'overhang'>>
 }
 
 export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEditorProps>(function RoofReviewEditor(
@@ -499,6 +544,8 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     roofSurfaceTab: roofSurfaceTabProp,
     setRoofSurfaceTab: setRoofSurfaceTabProp,
     onRoofRectanglesOverlaySync,
+    roofAddSubtool: roofAddSubtoolProp,
+    setRoofAddSubtool: setRoofAddSubtoolProp,
   },
   ref,
 ) {
@@ -513,6 +560,10 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   )
   const tool = chromeParent ? (toolProp === 'bulk_select' ? 'select' : toolProp!) : toolInternal
   const setTool = chromeParent ? setToolProp! : setToolInternal
+  const [roofAddSubtoolInternal, setRoofAddSubtoolInternal] = useState<'surface' | 'overhang'>('surface')
+  const roofAddSubtool =
+    chromeParent && roofAddSubtoolProp != null ? roofAddSubtoolProp : roofAddSubtoolInternal
+  const setRoofAddSubtool = chromeParent && setRoofAddSubtoolProp ? setRoofAddSubtoolProp : setRoofAddSubtoolInternal
   /** Einheitlicher Editor mit Parent-Chrome: weniger Abstand, kompaktere Fläche unter dem Plan. */
   const compactUi = chromeParent
 
@@ -537,9 +588,14 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   const [dialogAngle, setDialogAngle] = useState(DEFAULT_ROOF_ANGLE)
   const [dialogAngleStr, setDialogAngleStr] = useState(String(DEFAULT_ROOF_ANGLE))
   const [dialogType, setDialogType] = useState<RoofTypeId>(DEFAULT_ROOF_TYPE)
-  const [dialogOverhangStr, setDialogOverhangStr] = useState(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
   const [sidebarAngleStr, setSidebarAngleStr] = useState('')
-  const [sidebarOverhangStr, setSidebarOverhangStr] = useState('')
+  const [overhangLineDialog, setOverhangLineDialog] = useState<
+    null | { a: Point; b: Point; roofIndex: number; editLineIndex?: number }
+  >(null)
+  const overhangDialogSnapRef = useRef<typeof overhangLineDialog>(null)
+  overhangDialogSnapRef.current = overhangLineDialog
+  const [overhangLineKind, setOverhangLineKind] = useState<RoofOverhangEdgeKind>('traufe')
+  const [overhangLineCmStr, setOverhangLineCmStr] = useState('40')
   const [pendingNewRoofWindowBbox, setPendingNewRoofWindowBbox] = useState<[number, number, number, number] | null>(null)
   const [newRoofWindowDims, setNewRoofWindowDims] = useState({ width: '', height: '' })
   const roofWindowWidthInputRef = useRef<HTMLInputElement>(null)
@@ -612,7 +668,11 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          plans: snapshot.map((p) => ({ rectangles: p.rectangles, doors: p.doors })),
+          plans: snapshot.map((p) => ({
+            rectangles: p.rectangles,
+            doors: p.doors,
+            overhangLines: p.overhangLines ?? [],
+          })),
         }),
       })) as { ok?: boolean }
       return res?.ok === true
@@ -667,7 +727,6 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
           setDialogAngle(DEFAULT_ROOF_ANGLE)
           setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
           setDialogType(DEFAULT_ROOF_TYPE)
-          setDialogOverhangStr(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
         }
       }
     },
@@ -739,6 +798,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
           imageHeight: s.imageHeight,
           rectangles: [],
           doors: [],
+          overhangLines: [],
         }))
       })
       setLoading(false)
@@ -771,11 +831,20 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             const rawDoors = Array.isArray(p.doors) ? p.doors : []
             const doors = rawDoors.map((d) => normalizeRoofDoor(d)).filter((x): x is DoorRect => x != null)
             const doorsFiltered = filterDoorsToRoofRects(doors, rectangles)
+            const rec = p as Record<string, unknown>
+            const rawOh = Array.isArray(rec.overhangLines) ? rec.overhangLines : []
+            const overhangLines = filterOverhangLinesForRoofCount(
+              rawOh
+                .map((row) => normalizeOverhangLine(row as Partial<RoofOverhangLine>))
+                .filter((x): x is RoofOverhangLine => x != null),
+              rectangles.length,
+            )
             return {
               imageWidth: p.imageWidth,
               imageHeight: p.imageHeight,
               rectangles,
               doors: doorsFiltered,
+              overhangLines,
             }
           })
           lastPlans = normalized
@@ -789,6 +858,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                 imageHeight: s.imageHeight,
                 rectangles: [],
                 doors: [],
+                overhangLines: [],
               }))
             } else if (canSeedEmbedded && toSet.length > 0) {
               toSet = alignRoofPlansToEmbeddedSeeds(
@@ -809,6 +879,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                   imageHeight: s.imageHeight,
                   rectangles: [],
                   doors: [],
+                  overhangLines: [],
                 })),
               )
             } else {
@@ -863,6 +934,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             imageHeight: refPlan.imageHeight,
             rectangles: [],
             doors: [],
+            overhangLines: [],
           })
           changed = true
         }
@@ -887,7 +959,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
       if (plansDataRef.current.some((p) => Number(p.imageWidth) > 0 && Number(p.imageHeight) > 0)) return
       setPlansData((prev) => {
         if (prev.length === 0) {
-          return [{ imageWidth: w, imageHeight: h, rectangles: [], doors: [] }]
+          return [{ imageWidth: w, imageHeight: h, rectangles: [], doors: [], overhangLines: [] }]
         }
         return prev.map((p) => ({
           ...p,
@@ -927,7 +999,8 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
       if (planIdx >= next.length) return next
       const prevPlan = next[planIdx]
       const doors = filterDoorsToRoofRects(prevPlan.doors, rectangles)
-      next[planIdx] = { ...prevPlan, rectangles, doors }
+      const overhangLines = filterOverhangLinesForRoofCount(prevPlan.overhangLines, rectangles.length)
+      next[planIdx] = { ...prevPlan, rectangles, doors, overhangLines }
       return next
     })
   }, [])
@@ -959,7 +1032,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
 
   /** Actualizare funcțională – evită stale state când schimbi tipul de acoperiș de mai multe ori la rând. */
   const updateSelectedRoofMeta = useCallback(
-    (patch: Partial<{ roofAngleDeg: number; roofType: RoofTypeId; roofOverhangM: number }>) => {
+    (patch: Partial<{ roofAngleDeg: number; roofType: RoofTypeId }>) => {
       if (selectedPolygonIndex == null) return
       const polyIdx = selectedPolygonIndex
       const pIdx = planIndexClamped
@@ -998,7 +1071,6 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     pushHistory()
     const label = nextRoofLabel(currentPlan.rectangles)
     const angleDeg = parseDecimalField(dialogAngleStr, 0, 60) ?? dialogAngle
-    const overhangM = parseOverhangCmToMeters(dialogOverhangStr) ?? DEFAULT_ROOF_OVERHANG_M
     setRectangles(planIndexClamped, [
       ...currentPlan.rectangles,
       normalizeRect({
@@ -1006,7 +1078,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
         roomName: label,
         roofAngleDeg: angleDeg,
         roofType: dialogType,
-        roofOverhangM: overhangM,
+        roofOverhangM: 0,
       }),
     ])
     setPendingNewPoints(null)
@@ -1014,20 +1086,8 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     setDialogAngle(DEFAULT_ROOF_ANGLE)
     setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
     setDialogType(DEFAULT_ROOF_TYPE)
-    setDialogOverhangStr(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
     setTool('add')
-  }, [
-    pendingNewPoints,
-    currentPlan,
-    pushHistory,
-    setRectangles,
-    planIndexClamped,
-    dialogAngle,
-    dialogAngleStr,
-    dialogOverhangStr,
-    dialogType,
-    setTool,
-  ])
+  }, [pendingNewPoints, currentPlan, pushHistory, setRectangles, planIndexClamped, dialogAngle, dialogAngleStr, dialogType, setTool])
 
   const cancelNewRoofDialog = useCallback(() => {
     setPendingNewPoints(null)
@@ -1035,9 +1095,107 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
     setDialogAngle(DEFAULT_ROOF_ANGLE)
     setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
     setDialogType(DEFAULT_ROOF_TYPE)
-    setDialogOverhangStr(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
     setTool('select')
   }, [])
+
+  const handleRoofOverhangLineComplete = useCallback(
+    (a: Point, b: Point, roofIndex: number) => {
+      const plan = plansDataRef.current[planIndexClamped]
+      const rt = (plan?.rectangles[roofIndex]?.roofType ?? DEFAULT_ROOF_TYPE) as RoofTypeId
+      const opts = edgeKindChoicesForRoofType(rt)
+      setOverhangLineKind(opts[0]!.id)
+      setOverhangLineCmStr('40')
+      setOverhangLineDialog({ a, b, roofIndex })
+    },
+    [planIndexClamped],
+  )
+
+  const handleRoofOverhangLineEditRequest = useCallback(
+    (lineIndex: number) => {
+      const plan = plansDataRef.current[planIndexClamped]
+      const line = plan?.overhangLines?.[lineIndex]
+      if (!line) return
+      setOverhangLineKind(line.edgeKind)
+      setOverhangLineCmStr(String(line.overhangCm))
+      setOverhangLineDialog({
+        a: line.a,
+        b: line.b,
+        roofIndex: line.roofIndex,
+        editLineIndex: lineIndex,
+      })
+    },
+    [planIndexClamped],
+  )
+
+  const confirmOverhangLineDialog = useCallback(() => {
+    if (!overhangLineDialog) return
+    const cm = parseDecimalField(overhangLineCmStr, 0, 500)
+    if (cm == null) return
+    pushHistory()
+    const pIdx = planIndexClamped
+    const editLineIndex = overhangLineDialog.editLineIndex
+    setPlansData((prev) => {
+      if (pIdx >= prev.length) return prev
+      const plan = prev[pIdx]
+      const line: RoofOverhangLine = {
+        a: overhangLineDialog.a,
+        b: overhangLineDialog.b,
+        roofIndex: overhangLineDialog.roofIndex,
+        edgeKind: overhangLineKind,
+        overhangCm: cm,
+      }
+      const cur = plan.overhangLines ?? []
+      const nextLines =
+        editLineIndex !== undefined && editLineIndex >= 0 && editLineIndex < cur.length
+          ? cur.map((ln, i) => (i === editLineIndex ? line : ln))
+          : [...cur, line]
+      const next = [...prev]
+      next[pIdx] = { ...plan, overhangLines: nextLines }
+      return next
+    })
+    setOverhangLineDialog(null)
+    setTool(editLineIndex !== undefined ? 'select' : 'add')
+  }, [overhangLineDialog, overhangLineCmStr, overhangLineKind, pushHistory, planIndexClamped, setTool])
+
+  const cancelOverhangLineDialog = useCallback(() => {
+    const prevDlg = overhangDialogSnapRef.current
+    setOverhangLineDialog(null)
+    setTool(prevDlg != null && prevDlg.editLineIndex !== undefined ? 'select' : 'add')
+  }, [setTool])
+
+  const handleRemoveRoofOverhangLine = useCallback(
+    (lineIndex: number) => {
+      pushHistory()
+      const pIdx = planIndexClamped
+      setPlansData((prev) => {
+        if (pIdx >= prev.length) return prev
+        const plan = prev[pIdx]
+        const cur = plan.overhangLines ?? []
+        if (lineIndex < 0 || lineIndex >= cur.length) return prev
+        const nextLines = cur.filter((_, i) => i !== lineIndex)
+        const next = [...prev]
+        next[pIdx] = { ...plan, overhangLines: nextLines }
+        return next
+      })
+    },
+    [planIndexClamped, pushHistory],
+  )
+
+  const handleRoofOverhangLinesChange = useCallback(
+    (lines: RoofOverhangLine[]) => {
+      const pIdx = planIndexClamped
+      setPlansData((prev) => {
+        if (pIdx >= prev.length) return prev
+        const plan = prev[pIdx]
+        const nRect = plan.rectangles.length
+        const safe = filterOverhangLinesForRoofCount(lines, nRect)
+        const next = [...prev]
+        next[pIdx] = { ...plan, overhangLines: safe }
+        return next
+      })
+    },
+    [planIndexClamped],
+  )
 
   const handleCreateRoofWindow = useCallback(() => {
     if (!pendingNewRoofWindowBbox || !currentPlan) return
@@ -1087,17 +1245,10 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
   useEffect(() => {
     if (!selectedRect) {
       setSidebarAngleStr('')
-      setSidebarOverhangStr('')
       return
     }
     setSidebarAngleStr(String(selectedRect.roofAngleDeg ?? DEFAULT_ROOF_ANGLE))
-    setSidebarOverhangStr(overhangMetersToCmStr(selectedRect.roofOverhangM ?? DEFAULT_ROOF_OVERHANG_M))
-  }, [
-    roofSurfaceTab,
-    selectedPolygonIndex,
-    selectedRect?.roofAngleDeg,
-    selectedRect?.roofOverhangM,
-  ])
+  }, [roofSurfaceTab, selectedPolygonIndex, selectedRect?.roofAngleDeg])
 
   useEffect(() => {
     if (roofSurfaceTab !== 'surfaces' || !selectedRect) return
@@ -1151,11 +1302,13 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
       : tool === 'select'
         ? 'Auf Element klicken und ziehen zum Verschieben'
         : tool === 'add'
-          ? 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
+          ? roofAddSubtool === 'overhang'
+            ? 'Zwei Punkte auf dem Rand einer bestehenden Dachfläche – nur auf Kanten'
+            : 'Klicken Sie um Punkte zu setzen – ersten Punkt erneut klicken zum Schließen'
           : tool === 'remove'
-            ? 'Klicken Sie auf ein Element, um es zu entfernen'
+            ? 'Klicken Sie auf eine Fläche bzw. Überhang-Linie zum Entfernen'
             : tool === 'edit'
-              ? 'Eckpunkte ziehen; auf Kante klicken = neuer Punkt; Kante ziehen = Segment verschieben'
+              ? 'Dachfläche: Ecken/Kanten wie zuvor. Überhang: Griffe der gewählten Linie zuerst. Entf/⌫: gewählte Überhang-Linie löschen. Reiter Überhang/Dachfläche: jeweils der andere Typ ausgegraut.'
               : ''
 
   /** Wie Fenster/Türen: Maße oben in der Leiste, sobald Dachfenster gewählt + Werkzeug „Verschieben“. */
@@ -1264,7 +1417,6 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                 setDialogAngle(DEFAULT_ROOF_ANGLE)
                 setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
                 setDialogType(DEFAULT_ROOF_TYPE)
-                setDialogOverhangStr(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
               }
             }}
             className={`p-2 rounded-lg transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${tool === 'add' ? 'bg-[#FF9F0F]/20 text-[#FF9F0F]' : 'text-sand/70 hover:bg-white/5'}`}
@@ -1308,6 +1460,32 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
           <span className="text-[10px] text-sand/60">Rückgängig</span>
         </div>
       </div>
+
+      {!chromeParent && roofSurfaceTab === 'surfaces' && tool === 'add' && (
+        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
+          <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Element:</span>
+          <button
+            type="button"
+            onClick={() => setRoofAddSubtool('surface')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'surface' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Dachfläche
+          </button>
+          <button
+            type="button"
+            disabled={!currentPlan || currentPlan.rectangles.length === 0}
+            title={
+              !currentPlan || currentPlan.rectangles.length === 0
+                ? 'Zuerst mindestens eine Dachfläche anlegen'
+                : 'Überhang-Linie auf einer Kante'
+            }
+            onClick={() => setRoofAddSubtool('overhang')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Überhang
+          </button>
+        </div>
+      )}
 
       <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
         <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Ansicht:</span>
@@ -1457,7 +1635,13 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                     tool={tool}
                     dimUnselectedRoomPolygons
                     selectedIndex={selectedPolygonIndex}
-                    newPoints={tool === 'add' ? newPolygonPoints : null}
+                    newPoints={tool === 'add' && roofAddSubtool === 'surface' ? newPolygonPoints : null}
+                    roomsAddMode={roofAddSubtool === 'overhang' ? 'roof_overhang_line' : 'polygon'}
+                    onRoofOverhangLineComplete={handleRoofOverhangLineComplete}
+                    onRoofOverhangLineEditRequest={handleRoofOverhangLineEditRequest}
+                    roofOverhangLines={currentPlan.overhangLines ?? []}
+                    onRemoveRoofOverhangLine={handleRemoveRoofOverhangLine}
+                    onRoofOverhangLinesChange={handleRoofOverhangLinesChange}
                     onSelect={setSelectedPolygonIndex}
                     onAddPoint={(x, y) => setNewPolygonPoints((prev) => (prev ? [...prev, [x, y]] : [[x, y]]))}
                     onCloseNewPolygon={() => {
@@ -1467,16 +1651,37 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                       setDialogAngle(DEFAULT_ROOF_ANGLE)
                       setDialogAngleStr(String(DEFAULT_ROOF_ANGLE))
                       setDialogType(DEFAULT_ROOF_TYPE)
-                      setDialogOverhangStr(overhangMetersToCmStr(DEFAULT_ROOF_OVERHANG_M))
                       setNewRoofDialogOpen(true)
                     }}
                     onMoveVertex={(polyIndex, vertexIndex, x, y) => {
-                      setRectangles(
-                        planIndexClamped,
-                        currentPlan.rectangles.map((r, ri) =>
-                          ri !== polyIndex ? r : { ...r, points: r.points.map((p, vi) => (vi === vertexIndex ? [x, y] : p)) },
-                        ),
-                      )
+                      const pIdx = planIndexClamped
+                      setPlansData((prev) => {
+                        if (pIdx >= prev.length) return prev
+                        const plan = prev[pIdx]
+                        const beforePts = plan.rectangles[polyIndex]?.points?.map((p) => [p[0], p[1]] as Point)
+                        const rectangles = plan.rectangles.map((r, ri) =>
+                          ri !== polyIndex
+                            ? r
+                            : {
+                                ...r,
+                                points: r.points.map((p, vi) => (vi === vertexIndex ? ([x, y] as Point) : p)),
+                              },
+                        )
+                        const afterPts = rectangles[polyIndex]?.points
+                        const doors = filterDoorsToRoofRects(plan.doors, rectangles)
+                        let overhangLines = filterOverhangLinesForRoofCount(plan.overhangLines, rectangles.length)
+                        if (beforePts && afterPts) {
+                          overhangLines = transformRoofOverhangLinesWithPolygon(
+                            overhangLines,
+                            polyIndex,
+                            beforePts,
+                            afterPts,
+                          )
+                        }
+                        const next = [...prev]
+                        next[pIdx] = { ...plan, rectangles, doors, overhangLines }
+                        return next
+                      })
                     }}
                     onRemoveSelected={(index?: number) => {
                       const idx = index ?? selectedPolygonIndex
@@ -1626,39 +1831,6 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                   }}
                 />
               </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                <span className="text-sand/70 text-[11px] sm:text-xs whitespace-nowrap">Dachüberstand (cm)</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  disabled={!selectedRect}
-                  className="w-[4.25rem] sm:w-[4.75rem] px-1.5 py-1 rounded bg-black/40 border border-white/20 text-white text-xs sm:text-sm tabular-nums disabled:opacity-45 disabled:cursor-not-allowed"
-                  value={selectedRect ? sidebarOverhangStr : ''}
-                  placeholder="—"
-                  onFocus={() => {
-                    if (!selectedRect) return
-                    if (!roofAngleUndoPushedRef.current) {
-                      pushHistory()
-                      roofAngleUndoPushedRef.current = true
-                    }
-                  }}
-                  onBlur={() => {
-                    roofAngleUndoPushedRef.current = false
-                    if (!selectedRect) return
-                    const m = parseOverhangCmToMeters(sidebarOverhangStr)
-                    if (m != null) updateSelectedRoofMeta({ roofOverhangM: m })
-                    else setSidebarOverhangStr(overhangMetersToCmStr(selectedRect.roofOverhangM ?? DEFAULT_ROOF_OVERHANG_M))
-                  }}
-                  onChange={(e) => {
-                    if (!selectedRect) return
-                    const raw = e.target.value.replace(',', '.')
-                    setSidebarOverhangStr(raw)
-                    const m = parseOverhangCmToMeters(raw)
-                    if (m != null) updateSelectedRoofMeta({ roofOverhangM: m })
-                  }}
-                />
-              </div>
             </div>
           </div>
           <div className={`flex w-full min-w-0 items-start ${compactUi ? 'gap-2' : 'gap-2.5'}`}>
@@ -1745,7 +1917,7 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
             className="w-fit max-w-[calc(100vw-1.5rem)] rounded-2xl border border-[#FF9F0F]/40 bg-coffee-800/95 p-3 sm:p-4 shadow-xl space-y-3"
           >
             <h3 className="text-white font-semibold text-center text-sm sm:text-base leading-snug">
-              Neues Dach – Neigung, Dachüberstand &amp; Typ
+              Neues Dach – Neigung &amp; Typ
             </h3>
             <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center justify-center gap-3 sm:gap-x-6 sm:gap-y-2">
               <label className="flex items-center gap-2 text-sand/80 text-sm">
@@ -1761,20 +1933,6 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                     setDialogAngleStr(raw)
                     const v = parseDecimalField(raw, 0, 60)
                     if (v != null) setDialogAngle(v)
-                  }}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-sand/80 text-sm">
-                <span className="shrink-0">Dachüberstand (cm)</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  className="min-w-[5rem] w-32 px-3 py-1.5 rounded-lg bg-black/40 border border-white/20 text-white text-sm tabular-nums"
-                  value={dialogOverhangStr}
-                  onChange={(e) => {
-                    const raw = e.target.value.replace(',', '.')
-                    setDialogOverhangStr(raw)
                   }}
                 />
               </label>
@@ -1851,6 +2009,76 @@ export const RoofReviewEditor = forwardRef<RoofReviewEditorHandle, RoofReviewEdi
                 className="px-4 py-2 rounded-lg font-semibold text-white bg-[#FF9F0F] hover:bg-[#ffb03d]"
               >
                 Übernehmen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {overhangLineDialog && currentPlan && (
+        <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/70 p-3 sm:p-4">
+          <div
+            lang="de"
+            className="w-[min(100%,26rem)] rounded-2xl border border-[#FF9F0F]/40 bg-coffee-800/95 p-4 shadow-xl space-y-3"
+          >
+            <h3 className="text-white font-semibold text-center text-sm sm:text-base">
+              {overhangLineDialog.editLineIndex !== undefined ? 'Überhang bearbeiten' : 'Überhang'}
+            </h3>
+            {(() => {
+              const rt = (currentPlan.rectangles[overhangLineDialog.roofIndex]?.roofType ??
+                DEFAULT_ROOF_TYPE) as RoofTypeId
+              const choices = edgeKindChoicesForRoofType(rt)
+              return choices.length > 1 ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {choices.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setOverhangLineKind(c.id)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        overhangLineKind === c.id
+                          ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50'
+                          : 'text-sand/70 border border-white/10 hover:bg-white/5'
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sand/70 text-xs text-center">{choices[0]?.label}</p>
+              )
+            })()}
+            <label className="block text-sand/80 text-sm">
+              Überhang (cm)
+              <input
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                className="mt-1 w-full rounded-lg bg-black/40 border border-white/20 text-white text-sm px-3 py-2 tabular-nums"
+                value={overhangLineCmStr}
+                onChange={(e) => setOverhangLineCmStr(e.target.value.replace(',', '.'))}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  confirmOverhangLineDialog()
+                }}
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={cancelOverhangLineDialog}
+                className="px-4 py-2 rounded-lg border border-white/30 text-sand hover:bg-white/10 text-sm"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={confirmOverhangLineDialog}
+                className="px-4 py-2 rounded-lg font-semibold text-white bg-[#FF9F0F] hover:bg-[#ffb03d] text-sm"
+              >
+                Speichern
               </button>
             </div>
           </div>

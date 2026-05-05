@@ -562,6 +562,7 @@ export function DetectionsReviewEditor({
   const [bulkClipboard, setBulkClipboard] = useState<{ rooms: RoomPolygon[]; doors: DoorRect[] } | null>(null)
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
   const [newDoorType, setNewDoorType] = useState<DoorType>('door')
+  const [roofAddSubtool, setRoofAddSubtool] = useState<'surface' | 'overhang'>('surface')
   const [editorConstraints, setEditorConstraints] = useState<EditorConstraints>(() => mergeEditorConstraints(undefined))
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [pendingDemolitionPoints, setPendingDemolitionPoints] = useState<Point[] | null>(null)
@@ -2040,6 +2041,9 @@ export function DetectionsReviewEditor({
       setBulkSelection([])
       setTool('select')
     }
+    if (activeTab !== 'roof') {
+      setRoofAddSubtool('surface')
+    }
   }, [activeTab])
 
   const isAufstockungFlow = effectiveFloorKinds.length > 0
@@ -2893,6 +2897,25 @@ export function DetectionsReviewEditor({
         </div>
       )}
 
+      {tool === 'add' && activeTab === 'roof' && roofSurfaceTabForChild === 'surfaces' && (
+        <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
+          <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Element:</span>
+          <button
+            type="button"
+            onClick={() => setRoofAddSubtool('surface')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'surface' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Dachfläche
+          </button>
+          <button
+            type="button"
+            onClick={() => setRoofAddSubtool('overhang')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Überhang
+          </button>
+        </div>
+      )}
       {(tool === 'add' && activeTab === 'doors') && (
         <div className="shrink-0 flex items-center justify-center gap-2 px-2 py-1.5 flex-wrap">
           <span className="text-sand/70 text-xs w-full text-center sm:w-auto">Element:</span>
@@ -3546,6 +3569,8 @@ export function DetectionsReviewEditor({
                       setTool={setTool}
                       roofSurfaceTab={roofSurfaceTabForChild}
                       setRoofSurfaceTab={setRoofSurfaceTabForEditor}
+                      roofAddSubtool={roofAddSubtool}
+                      setRoofAddSubtool={setRoofAddSubtool}
                       embedPlanIndex={planIndexClamped}
                       offerId={offerId}
                       images={roofEditorBasemapImages}

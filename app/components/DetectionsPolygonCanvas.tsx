@@ -1,6 +1,23 @@
 'use client'
 
 import { useRef, useEffect, useLayoutEffect, useCallback, useState } from 'react'
+import {
+  snapToRoofEdges,
+  distancePointToSegment,
+  computeOverhangStrip,
+  computeOverhangMiterByVertex,
+  applyMitersToStripCorners,
+  estimateMetersPerPixelFromRoofs,
+  cloneRoofOverhangLines,
+  transformRoofOverhangLinesWithPolygon,
+  translateRoofOverhangLinesFromSnapshot,
+  translateRoofOverhangLinesForRoofs,
+  affineRoofOverhangLinesForRoofs,
+  type RoofOverhangLine,
+  type RoofOverhangEdgeKind,
+} from '@/app/lib/roofOverhangGeometry'
+
+export type { RoofOverhangLine, RoofOverhangEdgeKind }
 
 export type Point = [number, number]
 
@@ -113,6 +130,16 @@ type PolygonCanvasProps = {
   hideBasemap?: boolean
   /** Preview Dach (din roof-review-data) sub stratul interactiv, împreună cu blend Phase 1. */
   roofOverlayRooms?: RoomPolygon[]
+  /** tab=rooms: add = poligon Dach (implicit) sau linie Überhang pe muchie. */
+  roomsAddMode?: 'polygon' | 'roof_overhang_line'
+  onRoofOverhangLineComplete?: (a: Point, b: Point, roofIndex: number) => void
+  /** Select: tap pe linia Überhang → deschide dialog lungime/tip (ex. RoofReviewEditor). */
+  onRoofOverhangLineEditRequest?: (lineIndex: number) => void
+  /** Linii Überhang deja salvate (desenate peste contururile de acoperiș). */
+  roofOverhangLines?: RoofOverhangLine[]
+  onRemoveRoofOverhangLine?: (lineIndex: number) => void
+  /** Bearbeiten: Endpunkte ziehen (auf Kanten einrastend); ersetzt die Liste. */
+  onRoofOverhangLinesChange?: (lines: RoofOverhangLine[]) => void
   /**
    * Aufstockung Dach-Stack: același zoom/pan pe două canvas-uri (fundal + vector).
    * Când e setat, `zoom`/`pan` vin din părinte; `onStackedViewChange` pe stratul interactiv actualizează părintele.
@@ -168,6 +195,38 @@ const HANDLE_R = 6
 const HIT_R = 28
 /** Raza pentru muchiile poligoanelor (linii) – ușor de selectat pentru mutare perete/segment. */
 const EDGE_HIT_R = 36
+/** > EDGE_HIT_R: bulinele liniei Überhang *selectate* câștigă față de segmentul altei linii. */
+const ROOF_OH_SELECTED_VERTEX_HIT_R = 46
+
+/** Paletă saturată, distinctă față de poligoanele Dach (albastru/verde); o linie = o culoare. */
+const OVERHANG_LINE_PALETTE: ReadonlyArray<readonly [number, number, number]> = [
+  [244, 63, 94],
+  [249, 115, 22],
+  [168, 85, 247],
+  [234, 179, 8],
+  [236, 72, 153],
+  [6, 182, 212],
+  [16, 185, 129],
+  [245, 158, 11],
+  [99, 102, 241],
+  [217, 70, 239],
+]
+
+function overhangLineRgb(ohi: number): readonly [number, number, number] {
+  return OVERHANG_LINE_PALETTE[ohi % OVERHANG_LINE_PALETTE.length]!
+}
+
+function overhangRgba(rgb: readonly [number, number, number], a: number): string {
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${a})`
+}
+
+function blendRgbTowardWhite(rgb: readonly [number, number, number], t: number): [number, number, number] {
+  return [
+    Math.min(255, Math.round(rgb[0] + (255 - rgb[0]) * t)),
+    Math.min(255, Math.round(rgb[1] + (255 - rgb[1]) * t)),
+    Math.min(255, Math.round(rgb[2] + (255 - rgb[2]) * t)),
+  ]
+}
 /** Raza mai mare pentru colțurile ușilor/geamurilor ca să poți redimensiona ușor (nu doar muta). */
 const DOOR_VERTEX_HIT_R = 24
 /** Padding în px (în coordonate imagine) pentru hit-test pe uși/ferestre – ușor de apucat și mutat cu Select. */
@@ -284,6 +343,12 @@ export function DetectionsPolygonCanvas({
   roofOverlayRooms = [],
   stackedView = null,
   onStackedViewChange,
+  roomsAddMode = 'polygon',
+  onRoofOverhangLineComplete,
+  onRoofOverhangLineEditRequest,
+  roofOverhangLines = [],
+  onRemoveRoofOverhangLine,
+  onRoofOverhangLinesChange,
 }: PolygonCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [fit, setFit] = useState<{ scale: number; offX: number; offY: number; cw: number; ch: number } | null>(null)
@@ -294,12 +359,20 @@ export function DetectionsPolygonCanvas({
   type DragState =
     | { kind: 'vertex'; polyIndex: number; vertexIndex: number }
     | { kind: 'edge'; polyIndex: number; edgeIndex: number; initV0: Point; initV1: Point; startImage: Point }
-    | { kind: 'poly'; polyIndex: number; startImage: Point; initPoints?: Point[]; initBbox?: [number, number, number, number] }
+    | {
+        kind: 'poly'
+        polyIndex: number
+        startImage: Point
+        initPoints?: Point[]
+        initBbox?: [number, number, number, number]
+        initRoofOhSnapshot?: RoofOverhangLine[]
+      }
     | {
         kind: 'bulk'
         startImage: Point
         roomInits: Record<number, Point[]>
         doorInits: Record<number, [number, number, number, number]>
+        initRoofOhSnapshot?: RoofOverhangLine[]
       }
     | {
         kind: 'bulk_marquee'
@@ -314,7 +387,9 @@ export function DetectionsPolygonCanvas({
         doorInits: Record<number, [number, number, number, number]>
         anchor: Point
         handleStart: Point
+        initRoofOhSnapshot?: RoofOverhangLine[]
       }
+    | { kind: 'roof_oh_vertex'; lineIndex: number; vertexIndex: 0 | 1 }
   const [dragging, setDragging] = useState<DragState | null>(null)
   const [imageLoaded, setImageLoaded] = useState(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -330,6 +405,13 @@ export function DetectionsPolygonCanvas({
   const zubauWallsRef = useRef(zubauWallLines)
   const stairRectsRef = useRef(stairOpeningRects)
   const [wallLineDraft, setWallLineDraft] = useState<Point[] | null>(null)
+  const [roofOhDraft, setRoofOhDraft] = useState<Point[] | null>(null)
+  const [roofOhRoofIdx, setRoofOhRoofIdx] = useState<number | null>(null)
+  const [roofOhPreviewEnd, setRoofOhPreviewEnd] = useState<Point | null>(null)
+  /** Kanten-Hover beim Überhang-Ziehmodus (welche Kante unter dem Cursor einrastet). */
+  const [roofOhHoveredEdge, setRoofOhHoveredEdge] = useState<{ roofIndex: number; edgeIndex: number } | null>(null)
+  const [roofOhSelectedLineIndex, setRoofOhSelectedLineIndex] = useState<number | null>(null)
+  const roofOhLinesRef = useRef(roofOverhangLines)
   const [bulkResizeHoverCorner, setBulkResizeHoverCorner] = useState<number | null>(null)
   doorsRef.current = doors
   roomsRef.current = rooms
@@ -337,10 +419,44 @@ export function DetectionsPolygonCanvas({
   zubauBestandRef.current = zubauBestandPolys
   zubauWallsRef.current = zubauWallLines
   stairRectsRef.current = stairOpeningRects
+  roofOhLinesRef.current = roofOverhangLines
 
   useEffect(() => {
     if (tab !== 'zubau_walls') setWallLineDraft(null)
   }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'rooms' || tool !== 'add' || roomsAddMode !== 'roof_overhang_line') {
+      setRoofOhDraft(null)
+      setRoofOhRoofIdx(null)
+      setRoofOhPreviewEnd(null)
+      setRoofOhHoveredEdge(null)
+    }
+  }, [tab, tool, roomsAddMode])
+
+  useEffect(() => {
+    if (tool !== 'edit') setRoofOhSelectedLineIndex(null)
+  }, [tool])
+
+  useEffect(() => {
+    if (tab !== 'rooms') setRoofOhSelectedLineIndex(null)
+  }, [tab])
+
+  useEffect(() => {
+    if (tab !== 'rooms' || tool !== 'edit' || roofOhSelectedLineIndex == null || !onRemoveRoofOverhangLine) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Backspace' && e.key !== 'Delete') return
+      const t = e.target
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || (t as HTMLElement).isContentEditable) return
+      e.preventDefault()
+      const idx = roofOhSelectedLineIndex
+      if (idx < 0) return
+      onRemoveRoofOverhangLine(idx)
+      setRoofOhSelectedLineIndex(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tab, tool, roofOhSelectedLineIndex, onRemoveRoofOverhangLine])
 
   const getBulkSelectionBounds = useCallback((): { minX: number; minY: number; maxX: number; maxY: number } | null => {
     if (bulkSelectedKeys.length === 0) return null
@@ -547,6 +663,9 @@ export function DetectionsPolygonCanvas({
     const ox = effective.offX
     const oy = effective.offY
     const useDimOthers = dimUnselectedRoomPolygons && selectedIndex !== null && rooms.length > 0
+    /** Sub-tool „Überhang-Linie“ vs „Dachfläche“ (roof editor): evidențiază stratul activ. */
+    const focusOverhangSubtool = tab === 'rooms' && roomsAddMode === 'roof_overhang_line'
+    const focusSurfaceSubtool = tab === 'rooms' && roomsAddMode === 'polygon'
     const stairPreviewStyle = { fill: '#a855f7', stroke: '#7c3aed' }
     const rectsForDoorTab = tab === 'stair_opening' ? stairOpeningRects : doors
 
@@ -662,6 +781,11 @@ export function DetectionsPolygonCanvas({
         if (useDimOthers) {
           fillA = selected ? 0.52 : 0.12
         }
+        if (focusOverhangSubtool) {
+          fillA *= 0.32
+        } else if (roofOverhangLines.length > 0) {
+          fillA *= 0.88
+        }
         ctx.globalAlpha = fillA
         ctx.beginPath()
         ctx.moveTo(ox + pts[0][0] * s, oy + pts[0][1] * s)
@@ -715,6 +839,276 @@ export function DetectionsPolygonCanvas({
           })
         }
       })
+      /** Erlaubte Kanten für Überhang-Linien (hell markiert). */
+      if (roomsAddMode === 'roof_overhang_line' && tool === 'add' && rooms.length > 0) {
+        ctx.lineCap = 'round'
+        rooms.forEach((room) => {
+          const pts = room.points
+          const n = pts.length
+          if (n < 3) return
+          ctx.strokeStyle = 'rgba(34, 211, 238, 0.55)'
+          ctx.lineWidth = 5
+          ctx.shadowColor = 'rgba(34, 211, 238, 0.45)'
+          ctx.shadowBlur = 6
+          ctx.setLineDash([10, 7])
+          ctx.beginPath()
+          for (let ei = 0; ei < n; ei++) {
+            const a = pts[ei]
+            const b = pts[(ei + 1) % n]
+            ctx.moveTo(ox + a[0] * s, oy + a[1] * s)
+            ctx.lineTo(ox + b[0] * s, oy + b[1] * s)
+          }
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+        })
+        const hl = roofOhHoveredEdge
+        if (hl != null) {
+          const pts = rooms[hl.roofIndex]?.points
+          if (pts && pts.length >= 3) {
+            const ei = hl.edgeIndex % pts.length
+            const a = pts[ei]
+            const b = pts[(ei + 1) % pts.length]
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.98)'
+            ctx.lineWidth = 7
+            ctx.shadowColor = 'rgba(250, 204, 21, 0.55)'
+            ctx.shadowBlur = 10
+            ctx.beginPath()
+            ctx.moveTo(ox + a[0] * s, oy + a[1] * s)
+            ctx.lineTo(ox + b[0] * s, oy + b[1] * s)
+            ctx.stroke()
+            ctx.shadowBlur = 0
+          }
+        }
+      }
+      if (roofOverhangLines.length > 0) {
+        const ohStrokeMul = focusSurfaceSubtool ? 0.62 : 1
+        const roofOhMpp = estimateMetersPerPixelFromRoofs(rooms, imageWidth, imageHeight)
+        const ohDash = [10, 7]
+        const miterCutDash = [6, 5]
+        const roofIndicesWithOh = [...new Set(roofOverhangLines.map((l) => l.roofIndex))]
+        const miterByRoofAndVertex = new Map<number, Map<number, Point>>()
+        for (const ri of roofIndicesWithOh) {
+          const polyPts = rooms[ri]?.points
+          if (!polyPts || polyPts.length < 3) continue
+          const linesHere = roofOverhangLines.filter((l) => l.roofIndex === ri)
+          miterByRoofAndVertex.set(ri, computeOverhangMiterByVertex(polyPts, linesHere, roofOhMpp))
+        }
+        const strokeStripEdge = (
+          x1: number,
+          y1: number,
+          x2: number,
+          y2: number,
+          stroke: string,
+          lw: number,
+          glow: boolean,
+          dash: number[] = ohDash,
+          rgbForGlow?: readonly [number, number, number],
+        ) => {
+          ctx.lineCap = 'round'
+          ctx.setLineDash(dash)
+          ctx.strokeStyle = stroke
+          ctx.lineWidth = lw
+          if (glow && rgbForGlow) {
+            ctx.shadowColor = overhangRgba(rgbForGlow, 0.5)
+            ctx.shadowBlur = 12
+          } else {
+            ctx.shadowBlur = 0
+          }
+          ctx.beginPath()
+          ctx.moveTo(x1, y1)
+          ctx.lineTo(x2, y2)
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+        }
+        roofOverhangLines.forEach((ln, ohi) => {
+          const selectedOh =
+            tool === 'edit' && roofOhSelectedLineIndex !== null && roofOhSelectedLineIndex === ohi
+          const baseRgb = overhangLineRgb(ohi)
+          const mainRgb: [number, number, number] = selectedOh
+            ? blendRgbTowardWhite(baseRgb, 0.25)
+            : [baseRgb[0], baseRgb[1], baseRgb[2]]
+          const dimRgb: [number, number, number] = [
+            Math.max(0, Math.round(mainRgb[0] * 0.55)),
+            Math.max(0, Math.round(mainRgb[1] * 0.55)),
+            Math.max(0, Math.round(mainRgb[2] * 0.55)),
+          ]
+          const poly = rooms[ln.roofIndex]?.points
+          const strip =
+            poly && poly.length >= 3 ? computeOverhangStrip(poly, ln.a, ln.b, ln.overhangCm, roofOhMpp) : null
+          const miterMap = miterByRoofAndVertex.get(ln.roofIndex) ?? new Map<number, Point>()
+          const corners =
+            strip && poly && poly.length >= 3 ? applyMitersToStripCorners(poly, strip, miterMap) : null
+
+          const strokeMain = overhangRgba(mainRgb, 0.98 * ohStrokeMul)
+          const strokeDim = overhangRgba(dimRgb, 0.94 * ohStrokeMul)
+          const fillStrip = overhangRgba(baseRgb, 0.24 * ohStrokeMul)
+
+          if (strip && corners) {
+            const { a, b } = strip
+            const { aOut, bOut } = corners
+            const ax = ox + a[0] * s
+            const ay = oy + a[1] * s
+            const bx = ox + b[0] * s
+            const by = oy + b[1] * s
+            const axo = ox + aOut[0] * s
+            const ayo = oy + aOut[1] * s
+            const bxo = ox + bOut[0] * s
+            const byo = oy + bOut[1] * s
+
+            ctx.fillStyle = fillStrip
+            ctx.beginPath()
+            ctx.moveTo(ax, ay)
+            ctx.lineTo(bx, by)
+            ctx.lineTo(bxo, byo)
+            ctx.lineTo(axo, ayo)
+            ctx.closePath()
+            ctx.fill()
+
+            const lw = selectedOh ? 4.8 : 3.6
+            strokeStripEdge(ax, ay, bx, by, strokeDim, lw * 0.92, selectedOh, ohDash, mainRgb)
+            strokeStripEdge(ax, ay, axo, ayo, strokeMain, lw, selectedOh, ohDash, mainRgb)
+            strokeStripEdge(bx, by, bxo, byo, strokeMain, lw, selectedOh, ohDash, mainRgb)
+            strokeStripEdge(axo, ayo, bxo, byo, strokeMain, lw * 1.08, selectedOh, ohDash, mainRgb)
+          } else {
+            const [ax, ay] = ln.a
+            const [bx, by] = ln.b
+            strokeStripEdge(
+              ox + ax * s,
+              oy + ay * s,
+              ox + bx * s,
+              oy + by * s,
+              strokeMain,
+              selectedOh ? 5 : 4,
+              selectedOh,
+              ohDash,
+              mainRgb,
+            )
+          }
+
+          if (tool === 'edit' && selectedOh) {
+            for (const p of [ln.a, ln.b]) {
+              ctx.fillStyle = '#FF9F0F'
+              ctx.strokeStyle = '#fff'
+              ctx.lineWidth = 1
+              ctx.beginPath()
+              ctx.arc(ox + p[0] * s, oy + p[1] * s, HANDLE_R, 0, Math.PI * 2)
+              ctx.fill()
+              ctx.stroke()
+            }
+          }
+        })
+        for (const ri of roofIndicesWithOh) {
+          const mm = miterByRoofAndVertex.get(ri)
+          const polyPts = rooms[ri]?.points
+          if (!mm || mm.size === 0 || !polyPts) continue
+          mm.forEach((M, vi) => {
+            const C = polyPts[vi]
+            if (!C) return
+            const cx = ox + C[0] * s
+            const cy = oy + C[1] * s
+            const mx = ox + M[0] * s
+            const my = oy + M[1] * s
+            ctx.lineCap = 'round'
+            ctx.setLineDash(miterCutDash)
+            ctx.strokeStyle = `rgba(255, 252, 248, ${0.88 * ohStrokeMul})`
+            ctx.lineWidth = 2.6
+            ctx.shadowBlur = 0
+            ctx.beginPath()
+            ctx.moveTo(cx, cy)
+            ctx.lineTo(mx, my)
+            ctx.stroke()
+            ctx.setLineDash([])
+          })
+        }
+      }
+      if (roomsAddMode === 'roof_overhang_line' && roofOhDraft?.length === 1 && roofOhPreviewEnd) {
+        const p0 = roofOhDraft[0]
+        const previewDraft = roofOhPreviewEnd
+        const previewMpp = estimateMetersPerPixelFromRoofs(rooms, imageWidth, imageHeight)
+        const previewPoly = roofOhRoofIdx != null ? rooms[roofOhRoofIdx]?.points : null
+        const previewStrip =
+          previewPoly && previewPoly.length >= 3
+            ? computeOverhangStrip(previewPoly, p0, previewDraft, 40, previewMpp)
+            : null
+
+        const previewDash = [8, 6]
+        const strokePrev = (x1: number, y1: number, x2: number, y2: number, w: number, glow: boolean) => {
+          ctx.strokeStyle = 'rgba(74, 222, 128, 1)'
+          ctx.lineWidth = w
+          ctx.lineCap = 'round'
+          ctx.setLineDash(previewDash)
+          if (glow) {
+            ctx.shadowColor = 'rgba(34, 197, 94, 0.75)'
+            ctx.shadowBlur = 14
+          } else {
+            ctx.shadowBlur = 0
+          }
+          ctx.beginPath()
+          ctx.moveTo(x1, y1)
+          ctx.lineTo(x2, y2)
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+        }
+
+        if (previewStrip) {
+          const { a, b, aOut, bOut } = previewStrip
+          const ax = ox + a[0] * s
+          const ay = oy + a[1] * s
+          const bx = ox + b[0] * s
+          const by = oy + b[1] * s
+          const axo = ox + aOut[0] * s
+          const ayo = oy + aOut[1] * s
+          const bxo = ox + bOut[0] * s
+          const byo = oy + bOut[1] * s
+          ctx.fillStyle = 'rgba(74, 222, 128, 0.12)'
+          ctx.beginPath()
+          ctx.moveTo(ax, ay)
+          ctx.lineTo(bx, by)
+          ctx.lineTo(bxo, byo)
+          ctx.lineTo(axo, ayo)
+          ctx.closePath()
+          ctx.fill()
+          strokePrev(ax, ay, bx, by, 4.5, false)
+          strokePrev(ax, ay, axo, ayo, 5.5, true)
+          strokePrev(bx, by, bxo, byo, 5.5, true)
+          strokePrev(axo, ayo, bxo, byo, 5.5, true)
+        } else {
+          const [px, py] = previewDraft
+          ctx.strokeStyle = 'rgba(74, 222, 128, 1)'
+          ctx.lineWidth = 6
+          ctx.lineCap = 'round'
+          ctx.shadowColor = 'rgba(34, 197, 94, 0.85)'
+          ctx.shadowBlur = 12
+          ctx.setLineDash([6, 5])
+          ctx.beginPath()
+          ctx.moveTo(ox + p0[0] * s, oy + p0[1] * s)
+          ctx.lineTo(ox + px * s, oy + py * s)
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.shadowBlur = 0
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)'
+          ctx.lineWidth = 2
+          ctx.setLineDash([6, 5])
+          ctx.beginPath()
+          ctx.moveTo(ox + p0[0] * s, oy + p0[1] * s)
+          ctx.lineTo(ox + px * s, oy + py * s)
+          ctx.stroke()
+          ctx.setLineDash([])
+        }
+      }
+      if (roomsAddMode === 'roof_overhang_line' && roofOhDraft?.length === 1) {
+        const p0 = roofOhDraft[0]
+        ctx.fillStyle = '#4ade80'
+        ctx.strokeStyle = '#fff'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(ox + p0[0] * s, oy + p0[1] * s, HANDLE_R + 2, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
       if (newPoints && newPoints.length > 0) {
         ctx.strokeStyle = '#FF9F0F'
         ctx.lineWidth = 2
@@ -1221,17 +1615,27 @@ export function DetectionsPolygonCanvas({
     stackedView,
     dragging,
     getBulkSelectionBounds,
+    roofOverhangLines,
+    roomsAddMode,
+    roofOhDraft,
+    roofOhPreviewEnd,
+    roofOhHoveredEdge,
+    roofOhSelectedLineIndex,
   ])
 
   useEffect(() => { draw() }, [draw])
 
-  type HitResult = {
-    kind: 'poly' | 'vertex' | 'edge'
-    index: number
-    vertexIndex?: number
-    edgeIndex?: number
-    layer?: 'room' | 'door'
-  }
+  type HitResult =
+    | {
+        kind: 'poly' | 'vertex' | 'edge'
+        index: number
+        vertexIndex?: number
+        edgeIndex?: number
+        layer?: 'room' | 'door'
+      }
+    | { kind: 'roof_overhang_line'; index: number }
+    | { kind: 'roof_oh_vertex'; lineIndex: number; vertexIndex: 0 | 1 }
+    | { kind: 'roof_oh_segment'; lineIndex: number }
 
   const hitTest = useCallback((cx: number, cy: number): HitResult | null => {
     if (!effective) return null
@@ -1241,6 +1645,85 @@ export function DetectionsPolygonCanvas({
     const hitR = HIT_R / effective.scale
     const edgeR = EDGE_HIT_R / effective.scale
     const doorVertexR = DOOR_VERTEX_HIT_R / effective.scale
+
+    if (tab === 'rooms' && tool === 'remove' && roofOverhangLines.length > 0) {
+      for (let i = roofOverhangLines.length - 1; i >= 0; i--) {
+        const ln = roofOverhangLines[i]
+        if (!ln) continue
+        if (distancePointToSegment(px, py, ln.a, ln.b) <= edgeR) {
+          return { kind: 'roof_overhang_line', index: i }
+        }
+      }
+    }
+
+    /** Cu Dachfläche selectată în Bearbeiten: colțuri și muchii ale poligonului înaintea Überhang (evită „furatul” hit-ului). */
+    if (tab === 'rooms' && tool === 'edit' && selectedIndex != null) {
+      const si = selectedIndex
+      if (si >= 0 && si < rooms.length) {
+        const pts = rooms[si]?.points
+        if (pts?.length) {
+          for (let vi = 0; vi < pts.length; vi++) {
+            if (dist(pts[vi]!, [px, py]) <= hitR) return { kind: 'vertex', index: si, vertexIndex: vi }
+          }
+          for (let ei = 0; ei < pts.length; ei++) {
+            const a = pts[ei]!
+            const b = pts[(ei + 1) % pts.length]!
+            if (distToSegment(px, py, a, b) <= edgeR) return { kind: 'edge', index: si, edgeIndex: ei }
+          }
+        }
+      }
+    }
+
+    if (tab === 'rooms' && tool === 'edit' && roofOverhangLines.length > 0) {
+      const selOh = roofOhSelectedLineIndex
+      const ohVertexR = (i: number) =>
+        selOh != null && i === selOh ? ROOF_OH_SELECTED_VERTEX_HIT_R / effective.scale : hitR
+
+      const tryOhVertices = (indices: number[]): HitResult | null => {
+        for (const i of indices) {
+          const ln = roofOverhangLines[i]
+          if (!ln) continue
+          const vr = ohVertexR(i)
+          if (dist(ln.a, [px, py]) <= vr) return { kind: 'roof_oh_vertex', lineIndex: i, vertexIndex: 0 }
+          if (dist(ln.b, [px, py]) <= vr) return { kind: 'roof_oh_vertex', lineIndex: i, vertexIndex: 1 }
+        }
+        return null
+      }
+
+      if (selOh != null && selOh >= 0 && selOh < roofOverhangLines.length) {
+        const vSel = tryOhVertices([selOh])
+        if (vSel) return vSel
+      }
+      const restIdx: number[] = []
+      for (let i = roofOverhangLines.length - 1; i >= 0; i--) {
+        if (selOh != null && i === selOh) continue
+        restIdx.push(i)
+      }
+      const vRest = tryOhVertices(restIdx)
+      if (vRest) return vRest
+
+      if (selOh != null && selOh >= 0 && selOh < roofOverhangLines.length) {
+        const ln0 = roofOverhangLines[selOh]
+        if (ln0 && distToSegment(px, py, ln0.a, ln0.b) <= edgeR) return { kind: 'roof_oh_segment', lineIndex: selOh }
+      }
+      for (let i = roofOverhangLines.length - 1; i >= 0; i--) {
+        if (selOh != null && i === selOh) continue
+        const ln = roofOverhangLines[i]
+        if (!ln) continue
+        if (distToSegment(px, py, ln.a, ln.b) <= edgeR) return { kind: 'roof_oh_segment', lineIndex: i }
+      }
+    }
+
+    /** Select: linia Überhang înaintea poligonului Dach (click pe muchie nu „cade” în interiorul suprafeței). */
+    if (tab === 'rooms' && tool === 'select' && roofOverhangLines.length > 0) {
+      for (let i = roofOverhangLines.length - 1; i >= 0; i--) {
+        const ln = roofOverhangLines[i]
+        if (!ln) continue
+        if (distancePointToSegment(px, py, ln.a, ln.b) <= edgeR) {
+          return { kind: 'roof_overhang_line', index: i }
+        }
+      }
+    }
 
     const hitPolyVerticesAndEdges = (polys: { points: Point[] }[], n: number) => {
       const hitAt = (i: number) => {
@@ -1341,6 +1824,8 @@ export function DetectionsPolygonCanvas({
     toImage,
     selectedIndex,
     interactiveRoomPolygonsInDoorsTab,
+    roofOverhangLines,
+    roofOhSelectedLineIndex,
   ])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -1355,6 +1840,62 @@ export function DetectionsPolygonCanvas({
     if (e.button !== 0) return
 
     const placePt = tool === 'add' ? toImageForPlacement(cx, cy) : pt
+
+    if (tool === 'remove' && hit?.kind === 'roof_overhang_line' && onRemoveRoofOverhangLine) {
+      onEditStart?.()
+      onRemoveRoofOverhangLine(hit.index)
+      return
+    }
+
+    if (tool === 'select' && tab === 'rooms' && hit?.kind === 'roof_overhang_line' && onRoofOverhangLineEditRequest) {
+      onEditStart?.()
+      onSelect(null)
+      onRoofOverhangLineEditRequest(hit.index)
+      return
+    }
+
+    if (tool === 'edit' && hit?.kind === 'roof_oh_vertex' && onRoofOverhangLinesChange) {
+      onEditStart?.()
+      onSelect(null)
+      setRoofOhSelectedLineIndex(hit.lineIndex)
+      ;(e.target as Element).setPointerCapture(e.pointerId)
+      setDragging({
+        kind: 'roof_oh_vertex',
+        lineIndex: hit.lineIndex,
+        vertexIndex: hit.vertexIndex,
+      })
+      return
+    }
+
+    if (tool === 'edit' && hit?.kind === 'roof_oh_segment') {
+      setRoofOhSelectedLineIndex(hit.lineIndex)
+      onSelect(null)
+      return
+    }
+
+    if (tool === 'add' && tab === 'rooms' && roomsAddMode === 'roof_overhang_line') {
+      if (!placePt || !effective || !onRoofOverhangLineComplete) return
+      const maxDist = EDGE_HIT_R / effective.scale
+      const snapped = snapToRoofEdges(
+        placePt[0],
+        placePt[1],
+        rooms,
+        maxDist,
+        roofOhRoofIdx,
+      )
+      if (!snapped) return
+      if (!roofOhDraft || roofOhDraft.length === 0) {
+        setRoofOhDraft([snapped.point])
+        setRoofOhRoofIdx(snapped.roofIndex)
+        return
+      }
+      if (roofOhRoofIdx == null || snapped.roofIndex !== roofOhRoofIdx) return
+      onRoofOverhangLineComplete(roofOhDraft[0], snapped.point, roofOhRoofIdx)
+      setRoofOhDraft(null)
+      setRoofOhRoofIdx(null)
+      setRoofOhPreviewEnd(null)
+      return
+    }
 
     if (tool === 'add' && (tab === 'rooms' || tab === 'demolition' || tab === 'zubau_bestand')) {
       if (!placePt) return
@@ -1515,7 +2056,14 @@ export function DetectionsPolygonCanvas({
           }
           const anchor = corners[(hitCorner + 2) % 4]
           const handleStart = corners[hitCorner]
-          setDragging({ kind: 'bulk_scale', roomInits, doorInits, anchor: [anchor[0], anchor[1]], handleStart: [handleStart[0], handleStart[1]] })
+          setDragging({
+            kind: 'bulk_scale',
+            roomInits,
+            doorInits,
+            anchor: [anchor[0], anchor[1]],
+            handleStart: [handleStart[0], handleStart[1]],
+            initRoofOhSnapshot: cloneRoofOverhangLines(roofOverhangLines),
+          })
           return
         }
         const inBounds =
@@ -1539,7 +2087,13 @@ export function DetectionsPolygonCanvas({
               if (bb) doorInits[idx] = [...bb] as [number, number, number, number]
             }
           }
-          setDragging({ kind: 'bulk', startImage: [pt[0], pt[1]], roomInits, doorInits })
+          setDragging({
+            kind: 'bulk',
+            startImage: [pt[0], pt[1]],
+            roomInits,
+            doorInits,
+            initRoofOhSnapshot: cloneRoofOverhangLines(roofOverhangLines),
+          })
           return
         }
         if (!e.shiftKey) {
@@ -1580,7 +2134,13 @@ export function DetectionsPolygonCanvas({
               if (bb) doorInits[idx] = [...bb] as [number, number, number, number]
             }
           }
-          setDragging({ kind: 'bulk', startImage: [pt[0], pt[1]], roomInits, doorInits })
+          setDragging({
+            kind: 'bulk',
+            startImage: [pt[0], pt[1]],
+            roomInits,
+            doorInits,
+            initRoofOhSnapshot: cloneRoofOverhangLines(roofOverhangLines),
+          })
           return
         }
         if (!e.shiftKey) return
@@ -1614,11 +2174,18 @@ export function DetectionsPolygonCanvas({
         return
       }
       if ((tool === 'select' || tool === 'edit') && pt) {
+        if (tab === 'rooms') setRoofOhSelectedLineIndex(null)
         onSelect(hit.index)
         onEditStart?.()
         ;(e.target as Element).setPointerCapture(e.pointerId)
         if (tab === 'rooms' && hit.index < rooms.length)
-          setDragging({ kind: 'poly', polyIndex: hit.index, startImage: [pt[0], pt[1]], initPoints: rooms[hit.index].points.map((p) => [...p]) })
+          setDragging({
+            kind: 'poly',
+            polyIndex: hit.index,
+            startImage: [pt[0], pt[1]],
+            initPoints: rooms[hit.index].points.map((p) => [...p]),
+            initRoofOhSnapshot: cloneRoofOverhangLines(roofOverhangLines),
+          })
         else if (tab === 'demolition' && hit.index < demolitionPolys.length)
           setDragging({
             kind: 'poly',
@@ -1679,6 +2246,14 @@ export function DetectionsPolygonCanvas({
     stairOpeningRects,
     wallLineDraft,
     bulkSelectedKeys,
+    roomsAddMode,
+    onRoofOverhangLineComplete,
+    onRoofOverhangLineEditRequest,
+    roofOhDraft,
+    roofOhRoofIdx,
+    onRemoveRoofOverhangLine,
+    onRoofOverhangLinesChange,
+    roofOverhangLines,
   ])
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -1742,6 +2317,23 @@ export function DetectionsPolygonCanvas({
       return
     }
 
+    if (tool === 'add' && tab === 'rooms' && roomsAddMode === 'roof_overhang_line') {
+      const preview = toImageForPlacement(cx, cy)
+      if (preview && effective) {
+        const maxDist = EDGE_HIT_R / effective.scale
+        const snapped = snapToRoofEdges(preview[0], preview[1], roomsRef.current, maxDist, roofOhRoofIdx)
+        setRoofOhPreviewEnd(roofOhDraft?.length === 1 ? snapped?.point ?? null : null)
+        if (snapped) setRoofOhHoveredEdge({ roofIndex: snapped.roofIndex, edgeIndex: snapped.edgeIndex })
+        else setRoofOhHoveredEdge(null)
+      } else {
+        setRoofOhPreviewEnd(null)
+        setRoofOhHoveredEdge(null)
+      }
+    } else {
+      setRoofOhPreviewEnd(null)
+      setRoofOhHoveredEdge(null)
+    }
+
     if (tool === 'add' && tab === 'zubau_walls' && wallLineDraft?.length === 1) {
       const preview = toImageForPlacement(cx, cy)
       setPreviewEndPoint(preview)
@@ -1763,9 +2355,28 @@ export function DetectionsPolygonCanvas({
     }
 
     if (dragging && pt) {
+      if (dragging.kind === 'roof_oh_vertex' && tab === 'rooms' && onRoofOverhangLinesChange) {
+        const { lineIndex, vertexIndex } = dragging
+        const lines = roofOhLinesRef.current
+        const ln = lines[lineIndex]
+        if (ln && effective) {
+          const maxDist = EDGE_HIT_R / effective.scale
+          const snapped = snapToRoofEdges(pt[0], pt[1], roomsRef.current, maxDist, ln.roofIndex)
+          if (snapped) {
+            const newPt = snapped.point
+            const next = lines.map((l, i) => {
+              if (i !== lineIndex) return l
+              return vertexIndex === 0 ? { ...l, a: newPt } : { ...l, b: newPt }
+            })
+            onRoofOverhangLinesChange(next)
+          }
+        }
+        return
+      }
       if (dragging.kind === 'vertex') {
         const { polyIndex, vertexIndex } = dragging
         if (tab === 'rooms' && polyIndex < roomsRef.current.length) {
+          const beforePts = roomsRef.current[polyIndex]?.points?.map((p) => [p[0], p[1]] as Point)
           const next = roomsRef.current.map((r, i) => {
             if (i !== polyIndex) return r
             const pts = r.points.map((p, vi) =>
@@ -1776,6 +2387,22 @@ export function DetectionsPolygonCanvas({
             return { ...r, points: pts }
           })
           onRoomsChange(next)
+          const afterPts = next[polyIndex]?.points
+          if (
+            onRoofOverhangLinesChange &&
+            beforePts &&
+            afterPts &&
+            roofOhLinesRef.current.some((l) => l.roofIndex === polyIndex)
+          ) {
+            onRoofOverhangLinesChange(
+              transformRoofOverhangLinesWithPolygon(
+                roofOhLinesRef.current,
+                polyIndex,
+                beforePts,
+                afterPts,
+              ),
+            )
+          }
         } else if (tab === 'demolition' && polyIndex < demolitionRef.current.length) {
           const next = demolitionRef.current.map((d, i) => {
             if (i !== polyIndex) return d
@@ -1843,6 +2470,7 @@ export function DetectionsPolygonCanvas({
         const roomOrDemo = src[polyIndex]
         if (!roomOrDemo?.points) return
         const pts = roomOrDemo.points
+        const beforePts = pts.map((p) => [p[0], p[1]] as Point)
         const j = (edgeIndex + 1) % pts.length
         const nextPts = pts.map((p, vi) => {
           if (vi === edgeIndex) return newV0
@@ -1855,15 +2483,31 @@ export function DetectionsPolygonCanvas({
           onZubauBestandPolysChange(zubauBestandRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
         } else {
           onRoomsChange(roomsRef.current.map((r, i) => (i !== polyIndex ? r : { ...r, points: nextPts })))
+          if (
+            onRoofOverhangLinesChange &&
+            roofOhLinesRef.current.some((l) => l.roofIndex === polyIndex)
+          ) {
+            onRoofOverhangLinesChange(
+              transformRoofOverhangLinesWithPolygon(
+                roofOhLinesRef.current,
+                polyIndex,
+                beforePts,
+                nextPts,
+              ),
+            )
+          }
         }
       } else if (dragging.kind === 'poly') {
-        const { polyIndex, startImage, initPoints, initBbox } = dragging
+        const { polyIndex, startImage, initPoints, initBbox, initRoofOhSnapshot } = dragging
         const dx = pt[0] - startImage[0]
         const dy = pt[1] - startImage[1]
         if (tab === 'rooms' && initPoints && polyIndex < roomsRef.current.length) {
           const nextPts = initPoints.map((p) => [Math.max(0, Math.min(imageWidth, p[0] + dx)), Math.max(0, Math.min(imageHeight, p[1] + dy))] as Point)
           const next = roomsRef.current.map((r, i) => i !== polyIndex ? r : { ...r, points: nextPts })
           onRoomsChange(next)
+          if (onRoofOverhangLinesChange && initRoofOhSnapshot) {
+            onRoofOverhangLinesChange(translateRoofOverhangLinesFromSnapshot(initRoofOhSnapshot, polyIndex, dx, dy))
+          }
         } else if (tab === 'demolition' && initPoints && polyIndex < demolitionRef.current.length) {
           const nextPts = initPoints.map((p) => [Math.max(0, Math.min(imageWidth, p[0] + dx)), Math.max(0, Math.min(imageHeight, p[1] + dy))] as Point)
           onDemolitionPolysChange(demolitionRef.current.map((d, i) => (i !== polyIndex ? d : { ...d, points: nextPts })))
@@ -1937,6 +2581,18 @@ export function DetectionsPolygonCanvas({
         })
         onRoomsChange(nextRooms)
         onDoorsChange(nextDoors)
+        if (onRoofOverhangLinesChange && dragging.initRoofOhSnapshot) {
+          const roomSet = new Set(
+            Object.keys(dragging.roomInits)
+              .map((k) => Number(k))
+              .filter((k) => Number.isFinite(k)),
+          )
+          if (roomSet.size > 0) {
+            onRoofOverhangLinesChange(
+              translateRoofOverhangLinesForRoofs(dragging.initRoofOhSnapshot, roomSet, dx, dy),
+            )
+          }
+        }
       } else if (dragging.kind === 'bulk_scale' && pt) {
         const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
         const minScale = 0.05
@@ -1976,6 +2632,26 @@ export function DetectionsPolygonCanvas({
         })
         onRoomsChange(nextRooms)
         onDoorsChange(nextDoors)
+        if (onRoofOverhangLinesChange && dragging.initRoofOhSnapshot) {
+          const roomSet = new Set(
+            Object.keys(dragging.roomInits)
+              .map((k) => Number(k))
+              .filter((k) => Number.isFinite(k)),
+          )
+          if (roomSet.size > 0) {
+            onRoofOverhangLinesChange(
+              affineRoofOverhangLinesForRoofs(
+                dragging.initRoofOhSnapshot,
+                roomSet,
+                [ax, ay],
+                sx,
+                sy,
+                imageWidth,
+                imageHeight,
+              ),
+            )
+          }
+        }
       } else if (dragging.kind === 'bulk_marquee' && pt) {
         setDragging({
           ...dragging,
@@ -1984,7 +2660,38 @@ export function DetectionsPolygonCanvas({
         })
       }
     }
-  }, [panning, panStart, dragging, effective, tool, tab, newPoints, wallLineDraft, imageWidth, imageHeight, toImage, toImageForPlacement, hitTest, onDoorHover, onRoomsChange, onDoorsChange, onDemolitionPolysChange, onZubauBestandPolysChange, onZubauWallLinesChange, onStairOpeningRectsChange, onEditStart, stackedView, onStackedViewChange, bulkSelectedKeys.length, getBulkSelectionBounds, bulkResizeHoverCorner])
+  }, [
+    panning,
+    panStart,
+    dragging,
+    effective,
+    tool,
+    tab,
+    newPoints,
+    wallLineDraft,
+    imageWidth,
+    imageHeight,
+    toImage,
+    toImageForPlacement,
+    hitTest,
+    onDoorHover,
+    onRoomsChange,
+    onDoorsChange,
+    onDemolitionPolysChange,
+    onZubauBestandPolysChange,
+    onZubauWallLinesChange,
+    onStairOpeningRectsChange,
+    onEditStart,
+    stackedView,
+    onStackedViewChange,
+    bulkSelectedKeys.length,
+    getBulkSelectionBounds,
+    bulkResizeHoverCorner,
+    roomsAddMode,
+    roofOhDraft,
+    roofOhRoofIdx,
+    onRoofOverhangLinesChange,
+  ])
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     const pendingTap = doorTapPendingRef.current

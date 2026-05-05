@@ -38,5 +38,5 @@ export function roofTypeLabelDe(id: RoofTypeId): string {
 /** Default pitch (°) for sloped roofs when user picks a non-flat type or opens the new-roof dialog. */
 export const DEFAULT_ROOF_ANGLE = 16
 export const DEFAULT_ROOF_TYPE: RoofTypeId = '2_w'
-/** Default overhang in metres (40 cm in roof editor UI), per surface. */
-export const DEFAULT_ROOF_OVERHANG_M = 0.4
+/** Polygon-level overhang is deprecated (Überhang-Linien); stored value stays 0 for compatibility. */
+export const DEFAULT_ROOF_OVERHANG_M = 0

@@ -166,7 +166,9 @@ export const formSteps: Step[] = [
 
 ];
 
-/** Flow scurt pentru Dachstuhl: dateGenerale → client → projektdaten → Dämmung & Dachdeckung → upload */
+const structuraCladiriiStepFromForm = formSteps.find((s) => s.key === 'structuraCladirii') as Step;
+
+/** Flow Dachstuhl: dateGenerale → client → projektdaten → Gebäudestruktur → Dämmung & Dachdeckung → upload */
 export const formStepsDachstuhl: Step[] = [
   {
     key: 'dateGenerale',
@@ -194,6 +196,7 @@ export const formStepsDachstuhl: Step[] = [
       { type: 'select', name: 'deckenInnenausbau', label: 'Decken-Innenausbau', options: ['Standard', 'Premium', 'Exklusiv'], tag: 'decke_innenausbau' },
     ],
   },
+  structuraCladiriiStepFromForm,
   {
     key: 'daemmungDachdeckung',
     label: 'Dämmung & Dachdeckung',

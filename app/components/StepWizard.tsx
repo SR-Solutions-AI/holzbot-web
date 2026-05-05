@@ -365,6 +365,7 @@ function stripPriceHintFromLabel(label: string): string {
 }
 function tFieldLabel(stepKey: string, fieldName: string, fallback: string | undefined) {
   if (fieldName === 'raumhoeheCm') return 'Durchschnittliche Raumhöhe im Haus'
+  if (fieldName === 'erdgeschossRaumhoeheCm') return 'Raumhöhe Erdgeschoss'
   if (fieldName === 'tuerhoeheCm') return 'Türhöhe'
   const fromJson = typeof fallback === 'string' && fallback.trim()
   if (fromJson) return stripPriceHintFromLabel(fallback)
@@ -398,7 +399,21 @@ const STEP_FIELD_PREFIXES: Record<string, string[]> = {
 
 const STEP_FIELD_NAMES: Record<string, string[]> = {
   projektdaten: ['projektumfang', 'nutzungDachraum', 'deckenInnenausbau'],
-  structuraCladirii: ['tipFundatieBeci', 'raumhoeheCm', 'balkonBoden', 'listaEtaje', 'etajTipErdgeschoss', 'groundFloorKind', 'pilons', 'treppeTyp', 'floorsNumber'],
+  structuraCladirii: [
+    'tipFundatieBeci',
+    'raumhoeheCm',
+    'erdgeschossRaumhoeheCm',
+    'roomHeightsCm',
+    'balkonBoden',
+    'listaEtaje',
+    'etajTipErdgeschoss',
+    'groundFloorKind',
+    'pilons',
+    'treppeTyp',
+    'floorsNumber',
+    'tuerhoeheCm',
+    'dachfensterImDach',
+  ],
 }
 
 function extractStepData(stepKey: string, source: Record<string, any>, fields: Field[] = []): Record<string, any> {
@@ -443,10 +458,22 @@ function validateClient(_form: Record<string, any>): Errors {
   return {}
 }
 
-function validateGeneric(stepKey: string, fields: Field[], form: Record<string, any>, drafts?: Record<string, any>): Errors {
+/** Alle Rohbau-Angebote: Raumhöhe je Geschoss inkl. Erdgeschoss (nicht nur ein Mittelwert). */
+function usesPerFloorRoomHeights(_wizardPackage: string): boolean {
+  return true
+}
+
+function validateGeneric(
+  stepKey: string,
+  fields: Field[],
+  form: Record<string, any>,
+  drafts?: Record<string, any>,
+  ctx?: { measurementsOnlyFlow?: boolean },
+): Errors {
   const e: Errors = {}
   const sistemConstructivData = stepKey === 'sistemConstructiv' ? form : (drafts?.sistemConstructiv || {})
   const nivelOferta = sistemConstructivData.nivelOferta || ''
+  const measurementsOnlyFlow = ctx?.measurementsOnlyFlow === true
 
   const shouldHideField = (fieldName: string): boolean => {
     const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
@@ -455,7 +482,14 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
       // Wird in validateProjektdatenStep geprüft (nur sichtbar mit Optionen).
       return true
     }
+    if (stepKey === 'structuraCladirii' && fieldName === 'treppeTyp' && measurementsOnlyFlow) return true
     if (stepKey === 'structuraCladirii' && fieldName === 'treppeTyp' && !hasFloorAboveGround) return true
+    if (
+      stepKey === 'structuraCladirii' &&
+      fieldName === 'raumhoeheCm' &&
+      usesPerFloorRoomHeights(String((form as any).wizardPackage ?? ''))
+    )
+      return true
     if (stepKey === 'structuraCladirii' && fieldName === 'aufzugTyp' && !asBool(form.aufzugVorhanden)) return true
     if (stepKey === 'structuraCladirii' && fieldName === 'pilonType' && !asBool(form.piloni)) return true
     if (stepKey === 'structuraCladirii' && fieldName === 'aufzugVorhanden') {
@@ -522,7 +556,12 @@ function validateGeneric(stepKey: string, fields: Field[], form: Record<string, 
               : 'Bitte markieren Sie mindestens ein neues Geschoss.'
       }
     }
-    if (wizardPackage === 'gewerbe_wohnbau') {
+    if (usesPerFloorRoomHeights(wizardPackage)) {
+      const egRaw = (form as any).erdgeschossRaumhoeheCm
+      const egEff = Number(egRaw !== undefined && egRaw !== '' ? egRaw : (form as any).raumhoeheCm)
+      if (!Number.isFinite(egEff) || egEff < 200 || egEff > 400) {
+        e.erdgeschossRaumhoeheCm = 'Bitte geben Sie die Raumhöhe für das Erdgeschoss an (200–400 cm).'
+      }
       const listaEtajeLocal = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
       const requestedHeights = Array.isArray((form as any).roomHeightsCm) ? (form as any).roomHeightsCm : []
       const tipFundatieBeci = String((form as any).tipFundatieBeci ?? '')
@@ -591,11 +630,17 @@ function validateProjektdatenStep(
   return e
 }
 
-function mergeStructuraGewerbeTreppe(form: Record<string, any>, base: Errors): Errors {
+function mergeStructuraGewerbeTreppe(
+  form: Record<string, any>,
+  base: Errors,
+  opts?: { skipStairs?: boolean },
+): Errors {
   const e = { ...base }
-  const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
-  const hasFloorAboveGround = listaEtaje.some((x: string) => x !== 'parter')
-  if (hasFloorAboveGround && isEmptySelect(form.treppeTyp)) e.treppeTyp = SELECT_REQUIRED_MSG
+  if (!opts?.skipStairs) {
+    const listaEtaje = Array.isArray(form.listaEtaje) ? form.listaEtaje : []
+    const hasFloorAboveGround = listaEtaje.some((x: string) => x !== 'parter')
+    if (hasFloorAboveGround && isEmptySelect(form.treppeTyp)) e.treppeTyp = SELECT_REQUIRED_MSG
+  }
   const wp = String((form as any).wizardPackage ?? '').toLowerCase()
   if (wp === 'gewerbe_wohnbau') {
     if (form.aufzugVorhanden === true && isEmptySelect(form.aufzugTyp)) e.aufzugTyp = SELECT_REQUIRED_MSG
@@ -1121,8 +1166,10 @@ export default function StepWizard() {
   // 1b. Când user alege pachet (Dachstuhl vs Einfamilienhaus/Mengen), folosim flow-ul corespunzător
   useEffect(() => {
     if (measurementsOnlyFlow && selectedPackage === 'dachstuhl') {
+      const struct = (formStepsFromJson as any[]).find((s) => s.key === 'structuraCladirii')
       const uploadOnly = (formStepsDachstuhl as any[]).filter((s) => s.key === 'upload')
-      const steps = uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[])
+      const steps =
+        struct && uploadOnly.length ? [struct, ...uploadOnly] : uploadOnly.length ? uploadOnly : (formStepsDachstuhl as any[])
       setDynamicSteps(steps)
       applyInitialWizardIndexForSteps(steps)
     } else if (
@@ -1133,8 +1180,10 @@ export default function StepWizard() {
         selectedPackage === 'zubau' ||
         selectedPackage === 'zubau_aufstockung')
     ) {
+      const struct = (formStepsFromJson as any[]).find((s) => s.key === 'structuraCladirii')
       const uploadOnly = (formStepsFromJson as any[]).filter((s) => s.key === 'upload')
-      const steps = uploadOnly.length ? uploadOnly : (formStepsFromJson as any[])
+      const steps =
+        struct && uploadOnly.length ? [struct, ...uploadOnly] : uploadOnly.length ? uploadOnly : (formStepsFromJson as any[])
       setDynamicSteps(steps)
       applyInitialWizardIndexForSteps(steps)
     } else if (selectedPackage === 'dachstuhl') {
@@ -1895,6 +1944,7 @@ export default function StepWizard() {
       const defaultStructura = {
         tipFundatieBeci: 'Kein Keller (nur Bodenplatte)',
         raumhoeheCm: 270,
+        erdgeschossRaumhoeheCm: 270,
         balkonBoden: 'Holz',
       } as const
       const applyLoaded = (stepData: Record<string, any> | null | undefined) => {
@@ -1941,7 +1991,7 @@ export default function StepWizard() {
     } else {
       const defaultForStep =
         key === 'structuraCladirii'
-          ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', raumhoeheCm: 270, balkonBoden: 'Holz' }
+          ? { tipFundatieBeci: 'Kein Keller (nur Bodenplatte)', raumhoeheCm: 270, erdgeschossRaumhoeheCm: 270, balkonBoden: 'Holz' }
           : {}
       setForm(prev => loadIntoForm(prev, defaultForStep))
       scheduleFinishBootstrap(loadNonce)
@@ -2399,9 +2449,17 @@ export default function StepWizard() {
         String(form.wizardPackage ?? selectedPackage ?? '') || undefined,
       )
     }
-    const base = validateGeneric(step.key, step.fields, form, drafts)
+    const base = validateGeneric(step.key, step.fields, form, drafts, { measurementsOnlyFlow })
     if (step.key === 'structuraCladirii') {
-      return mergeStructuraGewerbeTreppe(form, base)
+      let merged = mergeStructuraGewerbeTreppe(form, base, { skipStairs: measurementsOnlyFlow })
+      if (measurementsOnlyFlow) {
+        const th = Number(form.tuerhoeheCm)
+        /** Mengenermittlung: auch kleine Nebeneingänge / Sondermaße (nicht nur Standard-Zargenmaße). */
+        if (!Number.isFinite(th) || th < 60 || th > 300) {
+          merged = { ...merged, tuerhoeheCm: 'Bitte geben Sie eine Türhöhe zwischen 60 und 300 cm ein.' }
+        }
+      }
+      return merged
     }
     return base
   }
@@ -3458,6 +3516,7 @@ export default function StepWizard() {
                 <BuildingStructureStep
                   displayCurrency={displayCurrency}
                   wizardPackage={effectiveWizardPackage || (selectedPackage ?? (activeRoofOnlyOffer ? 'dachstuhl' : 'einfamilienhaus'))}
+                  measurementsOnlyGebaude={measurementsOnlyFlow}
                   form={form}
                   setForm={(v) => {
                     ensureOffer().catch(() => {})
@@ -4776,7 +4835,7 @@ const STAIR_TYPE_OPTIONS = ['Standard', 'Holz', 'Beton', 'Metall', 'Sonder'] as 
 const LIFT_TYPE_OPTIONS = ['Hydraulikaufzug', 'Seilaufzug', 'Panoramaaufzug', 'Lastenaufzug'] as const
 const PILLAR_TYPE_OPTIONS = ['Stahlbeton', 'Stahl', 'Holz', 'Verbund'] as const
 
-function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR', wizardPackage }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency; wizardPackage?: string }) {
+function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set<string>(), optionValueToPriceKey = {}, customOptionsForm = {}, paramLabelOverrides = {}, preisdatenbankOptionsByTag = {}, displayCurrency = 'EUR', wizardPackage, measurementsOnlyGebaude = false }: { form: Record<string, any>; setForm: (v: Record<string, any> | ((prev: Record<string, any>) => Record<string, any>)) => void; errors: Errors; hiddenKeysForm?: Set<string>; optionValueToPriceKey?: Record<string, Record<string, string>>; customOptionsForm?: Record<string, Array<{ label: string; value: string; price_key?: string }>>; paramLabelOverrides?: Record<string, string>; preisdatenbankOptionsByTag?: Record<string, string[]>; displayCurrency?: DisplayCurrency; wizardPackage?: string; measurementsOnlyGebaude?: boolean }) {
   const [showAddFloorDropdown, setShowAddFloorDropdown] = useState(false)
   const addFloorBtnRef = useRef<HTMLButtonElement>(null)
   const [addFloorPos, setAddFloorPos] = useState<{ left: number; top: number; width: number }>({ left: 0, top: 0, width: 0 })
@@ -4792,6 +4851,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   })()
   const resolvedWizardPackage = String(wizardPackage ?? form.wizardPackage ?? '').toLowerCase()
   const isGewerbeWohnbauFlow = resolvedWizardPackage === 'gewerbe_wohnbau'
+  const usePerFloorRoomHeights = usesPerFloorRoomHeights(resolvedWizardPackage)
   const isAufstockungFlow = resolvedWizardPackage === 'aufstockung' || resolvedWizardPackage === 'zubau' || resolvedWizardPackage === 'zubau_aufstockung'
   const isLegacyZubauOnlyFlow = resolvedWizardPackage === 'zubau'
   const isUnifiedZubauAufstockungFlow = resolvedWizardPackage === 'zubau_aufstockung'
@@ -4806,12 +4866,30 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
   const hasBasement = tipFundatieBeci.includes('Keller') && !tipFundatieBeci.includes('Kein Keller')
   const hasBase = true
   const basementUse = isKellerMitAusbauChoice(tipFundatieBeci)
+  /** Ohne explizite Auswahl bleibt form.tipFundatieBeci leer → Validierung scheitert trotz angezeigtem Default. */
   useEffect(() => {
-    if (!tipFundatieBeciSelectOptions.includes(tipFundatieBeci)) {
-      setForm(prev => ({ ...prev, tipFundatieBeci: tipFundatieBeciSelectOptions[0] }))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when fixed option list changes; form used only for merge
-  }, [tipFundatieBeciSelectOptions.join('|'), tipFundatieBeci])
+    const first = tipFundatieBeciSelectOptions[0] ?? 'Kein Keller (nur Bodenplatte)'
+    setForm((prev) => {
+      const raw = prev.tipFundatieBeci
+      if (raw == null || String(raw).trim() === '') {
+        return { ...prev, tipFundatieBeci: first }
+      }
+      if (!(tipFundatieBeciSelectOptions as string[]).includes(String(raw))) {
+        return { ...prev, tipFundatieBeci: first }
+      }
+      return prev
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- nur wenn Optionsliste sich ändert neu einfangen
+  }, [tipFundatieBeciSelectOptions.join('|')])
+  useEffect(() => {
+    setForm((prev: Record<string, any>) => {
+      const rawEg = prev.erdgeschossRaumhoeheCm
+      if (rawEg !== undefined && rawEg !== '' && rawEg !== null) return prev
+      const rh = Number(prev.raumhoeheCm)
+      if (!Number.isFinite(rh)) return prev
+      return { ...prev, erdgeschossRaumhoeheCm: rh }
+    })
+  }, [setForm])
   const etajeIntermediare = listaEtaje.filter((e: string) => e === 'intermediar').length
   const hasFloorAboveGround = listaEtaje.some((e: string) => e !== 'parter')
   const stairOptsEffective = stairTypeOptions.length > 0 ? stairTypeOptions : Array.from(STAIR_TYPE_OPTIONS)
@@ -5012,13 +5090,13 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
     setForm(prev => ({
       ...prev,
       listaEtaje: nextLista,
-      ...(isGewerbeWohnbauFlow && shouldAddHeight
+      ...(usePerFloorRoomHeights && shouldAddHeight
         ? {
             roomHeightsCm: remapRoomHeights(
               listaEtaje,
               nextLista,
               Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [],
-              prev.raumhoeheCm,
+              prev.erdgeschossRaumhoeheCm ?? prev.raumhoeheCm,
               hasBasement,
               hasBasement,
             ),
@@ -5229,7 +5307,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
         </div>
 
       <div className="flex-1 min-w-0 relative z-10 space-y-4 !pb-0 !mb-0">
-        <label className={`flex flex-col gap-1.5 ${isGewerbeWohnbauFlow ? 'hidden' : ''}`} data-field="raumhoeheCm">
+        <label className={`flex flex-col gap-1.5 ${usePerFloorRoomHeights ? 'hidden' : ''}`} data-field="raumhoeheCm">
           <span className="wiz-label text-sun/90">
             {adaptCurrencyCopy(tFieldLabel('structuraCladirii', 'raumhoeheCm', undefined), displayCurrency)}
           </span>
@@ -5298,7 +5376,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
               value={tipFundatieBeciSelectOptions.includes(tipFundatieBeci) ? tipFundatieBeci : (tipFundatieBeciSelectOptions[0] ?? '')}
               onChange={(v) =>
                 setForm((prev) => {
-                  if (!isGewerbeWohnbauFlow) return { ...prev, tipFundatieBeci: v }
+                  if (!usePerFloorRoomHeights) return { ...prev, tipFundatieBeci: v }
                   const prevTip = String(prev.tipFundatieBeci ?? '')
                   const prevHasBasement = prevTip.includes('Keller') && !prevTip.includes('Kein Keller')
                   const nextHasBasement = String(v).includes('Keller') && !String(v).includes('Kein Keller')
@@ -5309,7 +5387,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                       listaEtaje,
                       listaEtaje,
                       Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [],
-                      prev.raumhoeheCm,
+                      prev.erdgeschossRaumhoeheCm ?? prev.raumhoeheCm,
                       prevHasBasement,
                       nextHasBasement,
                     ),
@@ -5323,7 +5401,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
           </div>
           {errors.tipFundatieBeci && <span className="text-xs text-orange-400">{errors.tipFundatieBeci}</span>}
         </label>
-        {isGewerbeWohnbauFlow && hasBasement && (
+        {usePerFloorRoomHeights && hasBasement && (
           <label className="flex flex-col gap-1" data-field="roomHeightsCmBasement">
             <span className="wiz-label text-sun/90">{adaptKellerLabel('Raumhöhe Keller')}</span>
             <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
@@ -5344,7 +5422,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                   setForm((prev: Record<string, any>) => {
                     const values = Array.isArray(prev.roomHeightsCm) ? [...prev.roomHeightsCm] : []
                     values[0] = safeVal
-                    return { ...prev, roomHeightsCm: values, raumhoeheCm: safeVal }
+                    return { ...prev, roomHeightsCm: values }
                   })
                 }}
               />
@@ -5352,6 +5430,40 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                 cm
               </span>
             </div>
+          </label>
+        )}
+
+        {usePerFloorRoomHeights && (
+          <label className="flex flex-col gap-1" data-field="erdgeschossRaumhoeheCm">
+            <span className="wiz-label text-sun/90">{adaptCurrencyCopy(tFieldLabel('structuraCladirii', 'erdgeschossRaumhoeheCm', undefined), displayCurrency)}</span>
+            <div className={errors.erdgeschossRaumhoeheCm ? 'ring-2 ring-orange-400/70 rounded-xl' : ''}>
+              <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
+                <input
+                  type="number"
+                  min={200}
+                  max={400}
+                  step={1}
+                  className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-12 text-[14px] font-normal text-black outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  value={(() => {
+                    const raw = Number(form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? 270)
+                    return String(Number.isFinite(raw) ? raw : 270)
+                  })()}
+                  onChange={(e) => {
+                    const nextVal = e.target.value === '' ? 270 : Number(e.target.value)
+                    const safeVal = Number.isFinite(nextVal) ? Math.max(200, Math.min(400, nextVal)) : 270
+                    setForm((prev: Record<string, any>) => ({
+                      ...prev,
+                      erdgeschossRaumhoeheCm: safeVal,
+                      raumhoeheCm: safeVal,
+                    }))
+                  }}
+                />
+                <span className="pointer-events-none absolute inset-y-0 right-0 flex min-w-10 items-center justify-center rounded-r-xl bg-[#E88E0C] px-2 text-[11px] font-medium tracking-wide text-white">
+                  cm
+                </span>
+              </div>
+            </div>
+            {errors.erdgeschossRaumhoeheCm && <span className="text-xs text-orange-400">{errors.erdgeschossRaumhoeheCm}</span>}
           </label>
         )}
 
@@ -5434,8 +5546,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                         setForm(prev => ({
                           ...prev,
                           listaEtaje: cutLista,
-                          ...(isGewerbeWohnbauFlow
-                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, cutLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                          ...(usePerFloorRoomHeights
+                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, cutLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.erdgeschossRaumhoeheCm ?? prev.raumhoeheCm, hasBasement, hasBasement) }
                             : {}),
                           ...(isAufstockungFlow
                             ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], cutLista) }
@@ -5446,8 +5558,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                         setForm(prev => ({
                           ...prev,
                           listaEtaje: newLista,
-                          ...(isGewerbeWohnbauFlow
-                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, newLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                          ...(usePerFloorRoomHeights
+                            ? { roomHeightsCm: remapRoomHeights(listaEtaje, newLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.erdgeschossRaumhoeheCm ?? prev.raumhoeheCm, hasBasement, hasBasement) }
                             : {}),
                           ...(isAufstockungFlow
                             ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], newLista) }
@@ -5466,7 +5578,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                     placeholder="Wählen Sie eine Option"
                   />
                 </div>
-                {isGewerbeWohnbauFlow && isLivableFloorType(etaj) && (
+                {usePerFloorRoomHeights && isLivableFloorType(etaj) && (
                   <div className="w-[120px]">
                     <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
                       <input
@@ -5481,7 +5593,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                             .filter((f: string) => isLivableFloorType(f))
                             .length - 1 + (hasBasement ? 1 : 0)
                           const values = Array.isArray(form.roomHeightsCm) ? form.roomHeightsCm : []
-                          const raw = Number(values[livableIdx] ?? form.raumhoeheCm ?? 270)
+                          const raw = Number(values[livableIdx] ?? form.erdgeschossRaumhoeheCm ?? form.raumhoeheCm ?? 270)
                           return String(Number.isFinite(raw) ? raw : 270)
                         })()}
                         onChange={(e) => {
@@ -5494,7 +5606,7 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                               .filter((f: string) => isLivableFloorType(f))
                               .length - 1 + (hasBasement ? 1 : 0)
                             values[livableIdx] = safeVal
-                            return { ...prev, roomHeightsCm: values, raumhoeheCm: safeVal }
+                            return { ...prev, roomHeightsCm: values }
                           })
                         }}
                       />
@@ -5512,8 +5624,8 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
                       return {
                         ...prev,
                         listaEtaje: nextLista,
-                        ...(isGewerbeWohnbauFlow
-                          ? { roomHeightsCm: remapRoomHeights(listaEtaje, nextLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.raumhoeheCm, hasBasement, hasBasement) }
+                        ...(usePerFloorRoomHeights
+                          ? { roomHeightsCm: remapRoomHeights(listaEtaje, nextLista, Array.isArray(prev.roomHeightsCm) ? prev.roomHeightsCm : [], prev.erdgeschossRaumhoeheCm ?? prev.raumhoeheCm, hasBasement, hasBasement) }
                           : {}),
                         ...(isAufstockungFlow
                           ? { aufstockungFloorKinds: normalizeAufstockungFloorKinds(Array.isArray(prev.aufstockungFloorKinds) ? prev.aufstockungFloorKinds : [], nextLista) }
@@ -5635,7 +5747,59 @@ function BuildingStructureStep({ form, setForm, errors, hiddenKeysForm = new Set
           )}
         </div>
 
-        {hasFloorAboveGround && (
+        {measurementsOnlyGebaude ? (
+          <div className="space-y-3 pt-2 border-t border-[#e3c7ab22]">
+            <label className="flex flex-col gap-1" data-field="tuerhoeheCm">
+              <span className="wiz-label text-sun/90">
+                {adaptCurrencyCopy(tFieldLabel('ferestreUsi', 'tuerhoeheCm', 'Türhöhe'), displayCurrency)}
+              </span>
+              <div className={errors.tuerhoeheCm ? 'ring-2 ring-orange-400/70 rounded-xl' : ''}>
+                <div className="relative h-9 rounded-xl border border-white/25 bg-[#ececec] transition-colors focus-within:border-[#FFB347]/70">
+                  <input
+                    type="number"
+                    min={60}
+                    max={300}
+                    step={1}
+                    className="wiz-input h-9 w-full rounded-xl border-0 bg-transparent px-3 pr-20 text-[15px] font-normal text-black outline-none focus:ring-0 placeholder:text-black/40 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    value={form.tuerhoeheCm != null && form.tuerhoeheCm !== '' ? String(form.tuerhoeheCm) : ''}
+                    placeholder="z. B. 201"
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      setForm((prev: Record<string, any>) => ({
+                        ...prev,
+                        tuerhoeheCm: raw === '' ? '' : Number(raw),
+                      }))
+                    }}
+                  />
+                  <div className="absolute right-0 top-0 bottom-0 flex items-stretch overflow-hidden rounded-r-xl border-l border-[#FF9F0F]/45">
+                    <span className="pointer-events-none flex h-full min-w-10 items-center justify-center bg-[#E88E0C] px-2 text-[11px] font-medium tracking-wide text-white">
+                      cm
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {errors.tuerhoeheCm && <span className="text-xs text-orange-400">{errors.tuerhoeheCm}</span>}
+            </label>
+            <label className="flex items-center gap-2" data-field="dachfensterImDach">
+              <input
+                type="checkbox"
+                className="sun-checkbox"
+                checked={form.dachfensterImDach === true}
+                onChange={(e) =>
+                  setForm((prev: Record<string, any>) => ({
+                    ...prev,
+                    dachfensterImDach: e.target.checked,
+                    ...(e.target.checked ? {} : { dachfensterTyp: '' }),
+                  }))
+                }
+              />
+              <span className="text-sm font-medium text-sun/90">Dachfenster im Plan bearbeiten</span>
+            </label>
+            <p className="text-[11px] text-sand/55">Ohne Typauswahl – steuert nur, ob das Dachfenster-Werkzeug im Editor erscheint.</p>
+          </div>
+        ) : null}
+
+        {!measurementsOnlyGebaude && hasFloorAboveGround && (
           <label className="flex flex-col gap-1" data-field="treppeTyp">
             <span className="wiz-label text-sun/90">
               {adaptCurrencyCopy('Treppentyp', displayCurrency)}
