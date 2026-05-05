@@ -563,9 +563,6 @@ export function DetectionsReviewEditor({
   const [newPolygonPoints, setNewPolygonPoints] = useState<Point[] | null>(null)
   const [newDoorType, setNewDoorType] = useState<DoorType>('door')
   const [roofAddSubtool, setRoofAddSubtool] = useState<'surface' | 'overhang'>('surface')
-  useEffect(() => {
-    if (roofAddSubtool === 'overhang') setRoofAddSubtool('surface')
-  }, [roofAddSubtool])
   const [editorConstraints, setEditorConstraints] = useState<EditorConstraints>(() => mergeEditorConstraints(undefined))
   const [pendingNewRoomPoints, setPendingNewRoomPoints] = useState<Point[] | null>(null)
   const [pendingDemolitionPoints, setPendingDemolitionPoints] = useState<Point[] | null>(null)
@@ -2392,7 +2389,13 @@ export function DetectionsReviewEditor({
       : (roofPreviewByPlan[idx] ?? [])
   }, [planIndexClamped, activeTab, stackRoofOverPhase1, roofLiveOverlayByPlan, roofPreviewByPlan])
 
-  /** Mind. eine Dachfläche für Kanten-Überhang (Live-Overlay aus RoofReviewEditor oder Preview aus API). */
+  const roofSurfaceCountForOhToolbar = useMemo(() => {
+    const idx = planIndexClamped
+    const liveN = roofLiveOverlayByPlan[idx]?.length ?? 0
+    const prevN = roofPreviewByPlan[idx]?.length ?? 0
+    return Math.max(liveN, prevN)
+  }, [planIndexClamped, roofLiveOverlayByPlan, roofPreviewByPlan])
+
   const showWerkzeuge = !loading && plansData.length > 0 && !existingFloorReadOnly
 
   const reviewFooterActions = (
@@ -2910,6 +2913,19 @@ export function DetectionsReviewEditor({
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${roofAddSubtool === 'surface' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
           >
             Dachfläche
+          </button>
+          <button
+            type="button"
+            disabled={roofSurfaceCountForOhToolbar === 0}
+            title={
+              roofSurfaceCountForOhToolbar === 0
+                ? 'Zuerst mindestens eine Dachfläche anlegen'
+                : 'Überhang-Linie auf einer Kante'
+            }
+            onClick={() => setRoofAddSubtool('overhang')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${roofAddSubtool === 'overhang' ? 'bg-[#FF9F0F]/25 text-[#FF9F0F] border border-[#FF9F0F]/50' : 'text-sand/70 border border-white/10 hover:bg-white/5'}`}
+          >
+            Überhang
           </button>
         </div>
       )}

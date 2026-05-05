@@ -156,6 +156,118 @@ function cardSubtitle(cardTitle: string, currency: DisplayCurrency, _rawSubtitle
   return adaptCurrencyCopy(raw, currency)
 }
 
+const CARD_IMAGE_FILE_BY_TITLE: Record<string, string> = {
+  'Baustellenbedingungen': 'baustellenbedingungen.png',
+  'Baustelleneinrichtung': 'baustellenbedingungen.png',
+  'Profitmarge': 'profitmarge.png',
+  'Fundament': 'fundament.png',
+  'Pfahlgründung': 'pfahlgrundung.png',
+  'Bodenaufbau': 'bodenaufbau.png',
+  'Bodenbelag': 'bodenbelag.png',
+  'Deckenaufbau': 'deckenaufbau.png',
+  'Dämmung': 'dammung.png',
+  'Unterdach': 'unterdach.png',
+  'Dachstuhl-Typ': 'dachstuhl-typ.png',
+  'Sichtdachstuhl': 'sichtdachstuhl.png',
+  'Dachdeckung': 'dachdeckung.png',
+  'Dachfenster': 'dachfenster.png',
+  'Glasflächen': 'glasflachen.png',
+  'Türtyp Innentüren': 'innenturen.png',
+  'Türtyp Außentüren': 'aussenturen.png',
+  'Garagentor gewünscht': 'garagentor.png',
+  'Treppe': 'treppe.png',
+  'Aufzug': 'aufzug.png',
+  'Säulen': 'saulen.png',
+  'Innenausbau Innenwände': 'innenausbauinenwande.png',
+  'Innenausbau Außenwände': 'innenausbauaussenwande.png',
+  'Fassade': 'fassade.png',
+  'Heizungssystem': 'heizungssystem.png',
+  'Haustechnik (Basis)': 'haustechnik.png',
+  'Klempnerarbeiten': 'klempnerarbeiten.png',
+}
+
+function toCardImageSlug(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function toAsciiCardImageSlug(title: string): string {
+  return title
+    .trim()
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function cardImageCandidates(cardTitle: string): string[] {
+  const title = displayPriceCardTitle(cardTitle)
+  const explicitFile = CARD_IMAGE_FILE_BY_TITLE[title]
+  const slugGerman = toCardImageSlug(title)
+  const slugAscii = toAsciiCardImageSlug(title)
+  const bases = Array.from(new Set([slugGerman, slugAscii]))
+  const candidates: string[] = []
+  if (explicitFile) candidates.push(`/cards/${explicitFile}`)
+  for (const base of bases) {
+    candidates.push(`/cards/${base}.png`)
+    candidates.push(`/cards/${base}.webp`)
+    candidates.push(`/cards/${base}.jpg`)
+    candidates.push(`/cards/${base}.jpeg`)
+    candidates.push(`/cards/${base.replace(/-/g, '_')}.png`)
+    candidates.push(`/cards/${base.replace(/-/g, '_')}.webp`)
+    candidates.push(`/cards/${base.replace(/-/g, '_')}.jpg`)
+    candidates.push(`/cards/${base.replace(/-/g, '_')}.jpeg`)
+  }
+  return Array.from(new Set(candidates))
+}
+
+function isCompactCardImage(cardTitle: string): boolean {
+  const title = displayPriceCardTitle(cardTitle)
+  return (
+    title === 'Baustellenbedingungen' ||
+    title === 'Baustelleneinrichtung' ||
+    title === 'Baustellenzufahrt' ||
+    title === 'Profitmarge'
+  )
+}
+
+function cardImageClassNameForLayout(cardTitle: string, isWideLayout: boolean): string {
+  if (isCompactCardImage(cardTitle)) {
+    return 'block w-auto max-w-full h-auto max-h-24 mx-auto object-contain'
+  }
+  if (isWideLayout) {
+    return 'block w-auto max-w-full h-auto max-h-56 mx-auto object-contain'
+  }
+  return 'block w-full h-auto object-contain'
+}
+
+function cardImageWrapperClassName(_cardTitle: string): string {
+  return 'bg-white p-2'
+}
+
+function handleCardImageError(e: React.SyntheticEvent<HTMLImageElement>) {
+  const img = e.currentTarget
+  const fallbackRaw = img.dataset.fallbacks || ''
+  if (!fallbackRaw) return
+  const fallbacks = fallbackRaw.split('||').filter(Boolean)
+  const current = Number(img.dataset.fallbackIndex || '0')
+  const next = current + 1
+  if (next >= fallbacks.length) return
+  img.dataset.fallbackIndex = String(next)
+  img.src = fallbacks[next]
+}
+
 /** Subtitlu alb pentru fiecare pas de formular (stepKey). */
 const STEP_SUBTITLES: Record<string, string> = {
   sistemConstructiv: 'Baustellenbedingungen und Profitmarge',
@@ -819,6 +931,16 @@ export default function PreisdatenbankPage() {
                           key={sub.title}
                           className="rounded-xl border border-white/10 bg-white/5 p-3 md:p-4 flex flex-col min-w-0 w-full"
                         >
+                          <div className={`-mt-2 mb-3 -mx-1 md:-mx-2 overflow-hidden rounded-lg ${cardImageWrapperClassName(sub.title)}`}>
+                            <img
+                              src={cardImageCandidates(sub.title)[0]}
+                              data-fallbacks={cardImageCandidates(sub.title).join('||')}
+                              data-fallback-index="0"
+                              onError={handleCardImageError}
+                              alt={`${displayPriceCardTitle(sub.title)} Vorschau`}
+                              className={cardImageClassNameForLayout(sub.title, false)}
+                            />
+                          </div>
                           <div className="border-b border-white/10 pb-2 mb-2">
                             <h3 className="text-sm font-semibold text-[#FF9F0F]">{displayPriceCardTitle(sub.title)}</h3>
                             <p className="text-white/90 text-xs mt-0.5">{cardSubtitle(sub.title, displayCurrency, sub.subtitle)}</p>
@@ -895,6 +1017,16 @@ export default function PreisdatenbankPage() {
                       className="rounded-xl border border-white/10 bg-white/5 p-4 md:p-5 flex flex-col min-w-0 w-full max-w-[624px]"
                       style={{ gridColumn: 'span 2' }}
                     >
+                      <div className={`-mt-3 mb-4 -mx-2 md:-mx-3 overflow-hidden rounded-lg ${cardImageWrapperClassName('Kamin / Ofen')}`}>
+                        <img
+                          src={cardImageCandidates('Kamin / Ofen')[0]}
+                          data-fallbacks={cardImageCandidates('Kamin / Ofen').join('||')}
+                          data-fallback-index="0"
+                          onError={handleCardImageError}
+                          alt="Kamin / Ofen Vorschau"
+                          className={cardImageClassNameForLayout('Kamin / Ofen', true)}
+                        />
+                      </div>
                       <div className="border-b border-white/10 pb-3 mb-3">
                         <h3 className="text-base font-semibold text-[#FF9F0F]">Kamin / Ofen</h3>
                         <p className="text-white/90 text-sm mt-1">{cardSubtitle('Kamin / Ofen', displayCurrency, null)}</p>
@@ -973,6 +1105,16 @@ export default function PreisdatenbankPage() {
                     className={`rounded-xl border border-white/10 bg-white/5 p-4 md:p-5 flex flex-col min-w-0 w-full ${item.sub.variables.length > 4 ? 'max-w-[624px]' : 'max-w-[300px]'}`}
                     style={item.sub.variables.length > 4 ? { gridColumn: 'span 2' } : undefined}
                   >
+                    <div className={`-mt-3 mb-4 -mx-2 md:-mx-3 overflow-hidden rounded-lg ${cardImageWrapperClassName(item.sub.title)}`}>
+                      <img
+                        src={cardImageCandidates(item.sub.title)[0]}
+                        data-fallbacks={cardImageCandidates(item.sub.title).join('||')}
+                        data-fallback-index="0"
+                        onError={handleCardImageError}
+                        alt={`${displayPriceCardTitle(item.sub.title)} Vorschau`}
+                        className={cardImageClassNameForLayout(item.sub.title, item.sub.variables.length > 4)}
+                      />
+                    </div>
                     <div className="border-b border-white/10 pb-3 mb-3">
                       <h3 className="text-base font-semibold text-[#FF9F0F]">
                         {displayPriceCardTitle(item.sub.title)}

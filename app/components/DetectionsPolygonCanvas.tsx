@@ -966,7 +966,7 @@ export function DetectionsPolygonCanvas({
             ctx.closePath()
             ctx.fill()
 
-            const lw = selectedOh ? 4.8 : 3.6
+            const lw = selectedOh ? 8 : 6
             strokeStripEdge(ax, ay, bx, by, strokeDim, lw * 0.92, selectedOh, ohDash, mainRgb)
             strokeStripEdge(ax, ay, axo, ayo, strokeMain, lw, selectedOh, ohDash, mainRgb)
             strokeStripEdge(bx, by, bxo, byo, strokeMain, lw, selectedOh, ohDash, mainRgb)
@@ -980,7 +980,7 @@ export function DetectionsPolygonCanvas({
               ox + bx * s,
               oy + by * s,
               strokeMain,
-              selectedOh ? 5 : 4,
+              selectedOh ? 8 : 6,
               selectedOh,
               ohDash,
               mainRgb,
